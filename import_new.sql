@@ -1,0 +1,30 @@
+-- Import WhatsApp -> app (upsert daily_reports). Lancer dans Supabase > SQL Editor.
+-- 26 jour(s), du 2026-06-04 au 2026-07-04, station 1.
+insert into daily_reports (station_id, report_date, ess_litres, ess_pu, ess_bon, ess_espece, gas_litres, gas_pu, total_bon_cumul) values
+(1,'2026-06-04',2223,750,1524500,142750,null,null,1518402),
+(1,'2026-06-05',1683,725,2267800,387925,1745,750,3776979),
+(1,'2026-06-06',2377,725,1650612,72713,null,null,5420761),
+(1,'2026-06-07',1584,725,1085924,62476,null,null,6502192),
+(1,'2026-06-08',1106,725,725150,76700,null,null,924341),
+(1,'2026-06-10',null,null,null,null,null,null,924341),
+(1,'2026-06-11',null,null,1457403,58347,2021,750,2375914),
+(1,'2026-06-12',2835,725,1949870,105505,null,null,4317716),
+(1,'2026-06-13',1760,725,1213975,62025,null,null,5526668),
+(1,'2026-06-14',1384,725,334500,18575,null,null,5203128),
+(1,'2026-06-17',1078,725,734000,47550,null,null,1031097),
+(1,'2026-06-18',1760,725,1232000,44000,null,null,2257999),
+(1,'2026-06-19',2559,725,1782025,73250,null,null,4032650),
+(1,'2026-06-20',259,725,175000,12775,null,null,2432275),
+(1,'2026-06-21',null,null,null,null,null,null,4381202),
+(1,'2026-06-23',null,null,null,null,null,null,1864442),
+(1,'2026-06-24',null,null,null,null,null,null,3096992),
+(1,'2026-06-25',1889,725,1889000,148025,890,750,4978261),
+(1,'2026-06-26',2357,725,1642646,59980,null,null,6614109),
+(1,'2026-06-27',1665,725,1154500,43425,null,null,7763832),
+(1,'2026-06-29',null,null,null,null,null,null,513832),
+(1,'2026-06-30',null,null,null,null,null,null,513832),
+(1,'2026-07-01',2436,725,1716076,50024,null,null,2222806),
+(1,'2026-07-02',1600,725,1088000,72000,null,null,3306304),
+(1,'2026-07-03',789,725,530160,41865,null,null,527966),
+(1,'2026-07-04',null,null,null,null,null,null,527966)
+on conflict (station_id, report_date) do update set ess_litres=excluded.ess_litres, ess_pu=excluded.ess_pu, ess_bon=excluded.ess_bon, ess_espece=excluded.ess_espece, gas_litres=excluded.gas_litres, gas_pu=excluded.gas_pu, total_bon_cumul=excluded.total_bon_cumul;
