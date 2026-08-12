@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { useStation } from '../lib/station.jsx'
+import { AlertBanner } from '../ds/octane/components/feedback/AlertBanner.jsx'
+import { Button } from '../ds/octane/components/core/Button.jsx'
 
 export default function NotifBanner() {
   const { stationId } = useStation()
@@ -23,13 +25,12 @@ export default function NotifBanner() {
 
   if (!notifs.length) return null
   return (
-    <div style={{ marginBottom: 14 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-3)', marginBottom: 'var(--sp-5)' }}>
       {notifs.map(n => (
-        <div key={n.id} style={{ display: 'flex', alignItems: 'center', gap: 10, background: 'var(--warn-soft)',
-          border: '1px solid #f4d9a8', color: '#8a5300', padding: '11px 14px', borderRadius: 11, marginBottom: 8, fontSize: 14 }}>
-          <span style={{ flex: 1 }}>{n.message}</span>
-          <button className="btn sec small" onClick={() => resolve(n.id)}>Traité</button>
-        </div>
+        <AlertBanner key={n.id} tone="warn" title="Rappel"
+          action={<Button size="sm" onClick={() => resolve(n.id)}>Traité</Button>}>
+          {n.message}
+        </AlertBanner>
       ))}
     </div>
   )

@@ -1,0 +1,51 @@
+*,*::before,*::after{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{background:var(--bg-canvas);color:var(--text-body);font:var(--fw-regular) var(--fs-body)/var(--lh-normal) var(--font-ui);-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+h1,h2,h3,h4{margin:0;font-family:var(--font-display);font-weight:var(--fw-bold);color:var(--text-primary);letter-spacing:var(--ls-display);line-height:var(--lh-snug)}
+h1{font-size:var(--fs-h1)}h2{font-size:var(--fs-h2)}h3{font-size:var(--fs-h3)}
+p{margin:0 0 var(--sp-5)}
+a{color:var(--text-link);text-decoration:none;border-bottom:1px solid color-mix(in srgb,var(--text-link) 35%,transparent)}
+a:hover{color:var(--text-link-hover);border-bottom-color:var(--text-link-hover)}
+a:active{color:var(--signal-cyan-deep)}
+code,kbd,.num{font-family:var(--font-data);font-variant-numeric:tabular-nums;letter-spacing:var(--ls-tabular)}
+::selection{background:var(--accent);color:#FFFFFF}
+:focus-visible{outline:none;box-shadow:var(--focus-ring)}
+::-webkit-scrollbar{width:10px;height:10px}
+::-webkit-scrollbar-track{background:var(--surface-sunken)}
+::-webkit-scrollbar-thumb{background:var(--carbon-400);border:2px solid var(--surface-sunken)}
+::-webkit-scrollbar-thumb:hover{background:var(--carbon-500)}
+.eyebrow{font:var(--fw-semibold) var(--fs-caption)/1.2 var(--font-ui);text-transform:uppercase;letter-spacing:var(--ls-label);color:var(--text-muted)}
+
+/* ================= RESPONSIVE =================
+   Le système est mobile-first : tout écran se lit à 390px de large.
+   Ces utilitaires existent parce que les composants sont en styles inline
+   et ne peuvent pas porter leurs propres media queries. */
+.oct-app{display:flex;flex-direction:column;height:100dvh;background:var(--bg-canvas)}
+.oct-body{flex:1;display:flex;min-height:0}
+.oct-main{flex:1;display:flex;flex-direction:column;min-width:0}
+.oct-scroll{flex:1;min-height:0;overflow:auto;padding:var(--gutter-screen);-webkit-overflow-scrolling:touch}
+.oct-grid{display:grid;gap:var(--sp-5)}
+.oct-grid-4{grid-template-columns:repeat(4,minmax(0,1fr))}
+.oct-grid-3{grid-template-columns:repeat(3,minmax(0,1fr))}
+.oct-grid-2{grid-template-columns:repeat(2,minmax(0,1fr))}
+.oct-split{display:grid;gap:var(--sp-5);grid-template-columns:2fr 1fr;align-items:start}
+.oct-hide-sm,.oct-only-sm{display:none}
+@media (max-width:1279px){.oct-grid-4{grid-template-columns:repeat(2,minmax(0,1fr))}.oct-split{grid-template-columns:1fr}}
+@media (max-width:899px){
+  .oct-grid-3,.oct-grid-2{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .oct-hide-sm{display:none!important}
+  .oct-only-sm{display:flex}
+  /* rail hors-canevas : il glisse par-dessus, il ne pousse pas le contenu */
+  .oct-rail{position:fixed;top:0;bottom:0;left:0;z-index:75;transform:translateX(-100%);transition:transform var(--dur-base) var(--ease-sharp)}
+  .oct-rail[data-open="true"]{transform:translateX(0);box-shadow:var(--lift)}
+  .oct-rail-scrim{position:fixed;inset:0;z-index:74;background:var(--scrim)}
+}
+@media (min-width:900px){.oct-only-sm{display:none!important}.oct-hide-sm{display:flex}.oct-rail-scrim{display:none}}
+@media (max-width:599px){
+  .oct-grid-4,.oct-grid-3,.oct-grid-2{grid-template-columns:minmax(0,1fr)}
+  .oct-scroll{padding:var(--sp-4)}
+}
+/* tableaux : sous 900px, les colonnes secondaires tombent (data-optional="1|2") */
+@media (max-width:899px){[data-optional="2"]{display:none}}
+@media (max-width:599px){[data-optional="1"]{display:none}}
+@media print{.oct-rail,.oct-rail-scrim,.oct-statusbar,.oct-toolbar{display:none!important}.oct-scroll{overflow:visible;padding:0}}

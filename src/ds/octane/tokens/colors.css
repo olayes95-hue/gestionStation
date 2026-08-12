@@ -1,0 +1,131 @@
+:root{
+/* ================= BASE CLAIRE (défaut) =================
+   Surface ramp : 000 = papier le plus clair → 999 = encre la plus dense.
+   Béton et papier technique, jamais de blanc pur en fond d'écran. */
+--carbon-000:#FFFFFF; /* rail, barres, modales : papier pur */
+--carbon-050:#EEF0F1; /* canevas applicatif */
+--carbon-100:#F7F8F9; /* panneau */
+--carbon-200:#EDEFF1; /* en-tête de panneau, barre surélevée */
+--carbon-300:#E3E6E9; /* champ de saisie, bouton neutre */
+--carbon-400:#D2D7DB; /* filet fin */
+--carbon-500:#B4BCC2; /* bordure de contrôle */
+--carbon-600:#8C979E; /* bord désactivé, texte désactivé */
+--carbon-700:#5F6C74; /* texte discret */
+--carbon-800:#3C474D; /* texte secondaire */
+--carbon-900:#1E272C; /* texte courant */
+--carbon-999:#0B1215; /* titres, valeurs live */
+
+/* ---- signaux : chroma de panneau de danger, calibrée pour le fond clair ---- */
+--signal-orange-bright:#D95400; /* action primaire — carburant */
+--signal-orange:#B84600;
+--signal-orange-deep:#8A3400;
+--signal-amber:#A66A00;
+--signal-amber-deep:#7A4E00;
+--signal-green:#0E8A4F;
+--signal-green-deep:#0A6A3D;
+--signal-red:#C8261A;
+--signal-red-deep:#911A11;
+--signal-cyan:#0E7C90;
+--signal-cyan-deep:#0A5A69;
+--signal-violet:#5B4BD6;
+
+/* ---- alias sémantiques ---- */
+--bg-void:var(--carbon-000);
+--bg-canvas:var(--carbon-050);
+--surface-panel:var(--carbon-100);
+--surface-raised:var(--carbon-200);
+--surface-sunken:#E7EAEC;
+--surface-field:#FFFFFF;
+--surface-row-hover:#E8EBEE;
+--surface-row-selected:#FDEBDF;
+
+--text-primary:var(--carbon-999);
+--text-body:var(--carbon-900);
+--text-secondary:var(--carbon-800);
+--text-muted:var(--carbon-700);
+--text-disabled:var(--carbon-600);
+--text-inverse:#FFFFFF;
+--text-link:var(--signal-cyan);
+--text-link-hover:var(--signal-cyan-deep);
+
+--border-hairline:var(--carbon-400);
+--border-default:var(--carbon-500);
+--border-strong:var(--carbon-600);
+--border-focus:var(--signal-cyan);
+
+--accent:var(--signal-orange-bright);
+--accent-hover:#F26207;
+--accent-press:var(--signal-orange);
+--accent-quiet:rgba(217,84,0,.12);
+
+--state-ok:var(--signal-green);
+--state-warn:var(--signal-amber);
+--state-alarm:var(--signal-red);
+--state-info:var(--signal-cyan);
+--state-idle:var(--carbon-700);
+
+--state-ok-bg:rgba(14,138,79,.10);
+--state-warn-bg:rgba(166,106,0,.12);
+--state-alarm-bg:rgba(200,38,26,.10);
+--state-info-bg:rgba(14,124,144,.10);
+--state-idle-bg:rgba(95,108,116,.10);
+
+--switch-track-on:#CBEBDA;
+--scrim:rgba(11,18,21,.42);
+
+/* codes carburant — convention piste, ne servent qu'aux produits */
+--grade-sp95:var(--signal-green);
+--grade-sp98:var(--signal-cyan);
+--grade-gazole:var(--signal-amber);
+--grade-gpl:var(--signal-violet);
+}
+
+/* ================= MODE NUIT (poste de nuit, salle de contrôle) =================
+   Appliquer data-theme="dark" sur <html> ou n'importe quel conteneur. */
+[data-theme="dark"]{
+--carbon-000:#07090A;
+--carbon-050:#0C0F11;
+--carbon-100:#12171A;
+--carbon-200:#181F23;
+--carbon-300:#1F282C;
+--carbon-400:#28343A;
+--carbon-500:#37464E;
+--carbon-600:#4C5F68;
+--carbon-700:#6B818B;
+--carbon-800:#9DB0B8;
+--carbon-900:#D3DEE2;
+--carbon-999:#F2F7F8;
+
+--signal-orange-bright:#FF7A1A;
+--signal-orange:#F26207;
+--signal-orange-deep:#B54503;
+--signal-amber:#F5A524;
+--signal-amber-deep:#8A5A05;
+--signal-green:#2FD07B;
+--signal-green-deep:#0F5C36;
+--signal-red:#FF4438;
+--signal-red-deep:#7A150F;
+--signal-cyan:#39C2D9;
+--signal-cyan-deep:#0E4E5A;
+--signal-violet:#8C7BFF;
+
+--surface-sunken:#090C0D;
+--surface-field:var(--carbon-300);
+--surface-row-hover:#1A2226;
+--surface-row-selected:#10262B;
+
+--text-inverse:var(--carbon-000);
+--text-link-hover:#7FDCEB;
+
+--accent-hover:#FF9040;
+--accent-quiet:rgba(255,122,26,.14);
+
+--state-ok-bg:rgba(47,208,123,.12);
+--state-warn-bg:rgba(245,165,36,.12);
+--state-alarm-bg:rgba(255,68,56,.14);
+--state-info-bg:rgba(57,194,217,.12);
+--state-idle-bg:rgba(107,129,139,.12);
+
+--switch-track-on:var(--signal-green-deep);
+--scrim:rgba(3,5,6,.72);
+}

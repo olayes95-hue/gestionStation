@@ -1,0 +1,29 @@
+:root{
+/* Points de rupture — mobile d'abord. Le backoffice tourne sur téléphone (piste),
+   tablette (comptoir, réception camion) et poste fixe (bureau de gérance). */
+--bp-xs:390px;  /* @kind spacing */ /* téléphone */
+--bp-sm:600px;  /* @kind spacing */ /* grand téléphone / petite tablette portrait */
+--bp-md:900px;  /* @kind spacing */ /* tablette paysage */
+--bp-lg:1280px; /* @kind spacing */ /* poste fixe */
+--bp-xl:1600px; /* @kind spacing */ /* écran mural de contrôle */
+
+--content-max:1680px; /* @kind spacing */
+--tap-min:44px;       /* @kind spacing */ /* cible tactile minimale, non négociable */
+}
+
+/* ---- densité tactile : appliquer data-density="touch" sur <html> (auto sous 900px, voir base.css) ---- */
+[data-density="touch"]{
+--row-h-dense:40px;   /* @kind spacing */
+--row-h:44px;         /* @kind spacing */
+--row-h-comfy:52px;   /* @kind spacing */
+--control-h-sm:36px;  /* @kind spacing */
+--control-h:44px;     /* @kind spacing */
+--control-h-lg:52px;  /* @kind spacing */
+--topbar-h:56px;      /* @kind spacing */
+--statusbar-h:34px;   /* @kind spacing */
+--sidebar-w:280px;    /* @kind spacing */
+--gutter-panel:14px;  /* @kind spacing */
+--gutter-screen:12px; /* @kind spacing */
+--fs-label:13px;      /* @kind font */
+--fs-body:14px;       /* @kind font */
+}

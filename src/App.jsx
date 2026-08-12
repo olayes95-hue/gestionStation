@@ -1,9 +1,16 @@
 import { useState, lazy, Suspense } from 'react'
-import { Routes, Route, Navigate, NavLink, useNavigate } from 'react-router-dom'
+import { Routes, Route, Navigate, useNavigate } from 'react-router-dom'
 import { useAuth } from './lib/auth.jsx'
 import { StationProvider, useStation } from './lib/station.jsx'
 import Login from './pages/Login.jsx'
 import NotifBanner from './components/NotifBanner.jsx'
+import { SideNav } from './ds/octane/components/navigation/SideNav.jsx'
+import { Toolbar } from './ds/octane/components/navigation/Toolbar.jsx'
+import { IconButton } from './ds/octane/components/core/IconButton.jsx'
+import { Select } from './ds/octane/components/forms/Select.jsx'
+import { Tag } from './ds/octane/components/core/Tag.jsx'
+import { Icon } from './ds/octane/components/core/Icon.jsx'
+import { Viewport } from './ds/octane/components/core/Viewport.jsx'
 
 // Chargées à la demande : réduit fortement le bundle initial (surtout pour gérant/vendeuse).
 const Submit = lazy(() => import('./pages/Submit.jsx'))
@@ -25,11 +32,10 @@ const Aide = lazy(() => import('./pages/Aide.jsx'))
 
 function StationPicker() {
   const { stations, stationId, setStationId, isAdmin, current } = useStation()
-  if (!isAdmin) return <span className="chip">📍 {current?.nom || 'Ma station'}</span>
+  if (!isAdmin) return <Tag><Icon name="map-pin" size={11} /> {current?.nom || 'Ma station'}</Tag>
   return (
-    <select className="station-select" value={stationId || ''} onChange={e => setStationId(Number(e.target.value))}>
-      {stations.map(s => <option key={s.id} value={s.id}>📍 {s.nom}</option>)}
-    </select>
+    <Select size="sm" value={stationId || ''} onChange={e => setStationId(Number(e.target.value))}
+      options={stations.map(s => ({ value: s.id, label: s.nom }))} />
   )
 }
 
@@ -38,59 +44,57 @@ function Shell({ children }) {
   const nav = useNavigate()
   const [open, setOpen] = useState(false)
   const close = () => setOpen(false)
-  const Item = ({ to, ic, label }) => (
-    <NavLink to={to} onClick={close}><span className="ic">{ic}</span><span>{label}</span></NavLink>
-  )
   const roleLabel = isAdmin ? 'Administrateur' : isPompiste ? 'Pompiste' : 'Gérant'
-  return (
-    <div className="app">
-      {open && <div className="overlay" onClick={close} />}
-      <aside className={'sidebar' + (open ? ' open' : '')}>
-        <div className="brand">🛠️ <span>Gestion station</span></div>
-        <nav>
-          <div className="nav-group">Exploitation</div>
-          <Item to="/saisie" ic="📝" label={isVendeuse ? 'Saisie supérette' : 'Saisie du jour'} />
-          <Item to="/aide" ic="❓" label="Aide" />
-          <Item to="/stock" ic={isVendeuse ? '🛒' : '📦'} label={isVendeuse ? 'Supérette' : 'Stock & mouvements'} />
-          {!isVendeuse && !isPompiste && <Item to="/commandes" ic="🚚" label="Commandes" />}
-          {!isPompiste && !isVendeuse && <Item to="/controles" ic="🛂" label="Contrôles ANM" />}
-          {isAdmin && <>
-            <div className="nav-group">Pilotage</div>
-            <Item to="/tableau" ic="📊" label="Tableau de bord" />
-            <Item to="/historique" ic="📅" label="Historique des points" />
-            <Item to="/saisies" ic="🗂️" label="Saisies & photos" />
-            <Item to="/alertes" ic="🔔" label="Alertes" />
-            <div className="nav-group">Finance</div>
-            <Item to="/finance" ic="📊" label="Point financier" />
-            <Item to="/rapprochement" ic="🏦" label="Rapprochement" />
-            <Item to="/verif-photos" ic="📷" label="Vérif bordereaux" />
-            <div className="nav-group">Administration</div>
-            <Item to="/audit" ic="🕵️" label="Journal d'audit" />
-            <Item to="/produits" ic="📚" label="Produits & prix" />
-            <Item to="/fournisseurs" ic="🚛" label="Fournisseurs" />
-            <Item to="/stations" ic="🏢" label="Stations & équipe" />
-          </>}
-        </nav>
-        <div className="sidebar-foot">
-          <div className="avatar">{(profile?.full_name || '?').slice(0, 1).toUpperCase()}</div>
-          <div style={{ minWidth: 0, flex: 1 }}>
-            <div className="uname">{profile?.full_name}</div>
-            <div className="role">{roleLabel}</div>
-          </div>
-          <button className="iconbtn" title="Déconnexion" onClick={() => signOut().then(() => nav('/'))}>⏻</button>
-        </div>
-      </aside>
 
-      <div className="main">
-        <header className="appbar">
-          <button className="hamburger" onClick={() => setOpen(true)} aria-label="Menu">☰</button>
-          <StationPicker />
-          <div className="appbar-spacer" />
-          <span className="chip role-chip">{roleLabel}</span>
-        </header>
-        <div className="content"><NotifBanner />{children}</div>
+  const items = [
+    { section: 'Exploitation' },
+    { to: '/saisie', icon: 'file-pen-line', label: isVendeuse ? 'Saisie supérette' : 'Saisie du jour' },
+    { to: '/aide', icon: 'circle-question-mark', label: 'Aide' },
+    { to: '/stock', icon: isVendeuse ? 'shopping-cart' : 'package', label: isVendeuse ? 'Supérette' : 'Stock & mouvements' },
+    ...(!isVendeuse && !isPompiste ? [{ to: '/commandes', icon: 'truck', label: 'Commandes' }] : []),
+    ...(!isPompiste && !isVendeuse ? [{ to: '/controles', icon: 'shield-check', label: 'Contrôles ANM' }] : []),
+    ...(isAdmin ? [
+      { section: 'Pilotage' },
+      { to: '/tableau', icon: 'layout-dashboard', label: 'Tableau de bord' },
+      { to: '/historique', icon: 'calendar-days', label: 'Historique des points' },
+      { to: '/saisies', icon: 'folder-open', label: 'Saisies & photos' },
+      { to: '/alertes', icon: 'bell', label: 'Alertes' },
+      { section: 'Finance' },
+      { to: '/finance', icon: 'chart-column', label: 'Point financier' },
+      { to: '/rapprochement', icon: 'landmark', label: 'Rapprochement' },
+      { to: '/verif-photos', icon: 'camera', label: 'Vérif bordereaux' },
+      { section: 'Administration' },
+      { to: '/audit', icon: 'search', label: "Journal d'audit" },
+      { to: '/produits', icon: 'book-open', label: 'Produits & prix' },
+      { to: '/fournisseurs', icon: 'factory', label: 'Fournisseurs' },
+      { to: '/stations', icon: 'building-2', label: 'Stations & équipe' },
+    ] : []),
+  ]
+
+  return (
+    <Viewport>
+      <div style={{ display: 'flex', minHeight: '100dvh' }}>
+        {open && <div className="oct-rail-scrim" onClick={close} />}
+        <SideNav items={items} brand="Gestion station" overlay open={open} onClose={close} />
+        <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+          <Toolbar
+            left={<IconButton icon="menu" title="Menu" className="oct-only-sm" onClick={() => setOpen(true)} />}
+            right={<>
+              <span style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-3)' }}>
+                <span aria-hidden="true" style={{ width: 22, height: 22, borderRadius: 999, background: 'var(--accent-quiet)', color: 'var(--accent)', display: 'flex', alignItems: 'center', justifyContent: 'center', font: '700 11px/1 var(--font-ui)' }}>
+                  {(profile?.full_name || '?').slice(0, 1).toUpperCase()}
+                </span>
+                <Tag>{roleLabel}</Tag>
+              </span>
+              <IconButton icon="log-out" title="Déconnexion" onClick={() => signOut().then(() => nav('/'))} />
+            </>}
+          >
+            <StationPicker />
+          </Toolbar>
+          <div className="content"><NotifBanner />{children}</div>
+        </div>
       </div>
-    </div>
+    </Viewport>
   )
 }
 

@@ -1,0 +1,32 @@
+:root{
+--font-ui:"IBM Plex Sans Condensed","Helvetica Neue Condensed",system-ui,sans-serif;
+--font-data:"IBM Plex Mono",ui-monospace,"SF Mono",Menlo,monospace;
+--font-display:var(--font-ui);
+
+/* sizes — dense by design; 11px is a legitimate UI size here, not a mistake */
+--fs-micro:10px;
+--fs-caption:11px;
+--fs-label:12px;
+--fs-body:13px;
+--fs-body-lg:15px;
+--fs-h3:17px;
+--fs-h2:21px;
+--fs-h1:27px;
+--fs-display:38px;
+--fs-readout:52px; /* live totalisers, volume counters */
+
+--lh-tight:1.05; /* @kind font */
+--lh-snug:1.2; /* @kind font */
+--lh-normal:1.45; /* @kind font */
+--fw-regular:400; /* @kind font */
+--fw-medium:500; /* @kind font */
+--fw-semibold:600; /* @kind font */
+--fw-bold:700; /* @kind font */
+--ls-display:-.01em; /* @kind font */
+--ls-normal:0; /* @kind font */
+--ls-label:.08em; /* @kind font */
+--ls-micro:.14em; /* @kind font */
+--ls-tabular:.02em; /* @kind font */
+--text-label:var(--fw-semibold) var(--fs-label)/var(--lh-snug) var(--font-ui); /* @kind font */
+--text-readout:var(--fw-600,600) var(--fs-readout)/var(--lh-tight) var(--font-data); /* @kind font */
+}

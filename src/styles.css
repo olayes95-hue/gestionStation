@@ -1,3 +1,15 @@
+/* OCTANE (v43+) : tokens du design system — @import en tête, purement additif.
+   Les variables legacy ci-dessous restent en place tant que toutes les pages
+   n'ont pas été converties (Phase 4+) et en dépendent encore. */
+@import url("./ds/octane/tokens/fonts.css");
+@import url("./ds/octane/tokens/colors.css");
+@import url("./ds/octane/tokens/typography.css");
+@import url("./ds/octane/tokens/spacing.css");
+@import url("./ds/octane/tokens/breakpoints.css");
+@import url("./ds/octane/tokens/borders.css");
+@import url("./ds/octane/tokens/motion.css");
+@import url("./ds/octane/tokens/base.css");
+
 :root{
   --bg:#f5f7fb; --card:#ffffff;
   --primary:#3b5bdb; --primary-d:#2f49b0; --primary-soft:#eef2ff;

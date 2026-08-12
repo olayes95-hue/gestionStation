@@ -1,0 +1,13 @@
+:root{
+/* Machines don't bounce. Linear or sharp-out, short, never decorative. */
+--dur-instant:60ms; /* @kind other */
+--dur-fast:110ms; /* @kind other */
+--dur-base:160ms; /* @kind other */
+--dur-slow:240ms; /* @kind other */
+--ease-sharp:cubic-bezier(.2,0,0,1); /* @kind other */
+--ease-linear:linear; /* @kind other */
+--ease-step:steps(4,end); /* @kind other */
+--t-control:background-color var(--dur-fast) var(--ease-linear),border-color var(--dur-fast) var(--ease-linear),color var(--dur-fast) var(--ease-linear); /* @kind other */
+}
+@keyframes octane-blink{0%,49%{opacity:1}50%,100%{opacity:.25}}
+@keyframes octane-scan{from{background-position:0 0}to{background-position:0 -24px}}
