@@ -4,13 +4,20 @@ import { useAuth } from '../lib/auth.jsx'
 import { useStation } from '../lib/station.jsx'
 import { fcfa, frDate, numFR, today } from '../lib/format'
 import { compressImage } from '../lib/image'
+import { ORDER_STATUS_TONES } from '../lib/tones'
+import { Panel } from '../ds/octane/components/core/Panel.jsx'
+import { Button } from '../ds/octane/components/core/Button.jsx'
+import { Badge } from '../ds/octane/components/core/Badge.jsx'
+import { Tag } from '../ds/octane/components/core/Tag.jsx'
+import { Field } from '../ds/octane/components/forms/Field.jsx'
+import { Input } from '../ds/octane/components/forms/Input.jsx'
+import { Select } from '../ds/octane/components/forms/Select.jsx'
+import { Checkbox } from '../ds/octane/components/forms/Checkbox.jsx'
+import { AlertBanner } from '../ds/octane/components/feedback/AlertBanner.jsx'
+import { DataTable } from '../ds/octane/components/data/DataTable.jsx'
 
 const N = (v) => (v ? (numFR(v) ?? 0) : 0)
-const CATS = [['carburant', '⛽ Carburant'], ['gaz', '🔥 Gaz'], ['lubrifiant', '🛢️ Lubrifiant'], ['superette', '🛒 Supérette']]
-const STATUTS = {
-  proposee: { label: 'Proposée', color: '#e67e22' }, validee: { label: 'Validée', color: '#2e86c1' },
-  lancee: { label: 'Lancée', color: '#8e44ad' }, partielle: { label: 'Partielle', color: '#d68910' }, recue: { label: 'Reçue', color: '#1e874b' }, annulee: { label: 'Refusée', color: '#c0392b' },
-}
+const CATS = [['carburant', 'Carburant'], ['gaz', 'Gaz'], ['lubrifiant', 'Lubrifiant'], ['superette', 'Supérette']]
 // Lignes carburant par défaut (essence + gasoil commandés simultanément).
 const carbRows = () => [{ produit: 'essence', qte: '', bons: '', cheque: '', ref: '' }, { produit: 'gasoil', qte: '', bons: '', cheque: '', ref: '' }]
 const blankNf = () => ({ categorie: 'carburant', mode_paiement: 'cheque', rows: carbRows(), lignes: [{ article: '', qte: '' }], montant_paiement: '', date_proposition: today(), note: '' })
@@ -98,7 +105,7 @@ export default function Orders() {
     if (c === 'carburant') {
       const withQte = nf.rows.filter(r => N(r.qte) > 0)
       const sousMin = withQte.find(r => N(r.qte) < MIN_CARBURANT)
-      if (sousMin) { setErr(`⚠️ Quantité minimum ${MIN_CARBURANT.toLocaleString('fr-FR')} L par produit (exigence fournisseur) — ${sousMin.produit} : ${N(sousMin.qte).toLocaleString('fr-FR')} L.`); return }
+      if (sousMin) { setErr(`Quantité minimum ${MIN_CARBURANT.toLocaleString('fr-FR')} L par produit (exigence fournisseur) — ${sousMin.produit} : ${N(sousMin.qte).toLocaleString('fr-FR')} L.`); return }
       toInsert = withQte.map(r => ({
         ...base, produit: r.produit, quantite_commandee: numFR(r.qte),
         bons_base: bonsOn && r.bons ? numFR(r.bons) : null, cheque_montant: r.cheque ? numFR(r.cheque) : null,
@@ -116,7 +123,7 @@ export default function Orders() {
       toInsert = [{ ...base, produit: 'supérette', lignes, mode_paiement: nf.mode_paiement, montant_paiement: nf.montant_paiement ? numFR(nf.montant_paiement) : null }]
     }
     const { error } = await supabase.from('fuel_orders').insert(toInsert)
-    if (error) setErr(error.message); else { setNf(blankNf()); setShowPropose(false); flash(toInsert.length > 1 ? `${toInsert.length} commandes proposées ✓` : 'Commande proposée ✓'); load() }
+    if (error) setErr(error.message); else { setNf(blankNf()); setShowPropose(false); flash(toInsert.length > 1 ? `${toInsert.length} commandes proposées` : 'Commande proposée'); load() }
   }
   async function setStatut(o, patch) { const { error } = await supabase.from('fuel_orders').update(patch).eq('id', o.id); error ? setErr(error.message) : load() }
   const valider = (o) => setStatut(o, { statut: 'validee', validated_by: session.user.id, validated_at: new Date().toISOString() })
@@ -172,7 +179,7 @@ export default function Orders() {
         await supabase.from('stock_movements').insert(mvt)
       }
       setRecv(p => ({ ...p, [o.id]: undefined }))
-      flash(complet ? '✅ Commande soldée — stock mis à jour' : `Réception partielle ✓ (${total.toLocaleString('fr-FR')}/${N(o.quantite_commandee).toLocaleString('fr-FR')})`)
+      flash(complet ? 'Commande soldée — stock mis à jour' : `Réception partielle (${total.toLocaleString('fr-FR')}/${N(o.quantite_commandee).toLocaleString('fr-FR')})`)
       load()
     } catch (e) { setErr(e.message || String(e)) }
   }
@@ -209,258 +216,241 @@ export default function Orders() {
     (fProduit === 'tous' || o.produit === fProduit))
   const totalMontant = shown.reduce((s, o) => s + orderMontant(o), 0)
 
+  const columns = [
+    { key: 'dates', header: 'Dates', render: o => (
+      <div style={{ fontSize: 12, whiteSpace: 'nowrap' }}>
+        Prop. {frDate(dateOf(o))}
+        {o.date_lancement && <><br />Lanc. {frDate(o.date_lancement)}</>}
+        {o.statut === 'recue' && o.report_date && <><br />Reçue {frDate(o.report_date)}</>}
+      </div>
+    ) },
+    { key: 'delai', header: 'Délai', numeric: true, align: 'right', render: o => delaiJours(o) != null ? `${delaiJours(o)} j` : '—' },
+    { key: 'categorie', header: 'Catégorie', render: o => (CATS.find(c => c[0] === (o.categorie || 'carburant')) || [, o.categorie])[1] },
+    { key: 'produit', header: 'Produit / détail', render: o => (o.categorie || 'carburant') === 'superette'
+      ? <span title={(o.lignes || []).map(l => `${l.article} ×${l.qte}`).join(' · ')}>{(o.lignes || []).length} article(s)</span>
+      : o.produit },
+    { key: 'qte', header: 'Qté', numeric: true, align: 'right', render: o => (o.categorie || 'carburant') !== 'superette' && N(o.quantite_commandee) ? N(o.quantite_commandee).toLocaleString('fr-FR') : '—' },
+    { key: 'statut', header: 'Statut', render: o => { const st = ORDER_STATUS_TONES[o.statut] || { label: o.statut, tone: 'idle' }; return <Badge tone={st.tone}>{st.label}</Badge> } },
+    { key: 'paiement', header: 'Paiement', render: o => <span style={{ fontSize: 12 }}>{(o.categorie || 'carburant') === 'carburant'
+      ? <>{fcfa(orderMontant(o))}{o.bons_base ? ` · bons ${fcfa(o.bons_base)}` : ''}{o.cheque_montant ? ` · chèque ${fcfa(o.cheque_montant)}` : ''}</>
+      : <>{o.mode_paiement || '—'} · {fcfa(o.montant_paiement)}</>}</span> },
+    { key: 'avancement', header: 'Avancement', render: o => {
+      const cat = o.categorie || 'carburant'
+      const livre = cat !== 'carburant' ? null
+        : livreReel[o.id] != null ? livreReel[o.id]
+        : (o.cuve_apres != null && o.cuve_avant != null) ? N(o.cuve_apres) - N(o.cuve_avant) : null
+      const perte = livre != null ? Math.max(0, N(o.quantite_commandee) - livre) : null
+      const seuil = N(o.quantite_commandee) * N(settings.taux_perte_acceptable) / 100
+      const perteNA = perte != null ? Math.max(0, perte - seuil) : null
+      const t = recvTotals[o.id] || {}; const deja = N(t.quantite_recue_total)
+      const reste = Math.max(N(o.quantite_commandee) - deja, 0)
+      return <span style={{ fontSize: 12 }}>
+        {(o.statut === 'lancee' || o.statut === 'partielle') && <Tag>reçu {deja.toLocaleString('fr-FR')}/{N(o.quantite_commandee).toLocaleString('fr-FR')} · reste {reste.toLocaleString('fr-FR')}</Tag>}
+        {o.statut === 'recue' && cat === 'carburant' && livre != null && (
+          <span style={{ color: perteNA > 0 ? 'var(--state-alarm)' : 'var(--state-ok)' }}>
+            livré {livre.toLocaleString('fr-FR')} · perte {perte.toLocaleString('fr-FR')}{perteNA > 0 ? ` (${Math.round(perteNA).toLocaleString('fr-FR')} hors seuil)` : ' ✓'}
+          </span>
+        )}
+        {o.statut === 'recue' && cat !== 'carburant' && <span>reçu {deja.toLocaleString('fr-FR')}/{N(o.quantite_commandee).toLocaleString('fr-FR')}</span>}
+        {!['lancee', 'partielle', 'recue'].includes(o.statut) && '—'}
+      </span>
+    } },
+    { key: 'note', header: 'Note', render: o => <span style={{ fontSize: 12, maxWidth: 140, display: 'inline-block' }}>{o.note || ''}</span> },
+    { key: 'actions', header: 'Actions', render: o => {
+      const cat = o.categorie || 'carburant'
+      const t = recvTotals[o.id] || {}; const deja = N(t.quantite_recue_total)
+      const reste = Math.max(N(o.quantite_commandee) - deja, 0)
+      return (
+        <div style={{ whiteSpace: 'nowrap', display: 'flex', flexDirection: 'column', gap: 'var(--sp-2)' }}>
+          {o.statut === 'proposee' && isAdmin && <div style={{ display: 'flex', gap: 'var(--sp-2)' }}>
+            <Button size="sm" tone="primary" onClick={() => valider(o)}>✓</Button>
+            <Button size="sm" tone="danger" onClick={() => refuser(o)}>✕</Button>
+          </div>}
+          {o.statut === 'proposee' && !isAdmin && <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>en attente admin</span>}
+          {o.statut === 'validee' && <div style={{ display: 'flex', gap: 'var(--sp-2)', alignItems: 'center' }}>
+            <Input type="date" size="sm" value={launch[o.id] || today()} max={today()} onChange={e => setLaunch(p => ({ ...p, [o.id]: e.target.value }))} style={{ width: 130 }} />
+            <Button size="sm" tone="primary" onClick={() => lancer(o)}>Lancer</Button>
+          </div>}
+          {(o.statut === 'lancee' || o.statut === 'partielle') && (() => {
+            const r = recv[o.id]
+            if (!r) return <Button size="sm" onClick={() => setRecv(p => ({ ...p, [o.id]: { cuve_avant: '', cuve_apres: '', date: today(), quantite_recue: reste ? String(reste) : '' } }))}>Réceptionner{deja > 0 ? ' (suite)' : ''}</Button>
+            return (
+              <div style={{ minWidth: 200, display: 'flex', flexDirection: 'column', gap: 'var(--sp-2)' }}>
+                <Field label="Qté reçue *"><Input size="sm" type="text" inputMode="decimal" numeric value={r.quantite_recue || ''} onChange={e => setRecv(p => ({ ...p, [o.id]: { ...r, quantite_recue: e.target.value } }))} /></Field>
+                {cat === 'carburant' && <div style={{ display: 'flex', gap: 'var(--sp-2)' }}>
+                  <Field label="Cuve avant"><Input size="sm" type="text" inputMode="decimal" numeric value={r.cuve_avant} onChange={e => setRecv(p => ({ ...p, [o.id]: { ...r, cuve_avant: e.target.value } }))} /></Field>
+                  <Field label="Cuve après"><Input size="sm" type="text" inputMode="decimal" numeric value={r.cuve_apres} onChange={e => setRecv(p => ({ ...p, [o.id]: { ...r, cuve_apres: e.target.value } }))} /></Field>
+                </div>}
+                <Field label="Date"><Input size="sm" type="date" value={r.date || today()} max={today()} onChange={e => setRecv(p => ({ ...p, [o.id]: { ...r, date: e.target.value } }))} /></Field>
+                {r.warnEcart && (
+                  <AlertBanner tone="warn" title="Écart" style={{ padding: 'var(--sp-3)' }}>
+                    <span style={{ fontSize: 11 }}>{r.warnEcart}</span>
+                    <Checkbox label="Forcer (c'est correct malgré tout)" checked={!!r.forceEcart} onChange={v => setRecv(p => ({ ...p, [o.id]: { ...r, forceEcart: v, warnEcart: v ? '' : r.warnEcart } }))} style={{ marginTop: 'var(--sp-2)' }} />
+                  </AlertBanner>
+                )}
+                <div style={{ display: 'flex', gap: 'var(--sp-2)' }}>
+                  <Button size="sm" tone="primary" onClick={() => receptionner(o)}>Valider</Button>
+                  <Button size="sm" onClick={() => setRecv(p => ({ ...p, [o.id]: undefined }))}>Annuler</Button>
+                </div>
+              </div>
+            )
+          })()}
+          {isAdmin && <Button size="sm" tone="danger" onClick={() => delOrder(o)}>Suppr.</Button>}
+        </div>
+      )
+    } },
+  ]
+
   return (
-    <div>
-      {msg && <div className="ok">{msg}</div>}
-      {err && <div className="err">{err}</div>}
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-6)' }}>
+      {msg && <AlertBanner tone="ok" title="Succès">{msg}</AlertBanner>}
+      {err && <AlertBanner tone="alarm" title="Erreur">{err}</AlertBanner>}
 
       {!isPompiste && !showPropose && (
-        <button className="btn" onClick={() => setShowPropose(true)}>➕ Proposer une nouvelle commande</button>
+        <Button tone="primary" onClick={() => setShowPropose(true)} style={{ alignSelf: 'flex-start' }}>+ Proposer une nouvelle commande</Button>
       )}
 
-      {!isPompiste && showPropose && <div className="card">
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <h2 style={{ margin: 0 }}>➕ Proposer une commande</h2>
-          <button className="btn sec small" onClick={() => setShowPropose(false)}>✕ Fermer</button>
-        </div>
-        <form onSubmit={propose}>
-          <div className="row">
-            <div><label>Catégorie</label>
-              <select value={nf.categorie} onChange={e => changeCat(e.target.value)}>
-                {CATS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
-              </select></div>
-            <div><label>Date de proposition</label><input type="date" value={nf.date_proposition} max={today()} onChange={e => setNf({ ...nf, date_proposition: e.target.value })} /></div>
-          </div>
-
-          {nf.categorie === 'carburant' && <>
-            <p className="hint">Commande simultanée essence + gasoil : renseigne la quantité de chaque produit (laisse à 0 ce que tu ne commandes pas). Une commande sera créée par produit. Minimum {MIN_CARBURANT.toLocaleString('fr-FR')} L par produit (exigence fournisseur).</p>
-
-            {(pa('essence') === 0 || pa('gasoil') === 0) && (
-              <div className="err">
-                ⚠️ Prix d'achat manquant pour {[pa('essence') === 0 && 'essence', pa('gasoil') === 0 && 'gasoil'].filter(Boolean).join(' et ')} — les coûts affichés ci-dessous seront à 0 F.
-                Renseigne-le dans <b>Stations &amp; équipe → Prix &amp; marge → Prix d'achat</b> avant de proposer cette commande.
-              </div>
-            )}
-
-            {!bonsOn && <p className="hint" style={{ color: 'var(--warn, #b8860b)' }}>💡 Les bons sont désormais virés directement en banque : les commandes se règlent à 100 % par chèque.</p>}
-
-            {bonsOn && (
-              <div className="card" style={{ background: 'var(--bg-soft, #f7f7f9)', marginBottom: 10 }}>
-                <b>💡 Combinaisons possibles</b> — bons disponibles : <b>{fcfa(bonsRestant)}</b>
-                <p className="hint" style={{ marginTop: 4 }}>Pour une quantité donnée, part payée en bons (dans la limite du disponible) vs complément en chèque — calculé indépendamment pour chaque produit.</p>
-                <div className="table-wrap">
-                  <table>
-                    <thead><tr><th className="num">Litres</th><th className="num">Coût essence</th><th className="num">Bons</th><th className="num">Chèque</th><th></th><th className="num">Coût gasoil</th><th className="num">Bons</th><th className="num">Chèque</th><th></th></tr></thead>
-                    <tbody>
-                      {COMBOS.map(q => {
-                        const ce = q * pa('essence'), be = Math.min(bonsRestant, ce), che = ce - be
-                        const cg = q * pa('gasoil'), bg = Math.min(bonsRestant, cg), chg = cg - bg
-                        return (<tr key={q}>
-                          <td className="num">{q.toLocaleString('fr-FR')}</td>
-                          <td className="num">{fcfa(ce)}</td><td className="num">{fcfa(be)}</td><td className="num">{fcfa(che)}</td>
-                          <td><button type="button" className="btn small" onClick={() => chooseCombo('essence', q)}>Choisir</button></td>
-                          <td className="num">{fcfa(cg)}</td><td className="num">{fcfa(bg)}</td><td className="num">{fcfa(chg)}</td>
-                          <td><button type="button" className="btn small" onClick={() => chooseCombo('gasoil', q)}>Choisir</button></td>
-                        </tr>)
-                      })}
-                    </tbody>
-                  </table>
-                  <p className="hint" style={{ marginTop: 6 }}>Si tu choisis essence ET gasoil, clique ensuite « Utiliser les bons disponibles » pour répartir correctement le pool de bons partagé entre les deux.</p>
-                </div>
-                <button type="button" className="btn sec small" style={{ marginTop: 8 }} onClick={applyBonsAuto}>↧ Utiliser les bons disponibles (répartir sur les quantités saisies)</button>
-              </div>
-            )}
-
-            {nf.rows.map((r, i) => (
-              <fieldset className="fieldset" key={r.produit} style={{ marginBottom: 8 }}>
-                <b style={{ textTransform: 'capitalize' }}>{r.produit}</b>
-                <div className="row-3" style={{ marginTop: 6 }}>
-                  <div><label>Quantité (L)</label><input type="text" inputMode="decimal" value={r.qte} onChange={e => setRow(i, 'qte', e.target.value)} /></div>
-                  {bonsOn && <div><label>Bons (base, F)</label><input type="text" inputMode="decimal" value={r.bons} onChange={e => setRow(i, 'bons', e.target.value)} /></div>}
-                  <div><label>{bonsOn ? 'Complément chèque (F)' : 'Chèque (F)'}</label><input type="text" inputMode="decimal" value={r.cheque} onChange={e => setRow(i, 'cheque', e.target.value)} /></div>
-                </div>
-                <div className="row" style={{ marginTop: 6 }}>
-                  <div><label>Réf. chèque</label><input value={r.ref} onChange={e => setRow(i, 'ref', e.target.value)} /></div>
-                  <div style={{ alignSelf: 'end' }}>{N(r.qte) > 0 ? <span className="ok">Coût estimé <b>{fcfa(N(r.qte) * pa(r.produit))}</b> · financement {fcfa(N(r.bons) + N(r.cheque))}</span> : null}</div>
-                </div>
-                {N(r.qte) > 0 && N(r.qte) < MIN_CARBURANT && <div className="err" style={{ marginTop: 6 }}>⚠️ Minimum {MIN_CARBURANT.toLocaleString('fr-FR')} L exigé par le fournisseur.</div>}
-              </fieldset>
-            ))}
-            {(() => { const t = nf.rows.reduce((s, r) => s + N(r.qte) * pa(r.produit), 0); return t > 0 ? <div className="ok" style={{ marginTop: 6 }}>Total commande : <b>{fcfa(t)}</b></div> : null })()}
-          </>}
-
-          {(nf.categorie === 'gaz' || nf.categorie === 'lubrifiant') && <>
-            <p className="hint">Renseigne les quantités pour tous les types voulus en une seule fois. Une commande sera créée par produit avec une quantité &gt; 0.</p>
-            {!nf.rows.length && <p className="muted">Aucun produit « {nf.categorie} » dans le catalogue. Ajoute-les d'abord dans « Produits & prix ».</p>}
-            <div><label>Paiement</label><select value={nf.mode_paiement} onChange={e => setNf({ ...nf, mode_paiement: e.target.value })}><option value="cheque">Chèque</option><option value="especes">Espèces</option>{bonsOn && <option value="bons">Bons</option>}</select></div>
-            {nf.rows.length > 0 && <div className="table-wrap" style={{ marginTop: 8 }}>
-              <table>
-                <thead><tr><th>Produit</th><th className="num" style={{ width: 100 }}>Quantité</th><th className="num" style={{ width: 120 }}>Montant (F)</th></tr></thead>
-                <tbody>
-                  {nf.rows.map((r, i) => (
-                    <tr key={r.produit}>
-                      <td>{r.produit}</td>
-                      <td><input type="text" inputMode="decimal" value={r.qte} onChange={e => setRow(i, 'qte', e.target.value)} style={{ width: 90, textAlign: 'right' }} /></td>
-                      <td><input type="text" inputMode="decimal" value={r.montant} onChange={e => setRow(i, 'montant', e.target.value)} style={{ width: 110, textAlign: 'right' }} /></td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>}
-            {(() => { const t = nf.rows.reduce((s, r) => s + N(r.montant), 0); return t > 0 ? <div className="ok" style={{ marginTop: 6 }}>Total à payer : <b>{fcfa(t)}</b></div> : null })()}
-          </>}
-
-          {nf.categorie === 'superette' && <>
-            <label>Articles</label>
-            {nf.lignes.map((l, i) => (
-              <div className="row" key={i} style={{ marginBottom: 6 }}>
-                <div style={{ flex: 2 }}><input list="prod-sup" value={l.article} placeholder="article" onChange={e => setNf({ ...nf, lignes: nf.lignes.map((x, j) => j === i ? { ...x, article: e.target.value } : x) })} /></div>
-                <div><input type="text" inputMode="decimal" value={l.qte} placeholder="qté" onChange={e => setNf({ ...nf, lignes: nf.lignes.map((x, j) => j === i ? { ...x, qte: e.target.value } : x) })} /></div>
-              </div>
-            ))}
-            <datalist id="prod-sup">{prodOf('superette').map(p => <option key={p.id} value={p.nom} />)}</datalist>
-            <button type="button" className="btn sec small" onClick={() => setNf({ ...nf, lignes: [...nf.lignes, { article: '', qte: '' }] })}>+ Article</button>
-            <div className="row" style={{ marginTop: 8 }}>
-              <div><label>Paiement</label><select value={nf.mode_paiement} onChange={e => setNf({ ...nf, mode_paiement: e.target.value })}><option value="cheque">Chèque</option><option value="especes">Espèces</option></select></div>
-              <div><label>Montant total (F)</label><input type="text" inputMode="decimal" value={nf.montant_paiement} onChange={e => setNf({ ...nf, montant_paiement: e.target.value })} /></div>
+      {!isPompiste && showPropose && (
+        <Panel title="Proposer une commande" actions={<Button size="sm" onClick={() => setShowPropose(false)}>Fermer</Button>}>
+          <form onSubmit={propose} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-4)' }}>
+            <div style={{ display: 'flex', gap: 'var(--sp-4)', flexWrap: 'wrap' }}>
+              <Field label="Catégorie" style={{ flex: '1 1 180px' }}>
+                <Select value={nf.categorie} onChange={e => changeCat(e.target.value)} options={CATS.map(([k, l]) => ({ value: k, label: l }))} style={{ width: '100%' }} />
+              </Field>
+              <Field label="Date de proposition" style={{ flex: '1 1 180px' }}>
+                <Input type="date" value={nf.date_proposition} max={today()} onChange={e => setNf({ ...nf, date_proposition: e.target.value })} />
+              </Field>
             </div>
-          </>}
 
-          <label>Note</label><input value={nf.note} onChange={e => setNf({ ...nf, note: e.target.value })} />
-          <div style={{ height: 10 }} /><button className="btn small">Proposer la commande</button>
-        </form>
-      </div>}
+            {nf.categorie === 'carburant' && <>
+              <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', margin: 0 }}>
+                Commande simultanée essence + gasoil : renseigne la quantité de chaque produit (laisse à 0 ce que tu ne commandes pas). Une commande sera créée par produit. Minimum {MIN_CARBURANT.toLocaleString('fr-FR')} L par produit (exigence fournisseur).
+              </p>
+
+              {(pa('essence') === 0 || pa('gasoil') === 0) && (
+                <AlertBanner tone="alarm" title="Prix manquant">
+                  Prix d'achat manquant pour {[pa('essence') === 0 && 'essence', pa('gasoil') === 0 && 'gasoil'].filter(Boolean).join(' et ')} — les coûts affichés ci-dessous seront à 0 F.
+                  Renseigne-le dans <b>Stations &amp; équipe → Prix &amp; marge → Prix d'achat</b> avant de proposer cette commande.
+                </AlertBanner>
+              )}
+
+              {!bonsOn && <AlertBanner tone="info" title="Info">Les bons sont désormais virés directement en banque : les commandes se règlent à 100 % par chèque.</AlertBanner>}
+
+              {bonsOn && (
+                <Panel title="Combinaisons possibles" meta={`bons disponibles : ${fcfa(bonsRestant)}`} flush>
+                  <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', margin: 'var(--sp-4) var(--gutter-panel) 0' }}>
+                    Pour une quantité donnée, part payée en bons (dans la limite du disponible) vs complément en chèque — calculé indépendamment pour chaque produit.
+                  </p>
+                  <div style={{ marginTop: 'var(--sp-4)' }}>
+                    <DataTable columns={[
+                      { key: 'litres', header: 'Litres', numeric: true, align: 'right', render: row => row.litres.toLocaleString('fr-FR') },
+                      { key: 'ce', header: 'Coût essence', numeric: true, align: 'right', render: row => fcfa(row.litres * pa('essence')) },
+                      { key: 'be', header: 'Bons', numeric: true, align: 'right', render: row => fcfa(Math.min(bonsRestant, row.litres * pa('essence'))) },
+                      { key: 'che', header: 'Chèque', numeric: true, align: 'right', render: row => fcfa(row.litres * pa('essence') - Math.min(bonsRestant, row.litres * pa('essence'))) },
+                      { key: 'choose_e', header: '', render: row => <Button size="sm" onClick={() => chooseCombo('essence', row.litres)}>Choisir</Button> },
+                      { key: 'cg', header: 'Coût gasoil', numeric: true, align: 'right', render: row => fcfa(row.litres * pa('gasoil')) },
+                      { key: 'bg', header: 'Bons', numeric: true, align: 'right', render: row => fcfa(Math.min(bonsRestant, row.litres * pa('gasoil'))) },
+                      { key: 'chg', header: 'Chèque', numeric: true, align: 'right', render: row => fcfa(row.litres * pa('gasoil') - Math.min(bonsRestant, row.litres * pa('gasoil'))) },
+                      { key: 'choose_g', header: '', render: row => <Button size="sm" onClick={() => chooseCombo('gasoil', row.litres)}>Choisir</Button> },
+                    ]} rows={COMBOS.map(q => ({ id: q, litres: q }))} />
+                  </div>
+                  <p style={{ font: '400 11px/1.4 var(--font-ui)', color: 'var(--text-muted)', margin: 'var(--sp-4) var(--gutter-panel) 0' }}>
+                    Si tu choisis essence ET gasoil, clique ensuite « Utiliser les bons disponibles » pour répartir correctement le pool de bons partagé entre les deux.
+                  </p>
+                  <div style={{ padding: '0 var(--gutter-panel) var(--gutter-panel)', marginTop: 'var(--sp-3)' }}>
+                    <Button size="sm" onClick={applyBonsAuto}>Utiliser les bons disponibles (répartir sur les quantités saisies)</Button>
+                  </div>
+                </Panel>
+              )}
+
+              {nf.rows.map((r, i) => (
+                <div key={r.produit} style={{ padding: 'var(--sp-4)', background: 'var(--surface-raised)', borderRadius: 'var(--radius-1)', border: '1px solid var(--border-hairline)', display: 'flex', flexDirection: 'column', gap: 'var(--sp-3)' }}>
+                  <b style={{ textTransform: 'capitalize', font: 'var(--fw-semibold) 13px/1.2 var(--font-ui)', color: 'var(--text-primary)' }}>{r.produit}</b>
+                  <div style={{ display: 'flex', gap: 'var(--sp-4)', flexWrap: 'wrap' }}>
+                    <Field label="Quantité (L)" style={{ flex: '1 1 140px' }}><Input type="text" inputMode="decimal" numeric value={r.qte} onChange={e => setRow(i, 'qte', e.target.value)} /></Field>
+                    {bonsOn && <Field label="Bons (base, F)" style={{ flex: '1 1 140px' }}><Input type="text" inputMode="decimal" numeric value={r.bons} onChange={e => setRow(i, 'bons', e.target.value)} /></Field>}
+                    <Field label={bonsOn ? 'Complément chèque (F)' : 'Chèque (F)'} style={{ flex: '1 1 140px' }}><Input type="text" inputMode="decimal" numeric value={r.cheque} onChange={e => setRow(i, 'cheque', e.target.value)} /></Field>
+                  </div>
+                  <div style={{ display: 'flex', gap: 'var(--sp-4)', flexWrap: 'wrap', alignItems: 'end' }}>
+                    <Field label="Réf. chèque" style={{ flex: '1 1 160px' }}><Input value={r.ref} onChange={e => setRow(i, 'ref', e.target.value)} /></Field>
+                    {N(r.qte) > 0 && <span style={{ color: 'var(--state-ok)', font: '400 12px/1.3 var(--font-ui)' }}>Coût estimé <b>{fcfa(N(r.qte) * pa(r.produit))}</b> · financement {fcfa(N(r.bons) + N(r.cheque))}</span>}
+                  </div>
+                  {N(r.qte) > 0 && N(r.qte) < MIN_CARBURANT && <AlertBanner tone="alarm" title="Quantité insuffisante">Minimum {MIN_CARBURANT.toLocaleString('fr-FR')} L exigé par le fournisseur.</AlertBanner>}
+                </div>
+              ))}
+              {(() => { const t = nf.rows.reduce((s, r) => s + N(r.qte) * pa(r.produit), 0); return t > 0 ? <div style={{ color: 'var(--state-ok)', font: '400 13px/1.3 var(--font-ui)' }}>Total commande : <b>{fcfa(t)}</b></div> : null })()}
+            </>}
+
+            {(nf.categorie === 'gaz' || nf.categorie === 'lubrifiant') && <>
+              <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', margin: 0 }}>Renseigne les quantités pour tous les types voulus en une seule fois. Une commande sera créée par produit avec une quantité &gt; 0.</p>
+              {!nf.rows.length && <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', margin: 0 }}>Aucun produit « {nf.categorie} » dans le catalogue. Ajoute-les d'abord dans « Produits &amp; prix ».</p>}
+              <Field label="Paiement" style={{ maxWidth: 220 }}>
+                <Select value={nf.mode_paiement} onChange={e => setNf({ ...nf, mode_paiement: e.target.value })}
+                  options={[{ value: 'cheque', label: 'Chèque' }, { value: 'especes', label: 'Espèces' }, ...(bonsOn ? [{ value: 'bons', label: 'Bons' }] : [])]} style={{ width: '100%' }} />
+              </Field>
+              {nf.rows.length > 0 && (
+                <DataTable columns={[
+                  { key: 'produit', header: 'Produit' },
+                  { key: 'qte', header: 'Quantité', numeric: true, align: 'right', render: r => <Input size="sm" type="text" inputMode="decimal" numeric value={r.qte} onChange={e => setRow(r.id, 'qte', e.target.value)} style={{ width: 90 }} /> },
+                  { key: 'montant', header: 'Montant (F)', numeric: true, align: 'right', render: r => <Input size="sm" type="text" inputMode="decimal" numeric value={r.montant} onChange={e => setRow(r.id, 'montant', e.target.value)} style={{ width: 110 }} /> },
+                ]} rows={nf.rows.map((r, i) => ({ ...r, id: i }))} />
+              )}
+              {(() => { const t = nf.rows.reduce((s, r) => s + N(r.montant), 0); return t > 0 ? <div style={{ color: 'var(--state-ok)', font: '400 13px/1.3 var(--font-ui)' }}>Total à payer : <b>{fcfa(t)}</b></div> : null })()}
+            </>}
+
+            {nf.categorie === 'superette' && <>
+              <div style={{ font: 'var(--fw-semibold) 11px/1 var(--font-ui)', textTransform: 'uppercase', letterSpacing: 'var(--ls-label)', color: 'var(--text-muted)' }}>Articles</div>
+              {nf.lignes.map((l, i) => (
+                <div key={i} style={{ display: 'flex', gap: 'var(--sp-3)' }}>
+                  <Input list="prod-sup" value={l.article} placeholder="article" onChange={e => setNf({ ...nf, lignes: nf.lignes.map((x, j) => j === i ? { ...x, article: e.target.value } : x) })} style={{ flex: 2 }} />
+                  <Input type="text" inputMode="decimal" numeric value={l.qte} placeholder="qté" onChange={e => setNf({ ...nf, lignes: nf.lignes.map((x, j) => j === i ? { ...x, qte: e.target.value } : x) })} style={{ flex: 1 }} />
+                </div>
+              ))}
+              <datalist id="prod-sup">{prodOf('superette').map(p => <option key={p.id} value={p.nom} />)}</datalist>
+              <Button type="button" onClick={() => setNf({ ...nf, lignes: [...nf.lignes, { article: '', qte: '' }] })} style={{ alignSelf: 'flex-start' }}>+ Article</Button>
+              <div style={{ display: 'flex', gap: 'var(--sp-4)', flexWrap: 'wrap' }}>
+                <Field label="Paiement" style={{ flex: '1 1 160px' }}>
+                  <Select value={nf.mode_paiement} onChange={e => setNf({ ...nf, mode_paiement: e.target.value })} options={[{ value: 'cheque', label: 'Chèque' }, { value: 'especes', label: 'Espèces' }]} style={{ width: '100%' }} />
+                </Field>
+                <Field label="Montant total (F)" style={{ flex: '1 1 160px' }}>
+                  <Input type="text" inputMode="decimal" numeric value={nf.montant_paiement} onChange={e => setNf({ ...nf, montant_paiement: e.target.value })} />
+                </Field>
+              </div>
+            </>}
+
+            <Field label="Note"><Input value={nf.note} onChange={e => setNf({ ...nf, note: e.target.value })} /></Field>
+            <Button type="submit" tone="primary" style={{ alignSelf: 'flex-start' }}>Proposer la commande</Button>
+          </form>
+        </Panel>
+      )}
 
       {/* Historique des commandes : tableau filtrable (mois OU période libre, catégorie, produit, statut).
           Toutes les actions d'une commande (valider/refuser/lancer/réceptionner/supprimer) sont ici,
           contextuelles au statut et au rôle — plus de section « à réceptionner » séparée. */}
-      <div className="card">
-        <h2>📋 Historique des commandes</h2>
-        <div className="toolbar">
-          <select value={year} onChange={e => { setYear(e.target.value); setDateFrom(''); setDateTo('') }}>
-            <option value="all">Toutes années</option>{orderYears.map(y => <option key={y} value={y}>{y}</option>)}
-          </select>
-          <select value={month} onChange={e => { setMonth(e.target.value); setDateFrom(''); setDateTo('') }}>
-            <option value="all">Tous mois</option>
-            {['01','02','03','04','05','06','07','08','09','10','11','12'].map(m => <option key={m} value={m}>{m}</option>)}
-          </select>
-          <span className="muted" style={{ fontSize: 12 }}>ou période :</span>
-          <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} style={{ width: 'auto' }} />
-          <span className="muted">→</span>
-          <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} style={{ width: 'auto' }} />
-          {filtersActive && <button className="btn sec small" onClick={resetFilters}>Réinitialiser</button>}
+      <Panel title="Historique des commandes" meta={`${shown.length} commande(s) · total ${fcfa(totalMontant)}`} flush>
+        <div style={{ padding: 'var(--gutter-panel)', display: 'flex', flexDirection: 'column', gap: 'var(--sp-3)' }}>
+          <div style={{ display: 'flex', gap: 'var(--sp-3)', flexWrap: 'wrap', alignItems: 'center' }}>
+            <Select size="sm" value={year} onChange={e => { setYear(e.target.value); setDateFrom(''); setDateTo('') }} options={[{ value: 'all', label: 'Toutes années' }, ...orderYears.map(y => ({ value: y, label: y }))]} />
+            <Select size="sm" value={month} onChange={e => { setMonth(e.target.value); setDateFrom(''); setDateTo('') }} options={[{ value: 'all', label: 'Tous mois' }, ...['01','02','03','04','05','06','07','08','09','10','11','12'].map(m => ({ value: m, label: m }))]} />
+            <span style={{ font: '400 12px/1 var(--font-ui)', color: 'var(--text-muted)' }}>ou période :</span>
+            <Input type="date" size="sm" value={dateFrom} onChange={e => setDateFrom(e.target.value)} style={{ width: 150 }} />
+            <span style={{ color: 'var(--text-muted)' }}>→</span>
+            <Input type="date" size="sm" value={dateTo} onChange={e => setDateTo(e.target.value)} style={{ width: 150 }} />
+            {filtersActive && <Button size="sm" onClick={resetFilters}>Réinitialiser</Button>}
+          </div>
+          <div style={{ display: 'flex', gap: 'var(--sp-2)', flexWrap: 'wrap' }}>
+            <Button size="sm" tone={fCat === 'tous' ? 'primary' : 'outline'} onClick={() => { setFCat('tous'); setFProduit('tous') }}>Toutes catégories</Button>
+            {CATS.map(([k, l]) => <Button key={k} size="sm" tone={fCat === k ? 'primary' : 'outline'} onClick={() => { setFCat(k); setFProduit('tous') }}>{l}</Button>)}
+          </div>
+          <div style={{ display: 'flex', gap: 'var(--sp-2)', flexWrap: 'wrap', alignItems: 'center' }}>
+            <Select size="sm" value={fProduit} onChange={e => setFProduit(e.target.value)}
+              options={[{ value: 'tous', label: 'Tous produits' }, ...produits.filter(p => fCat === 'tous' || orders.some(o => o.produit === p && (o.categorie || 'carburant') === fCat)).map(p => ({ value: p, label: p }))]} />
+            {[['tous', 'Tous statuts'], ['proposee', `Proposées (${count('proposee')})`], ['validee', `Validées (${count('validee')})`], ['lancee', `Lancées (${count('lancee')})`], ['partielle', `Partielles (${count('partielle')})`], ['recue', `Reçues (${count('recue')})`], ['annulee', `Refusées (${count('annulee')})`]].map(([k, l]) =>
+              <Button key={k} size="sm" tone={fStatut === k ? 'primary' : 'outline'} onClick={() => setFStatut(k)}>{l}</Button>)}
+          </div>
         </div>
-        <div className="toolbar">
-          <button className={'btn small ' + (fCat === 'tous' ? '' : 'sec')} onClick={() => { setFCat('tous'); setFProduit('tous') }}>Toutes catégories</button>
-          {CATS.map(([k, l]) => <button key={k} className={'btn small ' + (fCat === k ? '' : 'sec')} onClick={() => { setFCat(k); setFProduit('tous') }}>{l}</button>)}
-        </div>
-        <div className="toolbar">
-          <select value={fProduit} onChange={e => setFProduit(e.target.value)}>
-            <option value="tous">Tous produits</option>
-            {produits.filter(p => fCat === 'tous' || orders.some(o => o.produit === p && (o.categorie || 'carburant') === fCat)).map(p => <option key={p} value={p}>{p}</option>)}
-          </select>
-          {[['tous', 'Tous statuts'], ['proposee', `Proposées (${count('proposee')})`], ['validee', `Validées (${count('validee')})`], ['lancee', `Lancées (${count('lancee')})`], ['partielle', `Partielles (${count('partielle')})`], ['recue', `Reçues (${count('recue')})`], ['annulee', `Refusées (${count('annulee')})`]].map(([k, l]) =>
-            <button key={k} className={'btn small ' + (fStatut === k ? '' : 'sec')} onClick={() => setFStatut(k)}>{l}</button>)}
-        </div>
-        <p className="hint">{shown.length} commande(s) · total {fcfa(totalMontant)}</p>
-
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Dates</th><th className="num" title="Jours entre lancement et réception">Délai</th><th>Catégorie</th><th>Produit / détail</th><th className="num">Qté</th>
-                <th>Statut</th><th>Paiement</th><th>Avancement</th><th>Note</th><th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {shown.map(o => {
-                const cat = o.categorie || 'carburant'
-                const st = STATUTS[o.statut] || { label: o.statut, color: '#666' }
-                const catLabel = (CATS.find(c => c[0] === cat) || [, cat])[1]
-                // Priorité à la somme PAR réception (livreReel, v40) — fiable même en cas de ventes
-                // entre deux réceptions partielles ; repli sur l'ancien calcul si v40 pas encore exécutée.
-                const livre = cat !== 'carburant' ? null
-                  : livreReel[o.id] != null ? livreReel[o.id]
-                  : (o.cuve_apres != null && o.cuve_avant != null) ? N(o.cuve_apres) - N(o.cuve_avant) : null
-                const perte = livre != null ? Math.max(0, N(o.quantite_commandee) - livre) : null
-                const seuil = N(o.quantite_commandee) * N(settings.taux_perte_acceptable) / 100
-                const perteNA = perte != null ? Math.max(0, perte - seuil) : null
-                const t = recvTotals[o.id] || {}; const deja = N(t.quantite_recue_total)
-                const reste = Math.max(N(o.quantite_commandee) - deja, 0)
-                return (
-                  <tr key={o.id}>
-                    <td style={{ fontSize: 12, whiteSpace: 'nowrap' }}>
-                      Prop. {frDate(dateOf(o))}
-                      {o.date_lancement && <><br />Lanc. {frDate(o.date_lancement)}</>}
-                      {o.statut === 'recue' && o.report_date && <><br />Reçue {frDate(o.report_date)}</>}
-                    </td>
-                    <td className="num">{delaiJours(o) != null ? `${delaiJours(o)} j` : '—'}</td>
-                    <td>{catLabel}</td>
-                    <td>{cat === 'superette'
-                      ? <span title={(o.lignes || []).map(l => `${l.article} ×${l.qte}`).join(' · ')}>{(o.lignes || []).length} article(s)</span>
-                      : o.produit}</td>
-                    <td className="num">{cat !== 'superette' && N(o.quantite_commandee) ? N(o.quantite_commandee).toLocaleString('fr-FR') : '—'}</td>
-                    <td><span className="badge" style={{ background: st.color }}>{st.label}</span></td>
-                    <td style={{ fontSize: 12 }}>{cat === 'carburant'
-                      ? <>{fcfa(orderMontant(o))}{o.bons_base ? ` · bons ${fcfa(o.bons_base)}` : ''}{o.cheque_montant ? ` · chèque ${fcfa(o.cheque_montant)}` : ''}</>
-                      : <>{o.mode_paiement || '—'} · {fcfa(o.montant_paiement)}</>}</td>
-                    <td style={{ fontSize: 12 }}>
-                      {(o.statut === 'lancee' || o.statut === 'partielle') && <span className="pill">reçu {deja.toLocaleString('fr-FR')}/{N(o.quantite_commandee).toLocaleString('fr-FR')} · reste {reste.toLocaleString('fr-FR')}</span>}
-                      {o.statut === 'recue' && cat === 'carburant' && livre != null && (
-                        <span style={{ color: perteNA > 0 ? 'var(--danger)' : 'var(--ok)' }}>
-                          livré {livre.toLocaleString('fr-FR')} · perte {perte.toLocaleString('fr-FR')}{perteNA > 0 ? ` ⚠️ (${Math.round(perteNA).toLocaleString('fr-FR')} hors seuil)` : ' ✓'}
-                        </span>
-                      )}
-                      {o.statut === 'recue' && cat !== 'carburant' && <span>reçu {deja.toLocaleString('fr-FR')}/{N(o.quantite_commandee).toLocaleString('fr-FR')}</span>}
-                      {!['lancee', 'partielle', 'recue'].includes(o.statut) && '—'}
-                    </td>
-                    <td style={{ fontSize: 12, maxWidth: 140 }}>{o.note || ''}</td>
-                    <td style={{ whiteSpace: 'nowrap' }}>
-                      {o.statut === 'proposee' && isAdmin && <><button className="btn small" onClick={() => valider(o)}>✓</button>{' '}<button className="btn sec small" onClick={() => refuser(o)}>✕</button></>}
-                      {o.statut === 'proposee' && !isAdmin && <span className="muted" style={{ fontSize: 11 }}>en attente admin</span>}
-                      {o.statut === 'validee' && <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-                        <input type="date" value={launch[o.id] || today()} max={today()} onChange={e => setLaunch(p => ({ ...p, [o.id]: e.target.value }))} style={{ width: 120 }} />
-                        <button className="btn small" onClick={() => lancer(o)}>🚚</button>
-                      </div>}
-                      {(o.statut === 'lancee' || o.statut === 'partielle') && (() => {
-                        const r = recv[o.id]
-                        if (!r) return <button className="btn small" onClick={() => setRecv(p => ({ ...p, [o.id]: { cuve_avant: '', cuve_apres: '', date: today(), quantite_recue: reste ? String(reste) : '' } }))}>📥 Réceptionner{deja > 0 ? ' (suite)' : ''}</button>
-                        return (
-                          <div style={{ minWidth: 200 }}>
-                            <label style={{ fontSize: 11 }}>Qté reçue *</label>
-                            <input type="text" inputMode="decimal" value={r.quantite_recue || ''} onChange={e => setRecv(p => ({ ...p, [o.id]: { ...r, quantite_recue: e.target.value } }))} />
-                            {cat === 'carburant' && <div className="row" style={{ marginTop: 4 }}>
-                              <div><label style={{ fontSize: 11 }}>Cuve avant</label><input type="text" inputMode="decimal" value={r.cuve_avant} onChange={e => setRecv(p => ({ ...p, [o.id]: { ...r, cuve_avant: e.target.value } }))} /></div>
-                              <div><label style={{ fontSize: 11 }}>Cuve après</label><input type="text" inputMode="decimal" value={r.cuve_apres} onChange={e => setRecv(p => ({ ...p, [o.id]: { ...r, cuve_apres: e.target.value } }))} /></div>
-                            </div>}
-                            <label style={{ fontSize: 11 }}>Date</label>
-                            <input type="date" value={r.date || today()} max={today()} onChange={e => setRecv(p => ({ ...p, [o.id]: { ...r, date: e.target.value } }))} />
-                            {r.warnEcart && (
-                              <div className="err" style={{ marginTop: 4, fontSize: 11 }}>
-                                ⚠️ {r.warnEcart}
-                                <label style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 4 }}>
-                                  <input type="checkbox" checked={!!r.forceEcart} onChange={e => setRecv(p => ({ ...p, [o.id]: { ...r, forceEcart: e.target.checked, warnEcart: e.target.checked ? '' : r.warnEcart } }))} />
-                                  Forcer (c'est correct malgré tout)
-                                </label>
-                              </div>
-                            )}
-                            <div style={{ display: 'flex', gap: 4, marginTop: 4 }}>
-                              <button className="btn small" onClick={() => receptionner(o)}>Valider</button>
-                              <button className="btn sec small" onClick={() => setRecv(p => ({ ...p, [o.id]: undefined }))}>Annuler</button>
-                            </div>
-                          </div>
-                        )
-                      })()}
-                      {isAdmin && <><br /><button className="btn sec small" style={{ marginTop: 4 }} onClick={() => delOrder(o)}>Suppr.</button></>}
-                    </td>
-                  </tr>
-                )
-              })}
-              {!shown.length && <tr><td colSpan={10} className="muted">Aucune commande pour ces filtres.</td></tr>}
-            </tbody>
-          </table>
-        </div>
-      </div>
+        <DataTable columns={columns} rows={shown} />
+      </Panel>
     </div>
   )
 }

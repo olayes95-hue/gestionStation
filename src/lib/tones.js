@@ -25,3 +25,13 @@ export const STOCK_MOVEMENT_TONES = {
   sortie: 'alarm',
   ajustement: 'warn',
 }
+
+// Orders.jsx a 6 statuts ; Badge OCTANE expose exactement 6 tons (ok/warn/alarm/info/idle/accent) — mapping direct, un ton par statut.
+export const ORDER_STATUS_TONES = {
+  proposee: { label: 'Proposée', tone: 'warn' },
+  validee: { label: 'Validée', tone: 'info' },
+  lancee: { label: 'Lancée', tone: 'accent' },
+  partielle: { label: 'Partielle', tone: 'idle' },
+  recue: { label: 'Reçue', tone: 'ok' },
+  annulee: { label: 'Refusée', tone: 'alarm' },
+}
