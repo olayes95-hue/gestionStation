@@ -3,13 +3,20 @@ import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/auth.jsx'
 import { useStation } from '../lib/station.jsx'
 import { fcfa } from '../lib/format'
+import { Panel, PanelEmpty } from '../ds/octane/components/core/Panel.jsx'
+import { Button } from '../ds/octane/components/core/Button.jsx'
+import { Field } from '../ds/octane/components/forms/Field.jsx'
+import { Input } from '../ds/octane/components/forms/Input.jsx'
+import { Select } from '../ds/octane/components/forms/Select.jsx'
+import { AlertBanner } from '../ds/octane/components/feedback/AlertBanner.jsx'
+import { DataTable } from '../ds/octane/components/data/DataTable.jsx'
+import { Kpi } from '../lib/Kpi.jsx'
 
 const N = (v) => (v ? Number(v) : 0)
 // charges saisies à la main (les récurrentes se reportent d'un mois sur l'autre)
 const MANUAL_CATS = ['LOYER','SALAIRES','PRELEVEMENT_GERANT','IMPOTS','HONORAIRES','PRESTATIONS','PERTE_VENTE_CARBURANT','SONEB','TELEPHONE','AUTRE']
 const REVENU_CAT = 'AUTRES_PRODUITS'
-// dépenses quotidiennes -> charge auto
-const EXP_MAP = { SBEE: 'SBEE (auto)', CARBURANT: 'Carburant / déplacement (auto)' }
+const CAT_OPTIONS = [...MANUAL_CATS.map(c => ({ value: c, label: c.replace(/_/g, ' ') })), { value: REVENU_CAT, label: '+ AUTRES PRODUITS (revenu)' }]
 
 export default function Finance() {
   const { session } = useAuth()
@@ -82,7 +89,7 @@ export default function Finance() {
     if (!mois) { setErr('Choisis un mois précis pour saisir une charge.'); return }
     if (!nc.montant) return
     const { error } = await supabase.from('charges').insert({ station_id: stationId, mois, categorie: nc.categorie, montant: Number(nc.montant), note: nc.note || null, created_by: session.user.id })
-    if (error) setErr(error.message); else { setNc({ categorie: 'LOYER', montant: '', note: '' }); flash('Charge ajoutée ✓'); load() }
+    if (error) setErr(error.message); else { setNc({ categorie: 'LOYER', montant: '', note: '' }); flash('Charge ajoutée'); load() }
   }
   async function delCharge(id) { await supabase.from('charges').delete().eq('id', id); load() }
   // proposer : copier les charges récurrentes du mois précédent
@@ -94,101 +101,99 @@ export default function Finance() {
     if (!prevRows.length) { setErr(`Aucune charge sur ${prev} à reporter.`); return }
     const rows = prevRows.map(c => ({ station_id: stationId, mois, categorie: c.categorie, montant: c.montant, note: 'proposé (report ' + prev + ')', created_by: session.user.id }))
     const { error } = await supabase.from('charges').insert(rows)
-    if (error) setErr(error.message); else { flash(`${rows.length} charge(s) reportée(s) de ${prev} ✓`); load() }
+    if (error) setErr(error.message); else { flash(`${rows.length} charge(s) reportée(s) de ${prev}`); load() }
   }
 
+  const anneeOptions = annees.map(a => ({ value: a, label: a }))
+  const moisOptions = [{ value: '', label: 'Année entière' }, ...['01','02','03','04','05','06','07','08','09','10','11','12'].map(m => ({ value: `${annee}-${m}`, label: `${annee}-${m}` }))]
+
+  const chargesColumns = [
+    { key: 'mois', header: 'Mois' },
+    { key: 'categorie', header: 'Catégorie', render: c => `${c.categorie === REVENU_CAT ? 'Autres produits' : c.categorie.replace(/_/g, ' ')}${c.note ? ` · ${c.note}` : ''}` },
+    { key: 'montant', header: 'Montant', numeric: true, align: 'right', render: c => <span style={{ color: c.categorie === REVENU_CAT ? 'var(--state-ok)' : 'inherit' }}>{fcfa(c.montant)}</span> },
+    { key: 'actions', header: '', align: 'right', render: c => <Button size="sm" tone="danger" onClick={() => delCharge(c.id)}>Suppr.</Button> },
+  ]
+
   return (
-    <div>
-      {msg && <div className="ok">{msg}</div>}
-      {err && <div className="err">{err}</div>}
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-6)' }}>
+      {msg && <AlertBanner tone="ok" title="Succès">{msg}</AlertBanner>}
+      {err && <AlertBanner tone="alarm" title="Erreur">{err}</AlertBanner>}
 
-      <div className="card">
-        <h2>📊 Point financier</h2>
-        <div className="toolbar">
-          <select value={annee} onChange={e => { setAnnee(e.target.value); setMois('') }}>{annees.map(a => <option key={a}>{a}</option>)}</select>
-          <select value={mois} onChange={e => setMois(e.target.value)}>
-            <option value="">Année entière</option>
-            {['01','02','03','04','05','06','07','08','09','10','11','12'].map(m => <option key={m} value={`${annee}-${m}`}>{`${annee}-${m}`}</option>)}
-          </select>
-        </div>
-      </div>
+      <Panel title="Point financier" bodyStyle={{ display: 'none' }} actions={<>
+        <Select size="sm" value={annee} onChange={e => { setAnnee(e.target.value); setMois('') }} options={anneeOptions} />
+        <Select size="sm" value={mois} onChange={e => setMois(e.target.value)} options={moisOptions} />
+      </>} />
 
-      <div className="grid kpis" style={{ marginBottom: 16 }}>
-        <Kpi label="Litres carburant" value={Math.round(sum('litres_carburant')).toLocaleString('fr-FR') + ' L'} />
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 'var(--sp-4)' }}>
+        <Kpi label="Litres carburant" value={Math.round(sum('litres_carburant')).toLocaleString('fr-FR')} unit="L" />
         <Kpi label="Commission carburant" value={fcfa(commCarb)} sub="litres × marge" />
         <Kpi label="Ventes gaz + lubrifiant" value={fcfa(sum('ventes_gaz') + sum('ventes_lubrifiant'))} />
         <Kpi label="Ventes supérette" value={fcfa(sum('ventes_superette'))} />
         <Kpi label="Total charges" value={fcfa(totCharges)} />
         <Kpi label="Valeur du stock" value={fcfa(stockVal.reduce((s, v) => s + N(v.valeur), 0))} sub="gaz + lubrifiant + supérette" />
-        <Kpi label="RÉSULTAT" value={fcfa(resultat)} danger={resultat < 0} />
+        <Kpi label="RÉSULTAT" value={fcfa(resultat)} status={resultat < 0 ? 'alarm' : 'ok'} />
       </div>
 
-      <div className="card" style={{ borderColor: perteNaMontant > 0 ? '#f4c7c7' : 'var(--border)' }}>
-        <h2>⚠️ Pertes sur livraisons — {mois || annee}</h2>
-        <div className="grid kpis">
-          <Kpi label="Pertes NON acceptables" value={Math.round(perteNaLitres).toLocaleString('fr-FR') + ' L'} danger={perteNaLitres > 0} sub={`au-delà de ${settings.taux_perte_acceptable || 5}%`} />
-          <Kpi label="Montant (base retenue)" value={fcfa(perteNaMontant)} danger={perteNaMontant > 0} />
+      <Panel title="Pertes sur livraisons" meta={mois || annee} status={perteNaMontant > 0 ? 'alarm' : 'ok'}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 'var(--sp-4)' }}>
+          <Kpi label="Pertes NON acceptables" value={Math.round(perteNaLitres).toLocaleString('fr-FR')} unit="L" status={perteNaLitres > 0 ? 'alarm' : 'ok'} sub={`au-delà de ${settings.taux_perte_acceptable || 5}%`} />
+          <Kpi label="Montant (base retenue)" value={fcfa(perteNaMontant)} status={perteNaMontant > 0 ? 'alarm' : 'ok'} />
         </div>
-        <p className="hint" style={{ marginTop: 8 }}>Total des pertes au-delà du seuil de tolérance sur les livraisons réceptionnées. Sert de base à une éventuelle retenue sur le salaire du gérant si non justifiées.</p>
-      </div>
+        <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', marginTop: 'var(--sp-4)', marginBottom: 0 }}>
+          Total des pertes au-delà du seuil de tolérance sur les livraisons réceptionnées. Sert de base à une éventuelle retenue sur le salaire du gérant si non justifiées.
+        </p>
+      </Panel>
 
-      <div className="card">
-        <h2>Compte de résultat — {mois || annee}</h2>
-        <table><tbody>
-          <tr style={{ fontWeight: 600 }}><td>Produits (commissions, auto)</td><td className="num"></td></tr>
-          <tr><td style={{ paddingLeft: 20 }}>Commission carburant</td><td className="num">{fcfa(commCarb)}</td></tr>
-          <tr><td style={{ paddingLeft: 20 }}>Commission gaz + lubrifiant ({settings.taux_gaz}%)</td><td className="num">{fcfa(commGazLub)}</td></tr>
-          <tr><td style={{ paddingLeft: 20 }}>Commission supérette ({settings.taux_superette}%)</td><td className="num">{fcfa(commSuperette)}</td></tr>
-          {autresProduits > 0 && <tr><td style={{ paddingLeft: 20 }}>Autres produits (saisis)</td><td className="num">{fcfa(autresProduits)}</td></tr>}
-          <tr style={{ fontWeight: 600 }}><td>Charges</td><td className="num"></td></tr>
-          <tr><td style={{ paddingLeft: 20 }}>SBEE (auto, depuis dépenses)</td><td className="num">{fcfa(autoCharges.SBEE)}</td></tr>
-          <tr><td style={{ paddingLeft: 20 }}>Carburant / déplacement (auto)</td><td className="num">{fcfa(autoCharges.CARBURANT)}</td></tr>
-          <tr><td style={{ paddingLeft: 20 }}>Charges fixes (saisies)</td><td className="num">{fcfa(totManuel)}</td></tr>
-          <tr style={{ fontWeight: 700, borderTop: '2px solid var(--border)' }}>
-            <td>RÉSULTAT</td><td className="num" style={{ color: resultat < 0 ? 'var(--danger)' : 'var(--ok)' }}>{fcfa(resultat)}</td></tr>
-        </tbody></table>
-        <p className="hint" style={{ marginTop: 8 }}>SBEE et carburant/déplacement sont <b>déduits automatiquement</b> des dépenses saisies au quotidien. Les charges fixes se <b>reportent d'un mois sur l'autre</b> (bouton ci-dessous), tout reste modifiable.</p>
-      </div>
-
-      <div className="card">
-        <h2>Charges fixes {mois ? `de ${mois}` : ''}</h2>
-        {!mois && <p className="hint">Sélectionne un <b>mois précis</b> pour saisir/reporter les charges.</p>}
-        {mois && <>
-          <div className="toolbar">
-            <button className="btn sec small" onClick={reporterMoisPrecedent}>↩︎ Reporter le mois précédent</button>
+      <Panel title="Compte de résultat" meta={mois || annee}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-2)' }}>
+          <LedgerHead>Produits (commissions, auto)</LedgerHead>
+          <LedgerRow label="Commission carburant" value={fcfa(commCarb)} />
+          <LedgerRow label={`Commission gaz + lubrifiant (${settings.taux_gaz}%)`} value={fcfa(commGazLub)} />
+          <LedgerRow label={`Commission supérette (${settings.taux_superette}%)`} value={fcfa(commSuperette)} />
+          {autresProduits > 0 && <LedgerRow label="Autres produits (saisis)" value={fcfa(autresProduits)} />}
+          <LedgerHead>Charges</LedgerHead>
+          <LedgerRow label="SBEE (auto, depuis dépenses)" value={fcfa(autoCharges.SBEE)} />
+          <LedgerRow label="Carburant / déplacement (auto)" value={fcfa(autoCharges.CARBURANT)} />
+          <LedgerRow label="Charges fixes (saisies)" value={fcfa(totManuel)} />
+          <div style={{ display: 'flex', justifyContent: 'space-between', paddingTop: 'var(--sp-3)', borderTop: '2px solid var(--border-default)', font: 'var(--fw-semibold) 13px/1.2 var(--font-ui)', color: 'var(--text-primary)' }}>
+            <span>RÉSULTAT</span>
+            <span style={{ color: resultat < 0 ? 'var(--state-alarm)' : 'var(--state-ok)' }}>{fcfa(resultat)}</span>
           </div>
-          <form onSubmit={addCharge} className="row-3" style={{ alignItems: 'end' }}>
-            <div><label>Catégorie</label>
-              <select value={nc.categorie} onChange={e => setNc({ ...nc, categorie: e.target.value })}>
-                {MANUAL_CATS.map(c => <option key={c} value={c}>{c.replace(/_/g, ' ')}</option>)}
-                <option value={REVENU_CAT}>+ AUTRES PRODUITS (revenu)</option>
-              </select></div>
-            <div><label>Montant</label><input type="number" inputMode="decimal" value={nc.montant} onChange={e => setNc({ ...nc, montant: e.target.value })} /></div>
-            <div><button className="btn small">Ajouter</button></div>
-          </form>
-        </>}
-        <div className="table-wrap" style={{ marginTop: 12 }}>
-          <table>
-            <thead><tr><th>Mois</th><th>Catégorie</th><th className="num">Montant</th><th></th></tr></thead>
-            <tbody>
-              {chP.sort((a, b) => (a.mois + a.categorie).localeCompare(b.mois + b.categorie)).map(c => (
-                <tr key={c.id}>
-                  <td>{c.mois}</td>
-                  <td>{c.categorie === REVENU_CAT ? '➕ Autres produits' : c.categorie.replace(/_/g, ' ')}{c.note ? ` · ${c.note}` : ''}</td>
-                  <td className="num" style={{ color: c.categorie === REVENU_CAT ? 'var(--ok)' : 'inherit' }}>{fcfa(c.montant)}</td>
-                  <td><button className="btn sec small" onClick={() => delCharge(c.id)}>Suppr.</button></td>
-                </tr>
-              ))}
-              {!chP.length && <tr><td colSpan={4} className="muted">Aucune charge fixe pour cette période.</td></tr>}
-            </tbody>
-          </table>
         </div>
-      </div>
+        <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', marginTop: 'var(--sp-4)', marginBottom: 0 }}>
+          SBEE et carburant/déplacement sont <b>déduits automatiquement</b> des dépenses saisies au quotidien. Les charges fixes se <b>reportent d'un mois sur l'autre</b> (bouton ci-dessous), tout reste modifiable.
+        </p>
+      </Panel>
+
+      <Panel title="Charges fixes" meta={mois || undefined} flush>
+        <div style={{ padding: 'var(--gutter-panel)', display: 'flex', flexDirection: 'column', gap: 'var(--sp-4)' }}>
+          {!mois && <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', margin: 0 }}>Sélectionne un <b>mois précis</b> pour saisir/reporter les charges.</p>}
+          {mois && <>
+            <Button size="sm" onClick={reporterMoisPrecedent} style={{ alignSelf: 'flex-start' }}>Reporter le mois précédent</Button>
+            <form onSubmit={addCharge} style={{ display: 'flex', gap: 'var(--sp-4)', flexWrap: 'wrap', alignItems: 'end' }}>
+              <Field label="Catégorie" style={{ flex: '1 1 200px' }}>
+                <Select value={nc.categorie} onChange={e => setNc({ ...nc, categorie: e.target.value })} options={CAT_OPTIONS} style={{ width: '100%' }} />
+              </Field>
+              <Field label="Montant" style={{ flex: '1 1 150px' }}>
+                <Input type="number" inputMode="decimal" numeric value={nc.montant} onChange={e => setNc({ ...nc, montant: e.target.value })} />
+              </Field>
+              <Button type="submit" tone="primary">Ajouter</Button>
+            </form>
+          </>}
+        </div>
+        {chP.length
+          ? <DataTable columns={chargesColumns} rows={[...chP].sort((a, b) => (a.mois + a.categorie).localeCompare(b.mois + b.categorie))} />
+          : <PanelEmpty icon="landmark" label="Aucune charge fixe pour cette période" />}
+      </Panel>
     </div>
   )
 }
-function Kpi({ label, value, sub, danger }) {
-  return (<div className="kpi"><div className="label">{label}</div>
-    <div className="value" style={{ color: danger ? 'var(--danger)' : 'var(--primary)' }}>{value}</div>
-    {sub && <div className="sub">{sub}</div>}</div>)
+
+function LedgerHead({ children }) {
+  return <div style={{ font: 'var(--fw-semibold) 11px/1 var(--font-ui)', textTransform: 'uppercase', letterSpacing: 'var(--ls-label)', color: 'var(--text-muted)', marginTop: 'var(--sp-2)' }}>{children}</div>
+}
+function LedgerRow({ label, value }) {
+  return <div style={{ display: 'flex', justifyContent: 'space-between', paddingLeft: 'var(--sp-5)', font: '400 13px/1.3 var(--font-ui)', color: 'var(--text-body)' }}>
+    <span>{label}</span><span style={{ font: '500 13px/1 var(--font-data)', fontVariantNumeric: 'tabular-nums' }}>{value}</span>
+  </div>
 }
