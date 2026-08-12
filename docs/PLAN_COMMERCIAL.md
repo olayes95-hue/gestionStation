@@ -45,22 +45,26 @@ Risque du tout-partenariat : dépendance à un seul acteur, cycle de décision p
 
 ## 5. Modèle de prix
 
-Palier par fonctionnalités. **Montants à valider par 3-5 conversations clients réelles avant de figer.**
+Trois paliers, montants arrêtés (2026-08-12) — **à confronter aux 3-5 premières conversations clients réelles**, ajustables après. Logique : écart modéré Essentiel→Pro (×1,6), écart plus large Pro→Complet (×1,75) car ce dernier vise un public différent (multi-stations, structure organisée) avec une capacité budgétaire plus large. Le palier du milieu (Pro) est celui mis en avant — effet d'ancrage classique (« stratégie McDo ») : un Complet nettement plus cher rend Pro évident sans paraître décoratif, puisque Complet reste un produit crédible pour un vrai acheteur (pas un leurre pur).
 
-**Essentiel** (par station/mois — montant à définir)
+**Essentiel — 25 000 F/mois**
 - Saisie quotidienne (gérant, vendeuse, pompiste)
 - Stock temps réel & autonomie
 - Commandes & réceptions
+- Écart de caisse & versement manquant (alertes les moins coûteuses à produire)
 - Historique des points
 
-**Complet** (par station/mois — montant à définir) — tout l'Essentiel, plus :
-- Alertes anti-coulage & écarts de compteur
+**Pro — 40 000 F/mois** ⭐ palier recommandé — tout l'Essentiel, plus :
+- Alertes anti-fraude complètes (anti-coulage cuve, écart compteur)
 - Prévision de commande
+
+**Complet — 70 000 F/mois** — tout Pro, plus :
 - Point financier & rapprochement bancaire
 - Vérification OCR des bordereaux
 - Export & audit complet
+- Idéal multi-stations ; sert aussi de base de négociation pour un tarif partenariat volume (compagnie pétrolière)
 
-Question ouverte : palier intermédiaire nécessaire (alertes seules, sans OCR/rapprochement) ? Risque du palier Essentiel seul : ne montre pas la vraie valeur (les alertes) — beaucoup de clients pourraient y rester bloqués.
+Point clé qui corrige une version précédente du plan : même le palier Essentiel délivre une partie de la promesse de vente (« je détecte les fuites d'argent ») via les alertes caisse/versement — plus de palier bas qui ne tient pas le discours commercial. Le partenariat compagnie pétrolière négocie un tarif volume séparé, ancré sur Complet, pas cette grille publique.
 
 ## 6. Feuille de route commerciale
 
@@ -106,8 +110,7 @@ Un partenariat compagnie pétrolière abouti peut lui-même devenir l'argument p
 
 ## 11. Décisions qui appartiennent à l'utilisateur
 
-- Prix réel des deux paliers, une fois testé auprès de vrais prospects.
+- ~~Prix des paliers~~ — tranché (§5) : 25 000 / 40 000 / 70 000 F, à confronter aux premières conversations réelles.
 - Compagnie(s) pétrolière(s) à approcher en premier, et qui porte la relation.
 - Structure juridique de facturation (société existante ou nouvelle entité).
 - Financement : bootstrap sur revenus actuels, ou capital externe.
-- Palier intermédiaire de prix ou non.
