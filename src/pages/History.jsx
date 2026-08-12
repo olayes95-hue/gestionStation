@@ -5,10 +5,15 @@ import { useAuth } from '../lib/auth.jsx'
 import { useStation } from '../lib/station.jsx'
 import { fcfa, frDate } from '../lib/format'
 import { exportRowsToCsv } from '../lib/csv'
+import { Panel } from '../ds/octane/components/core/Panel.jsx'
+import { Button } from '../ds/octane/components/core/Button.jsx'
+import { Select } from '../ds/octane/components/forms/Select.jsx'
+import { DataTable } from '../ds/octane/components/data/DataTable.jsx'
 
 const N = (v) => (v ? Number(v) : 0)
 const MONTHS = ['01','02','03','04','05','06','07','08','09','10','11','12']
 const ML = { '01':'Janv','02':'Févr','03':'Mars','04':'Avril','05':'Mai','06':'Juin','07':'Juil','08':'Août','09':'Sept','10':'Oct','11':'Nov','12':'Déc' }
+const MONTH_OPTIONS = [{ value: 'all', label: 'Tous mois' }, ...MONTHS.map(m => ({ value: m, label: ML[m] }))]
 
 export default function History() {
   const { stationId, current } = useStation()
@@ -40,6 +45,7 @@ export default function History() {
   })() }, [stationId])
 
   const years = useMemo(() => [...new Set(rows.map(r => r.report_date.slice(0, 4)))].sort(), [rows])
+  const yearOptions = [{ value: 'all', label: 'Toutes années' }, ...years.map(y => ({ value: y, label: y }))]
   const [inited, setInited] = useState(false)
   useEffect(() => {
     if (!inited && rows.length) {
@@ -75,84 +81,64 @@ export default function History() {
     exportRowsToCsv(`historique-${station}-${label}.csv`, columns, data)
   }
 
-  if (loading) return <div className="center">Chargement…</div>
+  const columns = [
+    { key: 'date', header: 'Date', render: r => frDate(r.report_date) },
+    { key: 'ca_carb', header: 'CA Carbu.', numeric: true, align: 'right', render: r => fcfa(r.ca_carburant) },
+    { key: 'esp_carb', header: 'Espèce carbu.', numeric: true, align: 'right', render: r => (recon[r.report_date]?.carburant ? caCell(recon[r.report_date].carburant, recon[r.report_date].carburant.espece) : '—') },
+    { key: 'ver_carb', header: 'Versé carbu.', numeric: true, align: 'right', render: r => verseCell(recon[r.report_date]?.carburant) },
+    { key: 'ec_carb', header: 'Écart carbu.', numeric: true, align: 'right', render: r => ecartCell(recon[r.report_date]?.carburant) },
+    { key: 'ca_gl', header: 'CA Gaz+Lub.', numeric: true, align: 'right', render: r => caCell(recon[r.report_date]?.gaz_lub, N(r.gaz_espece) + N(r.lubrifiant_espece)) },
+    { key: 'ver_gl', header: 'Versé Gaz+Lub.', numeric: true, align: 'right', render: r => verseCell(recon[r.report_date]?.gaz_lub) },
+    { key: 'ec_gl', header: 'Écart Gaz+Lub.', numeric: true, align: 'right', render: r => ecartCell(recon[r.report_date]?.gaz_lub) },
+    { key: 'ca_sup', header: 'CA Supérette', numeric: true, align: 'right', render: r => caCell(recon[r.report_date]?.superette, r.superette_espece) },
+    { key: 'ver_sup', header: 'Versé Sup.', numeric: true, align: 'right', render: r => verseCell(recon[r.report_date]?.superette) },
+    { key: 'ec_sup', header: 'Écart Sup.', numeric: true, align: 'right', render: r => ecartCell(recon[r.report_date]?.superette) },
+    { key: 'bon', header: 'Bon', numeric: true, align: 'right', render: r => fcfa(r.ventes_bon) },
+    { key: 'photos', header: 'Photos', render: r => photoDates.has(r.report_date)
+      ? <span style={{ color: 'var(--state-ok)', fontWeight: 600 }}>Oui</span>
+      : <span style={{ color: 'var(--text-muted)' }}>Non</span> },
+  ]
+
+  const footer = {
+    date: `TOTAL (${frows.length} j)`,
+    ca_carb: fcfa(frows.reduce((s, r) => s + N(r.ca_carburant), 0)),
+    esp_carb: fcfa(frows.reduce((s, r) => s + N(recon[r.report_date]?.carburant?.espece), 0)),
+    ver_carb: fcfa(frows.reduce((s, r) => s + N(recon[r.report_date]?.carburant?.verse), 0)),
+    ca_gl: fcfa(frows.reduce((s, r) => s + N(r.gaz_espece) + N(r.lubrifiant_espece), 0)),
+    ver_gl: fcfa(frows.reduce((s, r) => s + N(recon[r.report_date]?.gaz_lub?.verse), 0)),
+    ca_sup: fcfa(frows.reduce((s, r) => s + N(r.superette_espece), 0)),
+    ver_sup: fcfa(frows.reduce((s, r) => s + N(recon[r.report_date]?.superette?.verse), 0)),
+    bon: fcfa(frows.reduce((s, r) => s + N(r.ventes_bon), 0)),
+  }
 
   return (
-    <div className="card">
-      <h2>Historique des points ({frows.length})</h2>
-      <div className="toolbar">
-        <select value={year} onChange={e => setYear(e.target.value)}>
-          <option value="all">Toutes années</option>{years.map(y => <option key={y} value={y}>{y}</option>)}
-        </select>
-        <select value={month} onChange={e => setMonth(e.target.value)}>
-          <option value="all">Tous mois</option>{MONTHS.map(m => <option key={m} value={m}>{ML[m]}</option>)}
-        </select>
-        {(year !== 'all' || month !== 'all') && <button className="btn sec small" onClick={() => { setYear('all'); setMonth('all') }}>Réinitialiser</button>}
-        <button className="btn sec small" onClick={exportCsv} disabled={!frows.length}>⬇️ Exporter (CSV)</button>
+    <Panel
+      title="Historique des points"
+      meta={`${frows.length}`}
+      flush
+      actions={<>
+        <Select size="sm" value={year} onChange={e => setYear(e.target.value)} options={yearOptions} />
+        <Select size="sm" value={month} onChange={e => setMonth(e.target.value)} options={MONTH_OPTIONS} />
+        {(year !== 'all' || month !== 'all') && <Button size="sm" onClick={() => { setYear('all'); setMonth('all') }}>Réinitialiser</Button>}
+        <Button size="sm" onClick={exportCsv} disabled={!frows.length}>Exporter (CSV)</Button>
+      </>}
+    >
+      <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', margin: 'var(--sp-4) var(--gutter-panel) 0' }}>
+        Clique sur une ligne pour {isAdmin ? 'voir/modifier' : 'voir'} le détail complet du jour.
+      </p>
+      <div style={{ marginTop: 'var(--sp-4)' }}>
+        {loading
+          ? <div style={{ padding: 'var(--gutter-panel)', font: '400 12px/1 var(--font-ui)', color: 'var(--text-muted)' }}>Chargement…</div>
+          : <DataTable columns={columns} rows={frows.map(r => ({ ...r, id: r.report_date }))} footer={footer} onRowClick={r => nav(`/saisie?date=${r.report_date}`)} />}
       </div>
-      <p className="hint">👆 Clique sur une ligne pour {isAdmin ? 'voir/modifier' : 'voir'} le détail complet du jour.</p>
-      <div className="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Date</th>
-              <th className="num">CA Carbu.</th><th className="num">Espèce carbu.</th><th className="num">Versé carbu.</th><th className="num">Écart carbu.</th>
-              <th className="num">CA Gaz+Lub.</th><th className="num">Versé Gaz+Lub.</th><th className="num">Écart Gaz+Lub.</th>
-              <th className="num">CA Supérette</th><th className="num">Versé Sup.</th><th className="num">Écart Sup.</th>
-              <th className="num">Bon</th><th>Photos</th>
-            </tr>
-          </thead>
-          <tbody>
-            {frows.map(r => {
-              const g = recon[r.report_date] || {}
-              const carb = g.carburant, gl = g.gaz_lub, sup = g.superette
-              const caGL = N(r.gaz_espece) + N(r.lubrifiant_espece)
-              return (
-                <tr key={r.report_date} style={{ cursor: 'pointer' }} onClick={() => nav(`/saisie?date=${r.report_date}`)}>
-                  <td>{frDate(r.report_date)}</td>
-                  <td className="num">{fcfa(r.ca_carburant)}</td>
-                  <td className="num">{carb ? caCell(carb, carb.espece) : '—'}</td>
-                  <td className="num">{verseCell(carb)}</td>
-                  <td className="num">{ecartCell(carb)}</td>
-                  <td className="num">{caCell(gl, caGL)}</td>
-                  <td className="num">{verseCell(gl)}</td>
-                  <td className="num">{ecartCell(gl)}</td>
-                  <td className="num">{caCell(sup, r.superette_espece)}</td>
-                  <td className="num">{verseCell(sup)}</td>
-                  <td className="num">{ecartCell(sup)}</td>
-                  <td className="num">{fcfa(r.ventes_bon)}</td>
-                  <td>{photoDates.has(r.report_date)
-                    ? <span style={{ color: 'var(--ok)', fontWeight: 600 }}>Oui</span>
-                    : <span className="muted">Non</span>}</td>
-                </tr>
-              )
-            })}
-            <tr style={{ fontWeight: 700, background: '#f0f3f7' }}>
-              <td>TOTAL ({frows.length} j)</td>
-              <td className="num">{fcfa(frows.reduce((s, r) => s + N(r.ca_carburant), 0))}</td>
-              <td className="num">{fcfa(frows.reduce((s, r) => s + N(recon[r.report_date]?.carburant?.espece), 0))}</td>
-              <td className="num">{fcfa(frows.reduce((s, r) => s + N(recon[r.report_date]?.carburant?.verse), 0))}</td>
-              <td></td>
-              <td className="num">{fcfa(frows.reduce((s, r) => s + N(r.gaz_espece) + N(r.lubrifiant_espece), 0))}</td>
-              <td className="num">{fcfa(frows.reduce((s, r) => s + N(recon[r.report_date]?.gaz_lub?.verse), 0))}</td>
-              <td></td>
-              <td className="num">{fcfa(frows.reduce((s, r) => s + N(r.superette_espece), 0))}</td>
-              <td className="num">{fcfa(frows.reduce((s, r) => s + N(recon[r.report_date]?.superette?.verse), 0))}</td>
-              <td></td>
-              <td className="num">{fcfa(frows.reduce((s, r) => s + N(r.ventes_bon), 0))}</td>
-              <td></td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-      <p className="hint" style={{ marginTop: 10 }}>
+      <p style={{ font: '400 12px/1.5 var(--font-ui)', color: 'var(--text-muted)', margin: 'var(--sp-4) var(--gutter-panel) 0' }}>
         Un versement couvre une <b>période</b> (gaz et lubrifiant sont cumulables dans un même bordereau).
         Tant que la période n'est pas clôturée, les jours sont « ✓ inclus » (écart 0). Le jour où la période
         se termine, on compare la <b>somme des recettes</b> (carburant : <b>net des dépenses</b>) au
         <b> montant versé</b> : s'il reste un écart, il apparaît en rouge et une alerte est levée.
         « En attente » = recette pas encore rattachée à un versement.
       </p>
-    </div>
+    </Panel>
   )
 }
 
@@ -160,7 +146,7 @@ export default function History() {
 // période (base réelle de l'écart) ; sinon la recette du seul jour.
 function caCell(g, dayVal) {
   if (g && N(g.nb_cloture) > 0 && g.recette_cloture != null) {
-    return <span title="Recette cumulée de la période clôturée ce jour (base de l'écart)" style={{ borderBottom: '1px dotted var(--muted, #999)', cursor: 'help' }}>{fcfa(g.recette_cloture)}</span>
+    return <span title="Recette cumulée de la période clôturée ce jour (base de l'écart)" style={{ borderBottom: '1px dotted var(--text-muted)', cursor: 'help' }}>{fcfa(g.recette_cloture)}</span>
   }
   return fcfa(dayVal)
 }
@@ -172,10 +158,10 @@ function ecartCell(g) {
   if (N(g.nb_cloture) > 0) {
     const e = N(g.ecart)
     // écart > 0 = il manque du versé (rouge) ; écart < 0 = surplus versé (vert) ; ≈0 = ok (vert)
-    return <span style={{ fontWeight: 600, color: e > 1000 ? 'var(--danger)' : 'var(--ok)' }}>{fcfa(e)}{e < -1000 ? ' (surplus)' : ''}</span>
+    return <span style={{ fontWeight: 600, color: e > 1000 ? 'var(--state-alarm)' : 'var(--state-ok)' }}>{fcfa(e)}{e < -1000 ? ' (surplus)' : ''}</span>
   }
-  if (g.couvert) return <span style={{ color: 'var(--ok)' }} title="Jour inclus dans une période versée ; l'écart sera calculé au dernier jour de la période.">✓ inclus</span>
-  if (N(g.espece) > 0) return <span className="muted">en attente</span>
+  if (g.couvert) return <span style={{ color: 'var(--state-ok)' }} title="Jour inclus dans une période versée ; l'écart sera calculé au dernier jour de la période.">✓ inclus</span>
+  if (N(g.espece) > 0) return <span style={{ color: 'var(--text-muted)' }}>en attente</span>
   return '—'
 }
 // Équivalents en VALEUR BRUTE (nombres/texte, pas de JSX) — pour l'export CSV, miroir de caCell/verseCell/ecartCell.
