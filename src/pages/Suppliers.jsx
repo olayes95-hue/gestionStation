@@ -1,5 +1,19 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
+import { Panel, PanelEmpty } from '../ds/octane/components/core/Panel.jsx'
+import { Button } from '../ds/octane/components/core/Button.jsx'
+import { Field } from '../ds/octane/components/forms/Field.jsx'
+import { Input } from '../ds/octane/components/forms/Input.jsx'
+import { Select } from '../ds/octane/components/forms/Select.jsx'
+import { AlertBanner } from '../ds/octane/components/feedback/AlertBanner.jsx'
+import { DataTable } from '../ds/octane/components/data/DataTable.jsx'
+
+const CATEGORIES = [
+  { value: 'superette', label: 'Supérette' },
+  { value: 'lubrifiant', label: 'Lubrifiant' },
+  { value: 'gaz', label: 'Gaz' },
+  { value: 'autre', label: 'Autre' },
+]
 
 export default function Suppliers() {
   const [list, setList] = useState([])
@@ -20,44 +34,41 @@ export default function Suppliers() {
     await supabase.from('suppliers').delete().eq('id', id); load()
   }
 
-  return (
-    <div>
-      <div className="card">
-        <h2>Ajouter un fournisseur</h2>
-        <p className="muted" style={{ fontSize: 13, marginTop: -6 }}>Le carburant a un fournisseur unique (non géré ici). Ajoute ici les fournisseurs supérette / lubrifiant / gaz / autre.</p>
-        {err && <div className="err">{err}</div>}
-        <form onSubmit={add}>
-          <div className="row">
-            <div><label>Nom</label><input value={f.nom} onChange={e => setF({ ...f, nom: e.target.value })} required /></div>
-            <div><label>Catégorie</label>
-              <select value={f.categorie} onChange={e => setF({ ...f, categorie: e.target.value })}>
-                <option value="superette">Supérette</option><option value="lubrifiant">Lubrifiant</option>
-                <option value="gaz">Gaz</option><option value="autre">Autre</option>
-              </select></div>
-          </div>
-          <label>Contact (tél / email)</label><input value={f.contact} onChange={e => setF({ ...f, contact: e.target.value })} />
-          <div style={{ height: 10 }} />
-          <button className="btn">Ajouter</button>
-        </form>
-      </div>
+  const columns = [
+    { key: 'nom', header: 'Nom' },
+    { key: 'categorie', header: 'Catégorie', render: r => CATEGORIES.find(c => c.value === r.categorie)?.label || r.categorie },
+    { key: 'contact', header: 'Contact', muted: true, render: r => r.contact || '—' },
+    { key: 'actions', header: '', align: 'right', render: r => <Button size="sm" tone="danger" onClick={() => del(r.id)}>Suppr.</Button> },
+  ]
 
-      <div className="card">
-        <h2>Fournisseurs ({list.length})</h2>
-        <div className="table-wrap">
-          <table>
-            <thead><tr><th>Nom</th><th>Catégorie</th><th>Contact</th><th></th></tr></thead>
-            <tbody>
-              {list.map(s => (
-                <tr key={s.id}>
-                  <td>{s.nom}</td><td>{s.categorie}</td><td>{s.contact || '—'}</td>
-                  <td><button className="btn sec small" onClick={() => del(s.id)}>Suppr.</button></td>
-                </tr>
-              ))}
-              {!list.length && <tr><td colSpan={4} className="muted">Aucun fournisseur.</td></tr>}
-            </tbody>
-          </table>
-        </div>
-      </div>
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-6)' }}>
+      <Panel title="Ajouter un fournisseur">
+        <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', marginTop: 0 }}>
+          Le carburant a un fournisseur unique (non géré ici). Ajoute ici les fournisseurs supérette / lubrifiant / gaz / autre.
+        </p>
+        {err && <AlertBanner tone="alarm" title="Erreur" style={{ marginBottom: 'var(--sp-4)' }}>{err}</AlertBanner>}
+        <form onSubmit={add} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-4)' }}>
+          <div style={{ display: 'flex', gap: 'var(--sp-4)', flexWrap: 'wrap' }}>
+            <Field label="Nom" required style={{ flex: '1 1 200px' }}>
+              <Input value={f.nom} onChange={e => setF({ ...f, nom: e.target.value })} required />
+            </Field>
+            <Field label="Catégorie" style={{ flex: '1 1 160px' }}>
+              <Select value={f.categorie} onChange={e => setF({ ...f, categorie: e.target.value })} options={CATEGORIES} style={{ width: '100%' }} />
+            </Field>
+          </div>
+          <Field label="Contact (tél / email)">
+            <Input value={f.contact} onChange={e => setF({ ...f, contact: e.target.value })} />
+          </Field>
+          <Button type="submit" tone="primary" style={{ alignSelf: 'flex-start' }}>Ajouter</Button>
+        </form>
+      </Panel>
+
+      <Panel title="Fournisseurs" meta={`${list.length}`} flush>
+        {list.length
+          ? <DataTable columns={columns} rows={list} />
+          : <PanelEmpty icon="truck" label="Aucun fournisseur" />}
+      </Panel>
     </div>
   )
 }
