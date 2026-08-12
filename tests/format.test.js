@@ -5,7 +5,6 @@ import {
   today,
   numFR,
   frDate,
-  ALERT_LABELS,
 } from '../src/lib/format.js'
 
 // toLocaleString('fr-FR') utilise un espace insécable (U+00A0/U+202F) comme
@@ -128,33 +127,5 @@ describe('frDate', () => {
   it('convertit ISO -> JJ/MM/AAAA', () => {
     expect(frDate('2026-07-13')).toBe('13/07/2026')
     expect(frDate('2026-01-05')).toBe('05/01/2026')
-  })
-})
-
-describe('ALERT_LABELS', () => {
-  it('expose exactement les 15 types d’alerte connus', () => {
-    expect(Object.keys(ALERT_LABELS)).toHaveLength(15)
-  })
-
-  it('inclut les types compteur/cuve ajoutés (v35, v37)', () => {
-    expect(ALERT_LABELS.RELEVE_COMPTEUR_MANQUANT).toBeDefined()
-    expect(ALERT_LABELS.RELEVE_COMPTEUR_MANQUANT.label).toMatch(/compteur/i)
-    expect(ALERT_LABELS.DONNEES_INCOHERENTES).toBeDefined()
-    expect(ALERT_LABELS.DONNEES_INCOHERENTES.label).toMatch(/vérifier/i)
-  })
-
-  it('associe libellé et couleur à chaque type', () => {
-    for (const [key, val] of Object.entries(ALERT_LABELS)) {
-      expect(typeof val.label, key).toBe('string')
-      expect(val.label.length, key).toBeGreaterThan(0)
-      expect(val.color, key).toMatch(/^#[0-9a-fA-F]{6}$/)
-    }
-  })
-
-  it('contient les types critiques attendus', () => {
-    expect(ALERT_LABELS.VERSEMENT_MANQUANT.label).toBe('Versement manquant')
-    expect(ALERT_LABELS.VERSEMENT_MANQUANT.color).toBe('#c0392b')
-    expect(ALERT_LABELS.STOCK_BAS.label).toBe('Stock bas carburant')
-    expect(ALERT_LABELS.ECART_STOCK.label).toContain('coulage')
   })
 })

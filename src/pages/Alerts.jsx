@@ -2,7 +2,14 @@ import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/auth.jsx'
 import { useStation } from '../lib/station.jsx'
-import { ALERT_LABELS, frDate } from '../lib/format'
+import { frDate } from '../lib/format'
+import { ALERT_TONES } from '../lib/tones'
+import { Panel, PanelEmpty } from '../ds/octane/components/core/Panel.jsx'
+import { Button } from '../ds/octane/components/core/Button.jsx'
+import { Badge } from '../ds/octane/components/core/Badge.jsx'
+import { Tag } from '../ds/octane/components/core/Tag.jsx'
+import { Select } from '../ds/octane/components/forms/Select.jsx'
+import { Checkbox } from '../ds/octane/components/forms/Checkbox.jsx'
 
 const MONTHS = ['01','02','03','04','05','06','07','08','09','10','11','12']
 const ML = { '01':'Janv','02':'Févr','03':'Mars','04':'Avril','05':'Mai','06':'Juin','07':'Juil','08':'Août','09':'Sept','10':'Oct','11':'Nov','12':'Déc' }
@@ -50,7 +57,6 @@ export default function AlertsPage() {
       setYear(d.slice(0, 4)); setMonth(d.slice(5, 7)); setInited(true)
     }
   }, [alerts, inited])
-  if (loading) return <div className="center">Chargement…</div>
 
   const shown = alerts.filter(a =>
     (type === 'all' || a.type === type) &&
@@ -59,38 +65,45 @@ export default function AlertsPage() {
     (showDismissed ? dismissed.has(key(a)) : !dismissed.has(key(a))))
   const nbActive = alerts.filter(a => !dismissed.has(key(a))).length
 
+  const yearOptions = [{ value: 'all', label: 'Toutes années' }, ...years.map(y => ({ value: y, label: y }))]
+  const monthOptions = [{ value: 'all', label: 'Tous mois' }, ...MONTHS.map(m => ({ value: m, label: ML[m] }))]
+  const typeOptions = [{ value: 'all', label: 'Tous types' }, ...types.map(t => ({ value: t, label: ALERT_TONES[t]?.label || t }))]
+
   return (
-    <div>
-      <div className="card">
-        <h2>Alertes — {nbActive} active(s) · {dismissed.size} traitée(s)</h2>
-        <div className="toolbar">
-          <select value={year} onChange={e => setYear(e.target.value)}><option value="all">Toutes années</option>{years.map(y => <option key={y}>{y}</option>)}</select>
-          <select value={month} onChange={e => setMonth(e.target.value)}><option value="all">Tous mois</option>{MONTHS.map(m => <option key={m} value={m}>{ML[m]}</option>)}</select>
-          <select value={type} onChange={e => setType(e.target.value)}><option value="all">Tous types</option>{types.map(t => <option key={t} value={t}>{ALERT_LABELS[t]?.label || t}</option>)}</select>
-          <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 13 }}>
-            <input type="checkbox" style={{ width: 16 }} checked={showDismissed} onChange={e => setShowDismissed(e.target.checked)} /> Voir les traitées
-          </label>
-        </div>
-        {!shown.length && <p className="muted">{showDismissed ? 'Aucune alerte traitée.' : 'Aucune alerte active. 🎉'}</p>}
-        {shown.map((a, i) => {
-          const meta = ALERT_LABELS[a.type] || { label: a.type, color: '#666' }
-          return (
-            <div className="alert-item" key={i}>
-              <div className="bar" style={{ background: meta.color }} />
-              <div style={{ flex: 1 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center' }}>
-                  <span className="badge" style={{ background: meta.color }}>{meta.label}</span>
-                  <span className="pill">{frDate(a.report_date)}</span>
-                </div>
-                <div style={{ marginTop: 6, fontSize: 14 }}>{a.detail}</div>
-              </div>
-              {showDismissed
-                ? <button className="btn sec small" onClick={() => restore(a)}>Rétablir</button>
-                : <button className="btn sec small" onClick={() => dismiss(a)}>✓ Traité</button>}
-            </div>
-          )
-        })}
-      </div>
-    </div>
+    <Panel
+      title="Alertes"
+      meta={`${nbActive} active(s) · ${dismissed.size} traitée(s)`}
+      flush
+      actions={<>
+        <Select size="sm" value={year} onChange={e => setYear(e.target.value)} options={yearOptions} />
+        <Select size="sm" value={month} onChange={e => setMonth(e.target.value)} options={monthOptions} />
+        <Select size="sm" value={type} onChange={e => setType(e.target.value)} options={typeOptions} />
+        <Checkbox label="Voir les traitées" checked={showDismissed} onChange={v => setShowDismissed(v)} />
+      </>}
+    >
+      {loading
+        ? <div style={{ padding: 'var(--sp-6)', font: '400 12px/1 var(--font-ui)', color: 'var(--text-muted)' }}>Chargement…</div>
+        : !shown.length
+          ? <PanelEmpty icon="bell" label={showDismissed ? 'Aucune alerte traitée' : 'Aucune alerte active'} />
+          : <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-4)', padding: 'var(--gutter-panel)' }}>
+              {shown.map((a, i) => {
+                const meta = ALERT_TONES[a.type] || { label: a.type, tone: 'info' }
+                return (
+                  <div key={i} style={{ display: 'flex', gap: 'var(--sp-4)', alignItems: 'flex-start', padding: 'var(--sp-4)', background: 'var(--surface-raised)', borderLeft: 'var(--bw-accent) solid var(--state-' + meta.tone + ')', borderRadius: 'var(--radius-1)' }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 'var(--sp-3)', alignItems: 'center' }}>
+                        <Badge tone={meta.tone}>{meta.label}</Badge>
+                        <Tag>{frDate(a.report_date)}</Tag>
+                      </div>
+                      <div style={{ marginTop: 'var(--sp-3)', font: '400 13px/1.4 var(--font-ui)', color: 'var(--text-body)' }}>{a.detail}</div>
+                    </div>
+                    {showDismissed
+                      ? <Button size="sm" onClick={() => restore(a)}>Rétablir</Button>
+                      : <Button size="sm" onClick={() => dismiss(a)}>Traité</Button>}
+                  </div>
+                )
+              })}
+            </div>}
+    </Panel>
   )
 }
