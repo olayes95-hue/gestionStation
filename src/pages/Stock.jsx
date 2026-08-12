@@ -3,10 +3,23 @@ import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/auth.jsx'
 import { useStation } from '../lib/station.jsx'
 import { fcfa, frDate, numFR, today } from '../lib/format'
+import { STOCK_MOVEMENT_TONES } from '../lib/tones'
+import { Panel, PanelEmpty } from '../ds/octane/components/core/Panel.jsx'
+import { Button } from '../ds/octane/components/core/Button.jsx'
+import { Badge } from '../ds/octane/components/core/Badge.jsx'
+import { Tag } from '../ds/octane/components/core/Tag.jsx'
+import { Icon } from '../ds/octane/components/core/Icon.jsx'
+import { Field } from '../ds/octane/components/forms/Field.jsx'
+import { Input } from '../ds/octane/components/forms/Input.jsx'
+import { Select } from '../ds/octane/components/forms/Select.jsx'
+import { AlertBanner } from '../ds/octane/components/feedback/AlertBanner.jsx'
+import { DataTable } from '../ds/octane/components/data/DataTable.jsx'
+import { Kpi } from '../lib/Kpi.jsx'
 
 const N = (v) => (v ? (numFR(v) ?? 0) : 0)
 const MONTHS = ['01','02','03','04','05','06','07','08','09','10','11','12']
 const CATS = [['gaz', 'Gaz'], ['lubrifiant', 'Lubrifiant'], ['superette', 'Supérette']]
+const MOVEMENT_LABEL = { entree: 'Livraison', sortie: 'Sortie', ajustement: 'Inventaire' }
 
 export default function Stock() {
   const { session, isAdmin, isVendeuse, isPompiste } = useAuth()
@@ -49,7 +62,7 @@ export default function Stock() {
     else { if (!nm.produit || !nm.quantite) { setErr('Choisis un produit et une quantité.'); return } row.produit = nm.produit; row.quantite = numFR(nm.quantite) }
     const { error } = await supabase.from('stock_movements').insert(row)
     if (error) setErr(error.message)
-    else { setAction(null); flash(nm.type === 'entree' ? '✅ Livraison enregistrée' : '✅ Inventaire corrigé'); load() }
+    else { setAction(null); flash(nm.type === 'entree' ? 'Livraison enregistrée' : 'Inventaire corrigé'); load() }
   }
   async function delMvt(id) { await supabase.from('stock_movements').delete().eq('id', id); load() }
 
@@ -57,102 +70,133 @@ export default function Stock() {
   const stockByCat = useMemo(() => { const o = {}; stock.forEach(s => { (o[s.categorie] = o[s.categorie] || []).push(s) }); return o }, [stock])
   const cats = isVendeuse ? [['superette', 'Supérette']] : CATS
 
+  const productColumns = (cat) => [
+    { key: 'produit', header: 'Produit' },
+    { key: 'stock', header: 'Reste', numeric: true, align: 'right', render: s => {
+      const pr = products.find(p => p.categorie === cat && p.nom === s.produit)
+      const low = pr && N(s.stock) < N(pr.seuil)
+      return <span style={{ color: low ? 'var(--state-alarm)' : 'inherit', fontWeight: 600 }}>{N(s.stock)}{low ? ' ⚠' : ''}</span>
+    } },
+    { key: 'seuil', header: 'Seuil', numeric: true, align: 'right', muted: true, render: s => { const pr = products.find(p => p.categorie === cat && p.nom === s.produit); return pr ? N(pr.seuil) : '—' } },
+  ]
+
+  const sortieColumns = [
+    { key: 'report_date', header: 'Date', render: s => frDate(s.report_date) },
+    { key: 'categorie', header: 'Catégorie' },
+    { key: 'produit', header: 'Produit' },
+    { key: 'stock_veille', header: 'Veille', numeric: true, align: 'right', muted: true, render: s => N(s.stock_veille) },
+    { key: 'entrees', header: 'Entrées', numeric: true, align: 'right', muted: true, render: s => N(s.entrees) },
+    { key: 'stock_jour', header: 'Jour', numeric: true, align: 'right', muted: true, render: s => N(s.stock_jour) },
+    { key: 'sortie_deduite', header: 'Sortie déduite', numeric: true, align: 'right', render: s => <span style={{ fontWeight: 600, color: N(s.sortie_deduite) < 0 ? 'var(--state-alarm)' : 'inherit' }}>{N(s.sortie_deduite)}</span> },
+  ]
+
+  const journalColumns = [
+    { key: 'date_mouvement', header: 'Date', render: m => frDate(m.date_mouvement) },
+    { key: 'categorie', header: 'Catégorie' },
+    { key: 'produit', header: 'Produit', render: m => m.produit || '—' },
+    { key: 'type', header: 'Type', render: m => <Badge tone={STOCK_MOVEMENT_TONES[m.type] || 'idle'}>{m.type}</Badge> },
+    { key: 'source', header: 'Source', muted: true, render: m => m.source || '—' },
+    { key: 'valeur', header: 'Qté / Valeur', numeric: true, align: 'right', render: m => m.valeur != null ? fcfa(m.valeur) : N(m.quantite) },
+    { key: 'actions', header: '', align: 'right', render: m => <Button size="sm" tone="danger" onClick={() => delMvt(m.id)}>✕</Button> },
+  ]
+
+  const recentColumns = [
+    { key: 'date_mouvement', header: 'Date', render: m => frDate(m.date_mouvement) },
+    { key: 'produit', header: 'Produit', render: m => m.produit || m.categorie },
+    { key: 'type', header: 'Type', render: m => <Badge tone={STOCK_MOVEMENT_TONES[m.type] || 'idle'}>{MOVEMENT_LABEL[m.type] || m.type}</Badge> },
+    { key: 'valeur', header: 'Qté / Montant', numeric: true, align: 'right', render: m => m.valeur != null ? fcfa(m.valeur) : N(m.quantite) },
+  ]
+
   return (
-    <div>
-      {msg && <div className="ok">{msg}</div>}
-      {err && <div className="err">{err}</div>}
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-6)' }}>
+      {msg && <AlertBanner tone="ok" title="Succès">{msg}</AlertBanner>}
+      {err && <AlertBanner tone="alarm" title="Erreur">{err}</AlertBanner>}
 
       {/* ===== VALORISATION — admin ===== */}
-      {isAdmin && <div className="grid kpis" style={{ marginBottom: 16 }}>
-        {valeur.map(v => <div className="kpi" key={v.categorie}><div className="label" style={{ textTransform: 'capitalize' }}>Valeur stock {v.categorie}</div><div className="value" style={{ color: 'var(--primary)' }}>{fcfa(v.valeur)}</div></div>)}
-        <div className="kpi"><div className="label">VALEUR TOTALE</div><div className="value" style={{ color: 'var(--primary)' }}>{fcfa(valTotal)}</div></div>
-      </div>}
+      {isAdmin && (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 'var(--sp-4)' }}>
+          {valeur.map(v => <Kpi key={v.categorie} label={`Valeur stock ${v.categorie}`} value={fcfa(v.valeur)} />)}
+          <Kpi label="VALEUR TOTALE" value={fcfa(valTotal)} status="accent" />
+        </div>
+      )}
 
       {/* ===== STOCK ACTUEL (gaz/lub) — gérant/pompiste/admin ===== */}
-      {!isVendeuse && <div className="card">
-        <div className="toolbar">
-          <h2 style={{ margin: 0, marginRight: 'auto' }}>📦 Stock restant</h2>
-          {isAdmin && ['gaz', 'lubrifiant', 'superette'].map(c => (
-            <button key={c} type="button" onClick={() => toggleCat(c)}
-              className={'btn small' + (showCats.includes(c) ? '' : ' sec')}
-              style={{ textTransform: 'capitalize' }}>{showCats.includes(c) ? '✓ ' : ''}{c}</button>
-          ))}
-        </div>
-        <p className="hint">Ce qu'il reste, d'après le <b>dernier comptage déclaré dans la Saisie du jour</b>. Ici tu n'ajoutes que les <b>entrées</b> (livraisons) — les sorties/ventes sont calculées toutes seules.</p>
-        {isAdmin && showCats.includes('superette') && (
-          <div style={{ marginBottom: 10 }}>
-            <div className="muted" style={{ fontSize: 12, fontWeight: 700, textTransform: 'uppercase' }}>supérette (valeur)</div>
-            <div className="pill">{fcfa((valeur.find(v => v.categorie === 'superette') || {}).valeur)}</div>
-          </div>
-        )}
-        {(isAdmin ? ['gaz', 'lubrifiant'].filter(c => showCats.includes(c)) : ['gaz', 'lubrifiant']).map(cat => (
-          <div key={cat} style={{ marginBottom: 10 }}>
-            <div className="muted" style={{ fontSize: 12, fontWeight: 700, textTransform: 'uppercase' }}>{cat}</div>
-            <div className="table-wrap">
-              <table><thead><tr><th>Produit</th><th className="num">Reste</th><th className="num">Seuil</th></tr></thead>
-                <tbody>
-                  {(stockByCat[cat] || []).map(s => {
-                    const pr = products.find(p => p.categorie === cat && p.nom === s.produit)
-                    const low = pr && N(s.stock) < N(pr.seuil)
-                    return <tr key={s.produit}><td>{s.produit}</td><td className="num" style={{ color: low ? 'var(--danger)' : 'inherit', fontWeight: 600 }}>{N(s.stock)}{low ? ' ⚠️' : ''}</td><td className="num muted">{pr ? N(pr.seuil) : '—'}</td></tr>
-                  })}
-                  {!(stockByCat[cat] || []).length && <tr><td colSpan={3} className="muted">Aucun comptage encore.</td></tr>}
-                </tbody></table>
+      {!isVendeuse && (
+        <Panel title="Stock restant" actions={isAdmin && ['gaz', 'lubrifiant', 'superette'].map(c => (
+          <Button key={c} size="sm" tone={showCats.includes(c) ? 'primary' : 'outline'} onClick={() => toggleCat(c)} style={{ textTransform: 'capitalize' }}>{c}</Button>
+        ))}>
+          <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', marginTop: 0 }}>
+            Ce qu'il reste, d'après le <b>dernier comptage déclaré dans la Saisie du jour</b>. Ici tu n'ajoutes que les <b>entrées</b> (livraisons) — les sorties/ventes sont calculées toutes seules.
+          </p>
+          {isAdmin && showCats.includes('superette') && (
+            <div style={{ marginBottom: 'var(--sp-4)' }}>
+              <div style={{ font: 'var(--fw-semibold) 10px/1 var(--font-ui)', textTransform: 'uppercase', letterSpacing: 'var(--ls-micro)', color: 'var(--text-muted)', marginBottom: 'var(--sp-2)' }}>supérette (valeur)</div>
+              <Tag>{fcfa((valeur.find(v => v.categorie === 'superette') || {}).valeur)}</Tag>
             </div>
-          </div>
-        ))}
-      </div>}
+          )}
+          {(isAdmin ? ['gaz', 'lubrifiant'].filter(c => showCats.includes(c)) : ['gaz', 'lubrifiant']).map(cat => (
+            <div key={cat} style={{ marginBottom: 'var(--sp-4)' }}>
+              <div style={{ font: 'var(--fw-semibold) 10px/1 var(--font-ui)', textTransform: 'uppercase', letterSpacing: 'var(--ls-micro)', color: 'var(--text-muted)', marginBottom: 'var(--sp-2)' }}>{cat}</div>
+              {(stockByCat[cat] || []).length
+                ? <DataTable columns={productColumns(cat)} rows={(stockByCat[cat] || []).map(s => ({ ...s, id: s.produit }))} />
+                : <p style={{ font: '400 12px/1 var(--font-ui)', color: 'var(--text-muted)', margin: 0 }}>Aucun comptage encore.</p>}
+            </div>
+          ))}
+        </Panel>
+      )}
 
       {/* ===== ACTIONS GUIDÉES — tout le monde ===== */}
-      <div className="card">
-        <h2>{isVendeuse ? '🛒 Supérette' : '📥 Que veux-tu faire ?'}</h2>
+      <Panel title={isVendeuse ? 'Supérette' : 'Que veux-tu faire ?'}>
         {!action ? (
-          <div className="moment-tiles" style={{ gridTemplateColumns: '1fr 1fr' }}>
-            <div className="moment-tile" onClick={() => openAction('entree')}>
-              <div className="emo">📥</div>
-              <div className="t">J'ai reçu une livraison</div>
-              <div className="d">Ajouter au stock ce qui vient d'arriver</div>
-            </div>
-            <div className="moment-tile" onClick={() => openAction('ajustement')}>
-              <div className="emo">🔧</div>
-              <div className="t">Corriger après inventaire</div>
-              <div className="d">Ajuster si le compte réel diffère</div>
-            </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--sp-4)' }}>
+            <ActionTile icon="download" title="J'ai reçu une livraison" desc="Ajouter au stock ce qui vient d'arriver" onClick={() => openAction('entree')} />
+            <ActionTile icon="wrench" title="Corriger après inventaire" desc="Ajuster si le compte réel diffère" onClick={() => openAction('ajustement')} />
           </div>
         ) : (
-          <form onSubmit={addMvt}>
-            <div className={action === 'entree' ? 'ok' : 'err'} style={{ marginTop: 0 }}>
+          <form onSubmit={addMvt} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-4)' }}>
+            <AlertBanner tone={action === 'entree' ? 'ok' : 'warn'} title={action === 'entree' ? 'Livraison' : 'Correction'}>
               {action === 'entree'
-                ? '📥 Livraison reçue — indique ce qui est entré en stock.'
-                : '🔧 Correction d\'inventaire — indique la quantité (ou le montant) réellement constaté.'}
-            </div>
+                ? 'Livraison reçue — indique ce qui est entré en stock.'
+                : "Correction d'inventaire — indique la quantité (ou le montant) réellement constaté."}
+            </AlertBanner>
             {!isVendeuse && (
-              <div><label>Type de produit</label>
-                <select value={nm.categorie} onChange={e => setNm({ ...nm, categorie: e.target.value, produit: '' })}>
-                  {cats.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-                </select></div>
+              <Field label="Type de produit">
+                <Select value={nm.categorie} onChange={e => setNm({ ...nm, categorie: e.target.value, produit: '' })} options={cats.map(([v, l]) => ({ value: v, label: l }))} style={{ width: '100%' }} />
+              </Field>
             )}
             {nm.categorie === 'superette' ? (
-              <div className="row">
-                <div><label>Montant (F){action === 'ajustement' ? ' — stock réel' : ''}</label><input type="text" inputMode="decimal" autoFocus value={nm.valeur} onChange={e => setNm({ ...nm, valeur: e.target.value })} /></div>
-                <div><label>Date</label><input type="date" value={nm.date_mouvement} max={today()} onChange={e => setNm({ ...nm, date_mouvement: e.target.value })} /></div>
+              <div style={{ display: 'flex', gap: 'var(--sp-4)', flexWrap: 'wrap' }}>
+                <Field label={`Montant (F)${action === 'ajustement' ? ' — stock réel' : ''}`} style={{ flex: '1 1 180px' }}>
+                  <Input type="text" inputMode="decimal" numeric autoFocus value={nm.valeur} onChange={e => setNm({ ...nm, valeur: e.target.value })} />
+                </Field>
+                <Field label="Date" style={{ flex: '1 1 160px' }}>
+                  <Input type="date" value={nm.date_mouvement} max={today()} onChange={e => setNm({ ...nm, date_mouvement: e.target.value })} />
+                </Field>
               </div>
             ) : (
-              <div className="row-3">
-                <div><label>Produit</label><select value={nm.produit} onChange={e => setNm({ ...nm, produit: e.target.value })}><option value="">— choisir —</option>{products.filter(p => p.categorie === nm.categorie).map(p => <option key={p.id} value={p.nom}>{p.nom}</option>)}</select></div>
-                <div><label>Quantité{action === 'ajustement' ? ' (écart)' : ''}</label><input type="text" inputMode="decimal" value={nm.quantite} onChange={e => setNm({ ...nm, quantite: e.target.value })} /></div>
-                <div><label>Date</label><input type="date" value={nm.date_mouvement} max={today()} onChange={e => setNm({ ...nm, date_mouvement: e.target.value })} /></div>
+              <div style={{ display: 'flex', gap: 'var(--sp-4)', flexWrap: 'wrap' }}>
+                <Field label="Produit" style={{ flex: '2 1 200px' }}>
+                  <Select value={nm.produit} onChange={e => setNm({ ...nm, produit: e.target.value })}
+                    options={[{ value: '', label: '— choisir —' }, ...products.filter(p => p.categorie === nm.categorie).map(p => ({ value: p.nom, label: p.nom }))]} style={{ width: '100%' }} />
+                </Field>
+                <Field label={`Quantité${action === 'ajustement' ? ' (écart)' : ''}`} style={{ flex: '1 1 140px' }}>
+                  <Input type="text" inputMode="decimal" numeric value={nm.quantite} onChange={e => setNm({ ...nm, quantite: e.target.value })} />
+                </Field>
+                <Field label="Date" style={{ flex: '1 1 160px' }}>
+                  <Input type="date" value={nm.date_mouvement} max={today()} onChange={e => setNm({ ...nm, date_mouvement: e.target.value })} />
+                </Field>
               </div>
             )}
-            <label>Note (facultatif)</label><input value={nm.note} onChange={e => setNm({ ...nm, note: e.target.value })} placeholder={action === 'entree' ? 'ex. bon de livraison n°…' : 'ex. casse, écart constaté…'} />
-            <div style={{ height: 10 }} />
-            <div className="toolbar">
-              <button className="btn small">✅ Enregistrer</button>
-              <button type="button" className="btn sec small" onClick={() => setAction(null)}>Annuler</button>
+            <Field label="Note (facultatif)">
+              <Input value={nm.note} onChange={e => setNm({ ...nm, note: e.target.value })} placeholder={action === 'entree' ? 'ex. bon de livraison n°…' : 'ex. casse, écart constaté…'} />
+            </Field>
+            <div style={{ display: 'flex', gap: 'var(--sp-3)' }}>
+              <Button type="submit" tone="primary">Enregistrer</Button>
+              <Button type="button" onClick={() => setAction(null)}>Annuler</Button>
             </div>
           </form>
         )}
-      </div>
+      </Panel>
 
       {/* ===== SORTIES DÉDUITES — admin seulement (analyse) ===== */}
       {isAdmin && (() => {
@@ -160,24 +204,14 @@ export default function Stock() {
           (fYear === 'all' || (s.report_date || '').slice(0, 4) === fYear)
           && (fMonth === 'all' || (s.report_date || '').slice(5, 7) === fMonth))
         return (
-          <div className="card">
-            <div className="toolbar">
-              <h2 style={{ margin: 0, marginRight: 'auto' }}>📉 Sorties déduites (consommation)</h2>
-              <span className="pill">calculé automatiquement</span>
+          <Panel title="Sorties déduites (consommation)" meta="calculé automatiquement" flush>
+            <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', margin: 'var(--sp-4) var(--gutter-panel) 0' }}>
+              Sortie = stock déclaré la veille + entrées du jour − stock déclaré du jour. Négatif = entrée oubliée (à vérifier).
+            </p>
+            <div style={{ marginTop: 'var(--sp-4)' }}>
+              {js.length ? <DataTable columns={sortieColumns} rows={js.map((s, i) => ({ ...s, id: i }))} /> : <PanelEmpty icon="package" label="Rien à afficher (il faut au moins deux relevés consécutifs)" />}
             </div>
-            <p className="hint">Sortie = stock déclaré la veille + entrées du jour − stock déclaré du jour. Négatif = entrée oubliée (à vérifier).</p>
-            <div className="table-wrap">
-              <table><thead><tr><th>Date</th><th>Catégorie</th><th>Produit</th><th className="num">Veille</th><th className="num">Entrées</th><th className="num">Jour</th><th className="num">Sortie déduite</th></tr></thead>
-                <tbody>
-                  {js.map((s, i) => <tr key={i}>
-                    <td>{frDate(s.report_date)}</td><td>{s.categorie}</td><td>{s.produit}</td>
-                    <td className="num muted">{N(s.stock_veille)}</td><td className="num muted">{N(s.entrees)}</td><td className="num muted">{N(s.stock_jour)}</td>
-                    <td className="num" style={{ fontWeight: 600, color: N(s.sortie_deduite) < 0 ? 'var(--danger)' : 'inherit' }}>{N(s.sortie_deduite)}</td>
-                  </tr>)}
-                  {!js.length && <tr><td colSpan={7} className="muted">Rien à afficher (il faut au moins deux relevés consécutifs).</td></tr>}
-                </tbody></table>
-            </div>
-          </div>
+          </Panel>
         )
       })()}
 
@@ -190,49 +224,37 @@ export default function Stock() {
           && (fMonth === 'all' || (m.date_mouvement || '').slice(5, 7) === fMonth))
         const totVal = jm.reduce((s, m) => s + (m.valeur != null ? N(m.valeur) * (m.type === 'sortie' ? -1 : 1) : 0), 0)
         return (
-          <div className="card">
-            <div className="toolbar">
-              <h2 style={{ margin: 0, marginRight: 'auto' }}>Journal des mouvements ({jm.length})</h2>
-              <select value={fYear} onChange={e => setFYear(e.target.value)}><option value="all">Toutes années</option>{years.map(y => <option key={y}>{y}</option>)}</select>
-              <select value={fMonth} onChange={e => setFMonth(e.target.value)}><option value="all">Tous mois</option>{MONTHS.map(m => <option key={m} value={m}>{m}</option>)}</select>
-              {(fYear !== 'all' || fMonth !== 'all') && <button className="btn sec small" onClick={() => { setFYear('all'); setFMonth('all') }}>Réinit.</button>}
-              <span className="pill">Solde valeur : {fcfa(totVal)}</span>
-            </div>
-            <div className="table-wrap">
-              <table><thead><tr><th>Date</th><th>Catégorie</th><th>Produit</th><th>Type</th><th>Source</th><th className="num">Qté / Valeur</th><th></th></tr></thead>
-                <tbody>
-                  {jm.map(m => <tr key={m.id}>
-                    <td>{frDate(m.date_mouvement)}</td><td>{m.categorie}</td><td>{m.produit || '—'}</td>
-                    <td><span className="badge" style={{ background: m.type === 'sortie' ? 'var(--danger)' : m.type === 'entree' ? 'var(--ok)' : 'var(--warn)' }}>{m.type}</span></td>
-                    <td className="muted">{m.source || '—'}</td>
-                    <td className="num">{m.valeur != null ? fcfa(m.valeur) : N(m.quantite)}</td>
-                    <td><button className="btn sec small" onClick={() => delMvt(m.id)}>✕</button></td>
-                  </tr>)}
-                  {!jm.length && <tr><td colSpan={7} className="muted">Aucun mouvement sur cette période.</td></tr>}
-                </tbody></table>
-            </div>
-          </div>
+          <Panel title="Journal des mouvements" meta={`${jm.length}`} flush actions={<>
+            <Select size="sm" value={fYear} onChange={e => setFYear(e.target.value)} options={[{ value: 'all', label: 'Toutes années' }, ...years.map(y => ({ value: y, label: y }))]} />
+            <Select size="sm" value={fMonth} onChange={e => setFMonth(e.target.value)} options={[{ value: 'all', label: 'Tous mois' }, ...MONTHS.map(m => ({ value: m, label: m }))]} />
+            {(fYear !== 'all' || fMonth !== 'all') && <Button size="sm" onClick={() => { setFYear('all'); setFMonth('all') }}>Réinit.</Button>}
+            <Tag>Solde : {fcfa(totVal)}</Tag>
+          </>}>
+            {jm.length ? <DataTable columns={journalColumns} rows={jm} /> : <PanelEmpty icon="calendar-days" label="Aucun mouvement sur cette période" />}
+          </Panel>
         )
       })() : (() => {
         // gérant/pompiste/vendeuse : liste simple des dernières entrées (pas de filtres, pas de suppression)
         const recent = mvts.filter(m => !isVendeuse || m.categorie === 'superette').slice(0, 15)
         return (
-          <div className="card">
-            <h2>🕑 Mes dernières entrées</h2>
-            <div className="table-wrap">
-              <table><thead><tr><th>Date</th><th>Produit</th><th>Type</th><th className="num">Qté / Montant</th></tr></thead>
-                <tbody>
-                  {recent.map(m => <tr key={m.id}>
-                    <td>{frDate(m.date_mouvement)}</td><td>{m.produit || m.categorie}</td>
-                    <td><span className="badge" style={{ background: m.type === 'entree' ? 'var(--ok)' : 'var(--warn)' }}>{m.type === 'entree' ? 'Livraison' : m.type === 'ajustement' ? 'Inventaire' : m.type}</span></td>
-                    <td className="num">{m.valeur != null ? fcfa(m.valeur) : N(m.quantite)}</td>
-                  </tr>)}
-                  {!recent.length && <tr><td colSpan={4} className="muted">Rien enregistré pour l'instant.</td></tr>}
-                </tbody></table>
-            </div>
-          </div>
+          <Panel title="Mes dernières entrées" flush>
+            {recent.length ? <DataTable columns={recentColumns} rows={recent} /> : <PanelEmpty icon="calendar-days" label="Rien enregistré pour l'instant" />}
+          </Panel>
         )
       })()}
+    </div>
+  )
+}
+
+function ActionTile({ icon, title, desc, onClick }) {
+  return (
+    <div onClick={onClick} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 'var(--sp-3)', padding: 'var(--sp-6)', textAlign: 'center', cursor: 'pointer', background: 'var(--surface-raised)', border: '1px solid var(--border-default)', borderRadius: 'var(--radius-1)', transition: 'var(--t-control)' }}
+      onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--accent)' }} onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border-default)' }}>
+      <span style={{ width: 40, height: 40, borderRadius: '50%', background: 'var(--accent-quiet)', color: 'var(--accent)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <Icon name={icon} size={18} />
+      </span>
+      <div style={{ font: 'var(--fw-semibold) 13px/1.2 var(--font-ui)', color: 'var(--text-primary)' }}>{title}</div>
+      <div style={{ font: '400 12px/1.3 var(--font-ui)', color: 'var(--text-muted)' }}>{desc}</div>
     </div>
   )
 }

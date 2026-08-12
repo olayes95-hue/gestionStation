@@ -19,3 +19,9 @@ export const ALERT_TONES = {
   ECART_INVENTAIRE: { label: "Écart d'inventaire", tone: 'alarm' },
   POINT_MANQUANT: { label: 'Point du jour manquant', tone: 'info' },
 }
+
+export const STOCK_MOVEMENT_TONES = {
+  entree: 'ok',
+  sortie: 'alarm',
+  ajustement: 'warn',
+}

@@ -4,6 +4,7 @@ import {
   LayoutDashboard, CalendarDays, FolderOpen, Bell, ChartColumn, Landmark, Camera,
   Search, BookOpen, Factory, Building2, MapPin, LogOut, Menu, ChevronDown, X,
   Circle, TrendingUp, TrendingDown, Minus, OctagonAlert, TriangleAlert, Info, Check,
+  Wrench, Download,
 } from 'lucide-react';
 
 // Registre EXPLICITE (pas `import {icons} from 'lucide-react'`, qui embarquerait
@@ -21,6 +22,7 @@ const REGISTRY = {
   'map-pin': MapPin, 'log-out': LogOut, menu: Menu, 'chevron-down': ChevronDown, x: X,
   circle: Circle, 'trending-up': TrendingUp, 'trending-down': TrendingDown, minus: Minus,
   'octagon-alert': OctagonAlert, 'triangle-alert': TriangleAlert, info: Info, check: Check,
+  wrench: Wrench, download: Download,
 };
 
 // Réécriture (v43) : remplace la dépendance CDN window.lucide/UMD par des imports
