@@ -3,10 +3,19 @@ import { supabase } from '../lib/supabase'
 import { useStation } from '../lib/station.jsx'
 import { fcfa, frDate } from '../lib/format'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend } from 'recharts'
+import { Panel, PanelEmpty } from '../ds/octane/components/core/Panel.jsx'
+import { Button } from '../ds/octane/components/core/Button.jsx'
+import { Badge } from '../ds/octane/components/core/Badge.jsx'
+import { Tag } from '../ds/octane/components/core/Tag.jsx'
+import { Select } from '../ds/octane/components/forms/Select.jsx'
+import { DataTable } from '../ds/octane/components/data/DataTable.jsx'
+import { Kpi } from '../lib/Kpi.jsx'
 
 const N = (v) => (v ? Number(v) : 0)
 const MONTHS = ['01','02','03','04','05','06','07','08','09','10','11','12']
 const ML = { '01':'Janv','02':'Févr','03':'Mars','04':'Avril','05':'Mai','06':'Juin','07':'Juil','08':'Août','09':'Sept','10':'Oct','11':'Nov','12':'Déc' }
+const YEAR_TONE = (d) => d == null ? undefined : d < 3 ? 'alarm' : d < 6 ? 'warn' : 'ok'
+const YEAR_COLOR = (d) => d == null ? 'var(--text-primary)' : d < 3 ? 'var(--state-alarm)' : d < 6 ? 'var(--state-warn)' : 'var(--state-ok)'
 
 export default function Dashboard() {
   const { stationId } = useStation()
@@ -59,7 +68,7 @@ export default function Dashboard() {
   const fm = months.filter(m => (year === 'all' || m.mois.slice(0, 4) === year) && (month === 'all' || m.mois.slice(5, 7) === month))
   const sum = (k) => fm.reduce((s, m) => s + N(m[k]), 0)
 
-  if (loading && !stock && !months.length) return <div className="center">Chargement…</div>
+  if (loading && !stock && !months.length) return <Panel><p style={{ font: '400 12px/1 var(--font-ui)', color: 'var(--text-muted)', margin: 0 }}>Chargement…</p></Panel>
   const L = (v) => loading && !months.length ? '…' : v
 
   const totBon = sum('ventes_bon'), totCash = sum('recettes_especes'), totVerse = sum('total_verse')
@@ -82,140 +91,121 @@ export default function Dashboard() {
   const nConf = inspections.filter(i => i.conforme === true).length, nNonConf = inspections.filter(i => i.conforme === false).length
 
   const chart = fm.map(m => ({ mois: m.mois.slice(2), 'Ventes bon': Math.round(N(m.ventes_bon)), 'Espèces': Math.round(N(m.recettes_especes)), 'Versé': Math.round(N(m.total_verse)) }))
-  const daysColor = (d) => d == null ? 'inherit' : d < 3 ? 'var(--danger)' : d < 6 ? 'var(--warn)' : 'var(--ok)'
+
+  const yearOptions = [{ value: 'all', label: 'Toutes années' }, ...years.map(y => ({ value: y, label: y }))]
+  const monthOptions = [{ value: 'all', label: 'Tous mois' }, ...MONTHS.map(m => ({ value: m, label: ML[m] }))]
+
+  const reorderColumns = [
+    { key: 'produit', header: 'Produit', render: r => <span style={{ textTransform: 'capitalize' }}>{r.produit}</span> },
+    { key: 'stock', header: 'Stock', numeric: true, align: 'right', render: r => r.stock != null ? Math.round(r.stock).toLocaleString('fr-FR') + ' L' : '—' },
+    { key: 'conso_jour', header: 'Conso/j', numeric: true, align: 'right', render: r => r.conso_jour ? Math.round(r.conso_jour).toLocaleString('fr-FR') + ' L' : '—' },
+    { key: 'jours_restant', header: 'Autonomie', numeric: true, align: 'right', render: r => <span style={{ color: YEAR_COLOR(r.jours_restant) }}>{r.jours_restant != null ? `≈ ${r.jours_restant} j` : '—'}</span> },
+    { key: 'lead', header: 'Délai livr.', numeric: true, align: 'right', render: r => <>{r.lead != null ? `${r.lead} j` : '—'}{N(r.nb_delai) > 0 ? <span style={{ color: 'var(--text-muted)', fontSize: 10 }}> ({N(r.nb_delai)})</span> : <span style={{ color: 'var(--text-muted)', fontSize: 10 }}> déf.</span>}</> },
+    { key: 'commander', header: 'Commander le', render: r => r.commande_en_cours ? <span style={{ color: 'var(--text-muted)' }}>commande en cours</span> : r.commander_maintenant ? <b style={{ color: 'var(--state-alarm)' }}>maintenant</b> : (r.date_commande_conseillee ? frDate(r.date_commande_conseillee) : '—') },
+    { key: 'rupture', header: 'Rupture estimée', muted: true, render: r => r.date_rupture_estimee ? frDate(r.date_rupture_estimee) : '—' },
+    { key: 'action', header: 'Action', render: r => r.commande_en_cours
+      ? <Badge tone="info" title="Une commande est déjà proposée/validée/lancée pour ce produit">Commande en cours</Badge>
+      : r.commander_maintenant
+        ? <Badge tone="alarm">Commander{r.manque_a_gagner_estime > 0 ? ` (−${Math.round(r.manque_a_gagner_estime).toLocaleString('fr-FR')} F)` : ''}</Badge>
+        : <span style={{ color: 'var(--state-ok)' }}>ok</span> },
+  ]
+
+  const reconColumns = [
+    { key: 'mois', header: 'Mois' },
+    { key: 'esp', header: 'Espèces', numeric: true, align: 'right', render: m => fcfa(N(m.recettes_especes)) },
+    { key: 'ver', header: 'Versé', numeric: true, align: 'right', render: m => fcfa(N(m.total_verse)) },
+    { key: 'ecart', header: 'Écart', numeric: true, align: 'right', render: m => { const ec = N(m.recettes_especes) - N(m.total_verse); return <span style={{ color: ec > 1000 ? 'var(--state-alarm)' : 'var(--text-body)' }}>{fcfa(ec)}</span> } },
+    { key: 'couv', header: 'Couv.', numeric: true, align: 'right', render: m => { const esp = N(m.recettes_especes), ver = N(m.total_verse); const cov = esp ? Math.round(100 * ver / esp) : 0; return <span style={{ color: cov >= 90 ? 'var(--state-ok)' : cov >= 60 ? 'var(--state-warn)' : 'var(--state-alarm)' }}>{cov}%</span> } },
+  ]
 
   return (
-    <div>
-      <div className="card" style={{ borderColor: 'var(--primary)' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <h2 style={{ margin: 0 }}>📦 Stock en temps réel & autonomie</h2>
-          <span className="muted" style={{ fontSize: 12 }}>maj {refreshedAt} · <a style={{ cursor: 'pointer' }} onClick={loadStock}>rafraîchir</a></span>
-        </div>
-        {!stock ? <p className="muted">Pas encore de stock saisi.</p> : (<>
-          <p className="muted" style={{ fontSize: 12, marginTop: 4 }}>Dernière saisie : {frDate(stock.derniere_date)}</p>
-          <div className="grid kpis">
-            <StockKpi label="Essence en cuve" main={stock.ess_stock != null ? Math.round(stock.ess_stock) + ' L' : '—'} sub={forecast?.jours_essence != null ? `≈ ${forecast.jours_essence} j` : ''} color={daysColor(forecast?.jours_essence)} />
-            <StockKpi label="Gasoil en cuve" main={stock.gas_stock != null ? Math.round(stock.gas_stock) + ' L' : '—'} sub={forecast?.jours_gasoil != null ? `≈ ${forecast.jours_gasoil} j` : ''} color={daysColor(forecast?.jours_gasoil)} />
-            <StockKpi label="Bons en cours" main={stock.bons_restant != null ? fcfa(stock.bons_restant) : '—'}
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-6)' }}>
+      <Panel title="Stock en temps réel & autonomie" status="accent" meta={`maj ${refreshedAt}`} actions={<Button size="sm" onClick={loadStock}>Rafraîchir</Button>}>
+        {!stock ? <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', margin: 0 }}>Pas encore de stock saisi.</p> : (<>
+          <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', marginTop: 0 }}>Dernière saisie : {frDate(stock.derniere_date)}</p>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 'var(--sp-4)' }}>
+            <Kpi label="Essence en cuve" value={stock.ess_stock != null ? Math.round(stock.ess_stock) : '—'} unit={stock.ess_stock != null ? 'L' : ''} sub={forecast?.jours_essence != null ? `≈ ${forecast.jours_essence} j` : ''} status={YEAR_TONE(forecast?.jours_essence)} />
+            <Kpi label="Gasoil en cuve" value={stock.gas_stock != null ? Math.round(stock.gas_stock) : '—'} unit={stock.gas_stock != null ? 'L' : ''} sub={forecast?.jours_gasoil != null ? `≈ ${forecast.jours_gasoil} j` : ''} status={YEAR_TONE(forecast?.jours_gasoil)} />
+            <Kpi label="Bons en cours" value={stock.bons_restant != null ? fcfa(stock.bons_restant) : '—'}
               sub={N(stock.bons_utilises_depuis) > 0 ? `dont ${fcfa(stock.bons_utilises_depuis)} engagés en commandes` : ''}
-              color={stock.bons_restant != null && stock.bons_restant < 0 ? 'var(--danger)' : undefined} />
-            <StockKpi label="Bouteilles gaz" main={`${[stock.gaz_stock_3, stock.gaz_stock_6, stock.gaz_stock_12, stock.gaz_stock_38].reduce((a, b) => a + N(b), 0)} b.`} />
+              status={stock.bons_restant != null && stock.bons_restant < 0 ? 'alarm' : undefined} />
+            <Kpi label="Bouteilles gaz" value={[stock.gaz_stock_3, stock.gaz_stock_6, stock.gaz_stock_12, stock.gaz_stock_38].reduce((a, b) => a + N(b), 0)} unit="b." />
           </div>
         </>)}
-      </div>
+      </Panel>
 
       {reorder.length > 0 && (
-        <div className="card" style={{ borderColor: reorder.some(r => r.commander_maintenant) ? 'var(--danger)' : 'var(--border)' }}>
-          <h2>🔮 Prévision de commande carburant</h2>
-          <p className="hint">Quand commander pour ne jamais tomber en rupture (rupture = ventes perdues). Calcul : autonomie − délai de livraison − marge de sécurité. Le <b>délai</b> est calculé automatiquement sur l'historique des commandes (lancement → réception).</p>
-          <div className="table-wrap">
-            <table><thead><tr><th>Produit</th><th className="num">Stock</th><th className="num">Conso/j</th><th className="num">Autonomie</th><th className="num">Délai livr.</th><th>Commander le</th><th>Rupture estimée</th><th>Action</th></tr></thead>
-              <tbody>
-                {reorder.map(r => {
-                  const now = r.commander_maintenant
-                  const enCours = r.commande_en_cours
-                  return (<tr key={r.produit}>
-                    <td style={{ textTransform: 'capitalize' }}>{r.produit}</td>
-                    <td className="num">{r.stock != null ? Math.round(r.stock).toLocaleString('fr-FR') + ' L' : '—'}</td>
-                    <td className="num">{r.conso_jour ? Math.round(r.conso_jour).toLocaleString('fr-FR') + ' L' : '—'}</td>
-                    <td className="num" style={{ color: r.jours_restant == null ? 'inherit' : r.jours_restant < 3 ? 'var(--danger)' : r.jours_restant < 6 ? 'var(--warn)' : 'var(--ok)' }}>{r.jours_restant != null ? `≈ ${r.jours_restant} j` : '—'}</td>
-                    <td className="num" title={N(r.nb_delai) > 0 ? `moyenne sur ${N(r.nb_delai)} commande(s)` : 'valeur par défaut (pas encore d\'historique)'}>{r.lead != null ? `${r.lead} j` : '—'}{N(r.nb_delai) > 0 ? <span className="muted" style={{ fontSize: 10 }}> ({N(r.nb_delai)})</span> : <span className="muted" style={{ fontSize: 10 }}> déf.</span>}</td>
-                    <td>{enCours ? <span className="muted">commande en cours</span> : now ? <b style={{ color: 'var(--danger)' }}>maintenant</b> : (r.date_commande_conseillee ? frDate(r.date_commande_conseillee) : '—')}</td>
-                    <td className="muted">{r.date_rupture_estimee ? frDate(r.date_rupture_estimee) : '—'}</td>
-                    <td>{enCours
-                      ? <span className="badge" style={{ background: '#8e44ad' }} title="Une commande est déjà proposée/validée/lancée pour ce produit">🚚 Commande en cours</span>
-                      : now
-                      ? <span className="badge" style={{ background: 'var(--danger)' }}>🚨 Commander{r.manque_a_gagner_estime > 0 ? ` (−${Math.round(r.manque_a_gagner_estime).toLocaleString('fr-FR')} F)` : ''}</span>
-                      : <span style={{ color: 'var(--ok)' }}>✓ ok</span>}</td>
-                  </tr>)
-                })}
-              </tbody></table>
+        <Panel title="Prévision de commande carburant" status={reorder.some(r => r.commander_maintenant) ? 'alarm' : 'ok'} flush>
+          <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', margin: 'var(--sp-4) var(--gutter-panel) 0' }}>
+            Quand commander pour ne jamais tomber en rupture (rupture = ventes perdues). Calcul : autonomie − délai de livraison − marge de sécurité. Le <b>délai</b> est calculé automatiquement sur l'historique des commandes (lancement → réception).
+          </p>
+          <div style={{ marginTop: 'var(--sp-4)' }}>
+            <DataTable columns={reorderColumns} rows={reorder.map(r => ({ ...r, id: r.produit }))} />
           </div>
-        </div>
+        </Panel>
       )}
 
-      <div className="card">
-        <div className="toolbar">
-          <b>Filtres :</b>
-          <select value={year} onChange={e => setYear(e.target.value)}><option value="all">Toutes années</option>{years.map(y => <option key={y}>{y}</option>)}</select>
-          <select value={month} onChange={e => setMonth(e.target.value)}><option value="all">Tous mois</option>{MONTHS.map(m => <option key={m} value={m}>{ML[m]}</option>)}</select>
-          {(year !== 'all' || month !== 'all') && <button className="btn sec small" onClick={() => { setYear('all'); setMonth('all') }}>Réinitialiser</button>}
-          <span className="pill">{sum('jours')} jour(s)</span>
-        </div>
-      </div>
+      <Panel bodyStyle={{ display: 'none' }} actions={<>
+        <Select size="sm" value={year} onChange={e => setYear(e.target.value)} options={yearOptions} />
+        <Select size="sm" value={month} onChange={e => setMonth(e.target.value)} options={monthOptions} />
+        {(year !== 'all' || month !== 'all') && <Button size="sm" onClick={() => { setYear('all'); setMonth('all') }}>Réinitialiser</Button>}
+        <Tag>{sum('jours')} jour(s)</Tag>
+      </>} />
 
-      <div className="grid kpis" style={{ marginBottom: 16 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 'var(--sp-4)' }}>
         <Kpi label="Ventes à bon" value={L(fcfa(totBon))} sub={pctBon != null ? `${pctBon}% du CA` : ''} />
         <Kpi label="Recettes espèces" value={L(fcfa(totCash))} sub={pctEsp != null ? `${pctEsp}% du CA` : ''} />
         <Kpi label="Versé banque" value={L(fcfa(totVerse))} />
-        <Kpi label="Cash non tracé" value={L(fcfa(gapVerse))} danger={gapVerse > 0} sub="recettes − dépenses − versé" />
+        <Kpi label="Cash non tracé" value={L(fcfa(gapVerse))} status={gapVerse > 0 ? 'alarm' : undefined} sub="recettes − dépenses − versé" />
         <Kpi label="Marge carburant" value={L(fcfa(totMarge))} sub="25 F/L" />
         <Kpi label="Livraisons / achats" value={L(fcfa(totLivr))} />
-        <Kpi label="Alertes (station)" value={alertCount == null ? '…' : alertCount} danger={alertCount > 0} />
+        <Kpi label="Alertes (station)" value={alertCount == null ? '…' : alertCount} status={alertCount > 0 ? 'alarm' : undefined} />
       </div>
 
-      <div className="card">
-        <h2>⛽ Ventes carburant — Bon vs Espèce</h2>
+      <Panel title="Ventes carburant — Bon vs Espèce">
         {carbTotal ? (<>
-          <div className="grid kpis">
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 'var(--sp-4)' }}>
             <Kpi label="Carburant à BON (crédit)" value={L(fcfa(carbBon))} sub={pctCarbBon != null ? `${pctCarbBon}% du carburant` : ''} />
             <Kpi label="Carburant en ESPÈCES" value={L(fcfa(carbEsp))} sub={pctCarbEsp != null ? `${pctCarbEsp}% du carburant` : ''} />
             <Kpi label="CA carburant (période)" value={L(fcfa(carbTotal))} />
           </div>
-          <div style={{ display: 'flex', height: 16, borderRadius: 8, overflow: 'hidden', marginTop: 12 }}>
-            <div title={`Bon ${pctCarbBon}%`} style={{ width: `${pctCarbBon || 0}%`, background: '#e67e22' }} />
-            <div title={`Espèce ${pctCarbEsp}%`} style={{ width: `${pctCarbEsp || 0}%`, background: '#16a34a' }} />
+          <div style={{ display: 'flex', height: 12, borderRadius: 'var(--radius-1)', overflow: 'hidden', marginTop: 'var(--sp-4)' }}>
+            <div title={`Bon ${pctCarbBon}%`} style={{ width: `${pctCarbBon || 0}%`, background: 'var(--accent)' }} />
+            <div title={`Espèce ${pctCarbEsp}%`} style={{ width: `${pctCarbEsp || 0}%`, background: 'var(--state-ok)' }} />
           </div>
-          <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>
-            <span style={{ color: '#e67e22' }}>■</span> Bon {pctCarbBon}% &nbsp;·&nbsp;
-            <span style={{ color: '#16a34a' }}>■</span> Espèce {pctCarbEsp}% — essence + gasoil uniquement
+          <div style={{ font: '400 11px/1 var(--font-ui)', color: 'var(--text-muted)', marginTop: 'var(--sp-3)' }}>
+            <span style={{ color: 'var(--accent)' }}>■</span> Bon {pctCarbBon}% &nbsp;·&nbsp;
+            <span style={{ color: 'var(--state-ok)' }}>■</span> Espèce {pctCarbEsp}% — essence + gasoil uniquement
           </div>
-        </>) : <p className="muted">Pas de ventes carburant sur la période sélectionnée.</p>}
-      </div>
+        </>) : <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', margin: 0 }}>Pas de ventes carburant sur la période sélectionnée.</p>}
+      </Panel>
 
-      <div className="card">
-        <h2>🚚 Commandes & 🛂 contrôles ANM</h2>
-        <div className="grid kpis">
+      <Panel title="Commandes & contrôles ANM">
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 'var(--sp-4)' }}>
           <Kpi label="Commandes reçues" value={ordRecues.length} sub={`${orders.length} au total`} />
-          <Kpi label="Contrôles ANM" value={inspections.length} sub={`${nConf} conformes · ${nNonConf} non conf.`} danger={nNonConf > 0} />
+          <Kpi label="Contrôles ANM" value={inspections.length} sub={`${nConf} conformes · ${nNonConf} non conf.`} status={nNonConf > 0 ? 'alarm' : undefined} />
         </div>
-      </div>
+      </Panel>
 
-      <div className="card">
-        <h2>Évolution mensuelle</h2>
+      <Panel title="Évolution mensuelle">
         <div style={{ width: '100%', height: 320 }}>
           <ResponsiveContainer>
             <BarChart data={chart}>
-              <XAxis dataKey="mois" fontSize={11} /><YAxis fontSize={11} tickFormatter={v => (v / 1e6).toFixed(0) + 'M'} />
-              <Tooltip formatter={v => fcfa(v)} /><Legend />
-              <Bar dataKey="Ventes bon" fill="#3b5bdb" /><Bar dataKey="Espèces" fill="#2e86c1" /><Bar dataKey="Versé" fill="#16a34a" />
+              <XAxis dataKey="mois" fontSize={11} stroke="var(--text-muted)" />
+              <YAxis fontSize={11} stroke="var(--text-muted)" tickFormatter={v => (v / 1e6).toFixed(0) + 'M'} />
+              <Tooltip formatter={v => fcfa(v)} contentStyle={{ background: 'var(--surface-panel)', border: '1px solid var(--border-default)', borderRadius: 'var(--radius-1)', font: '12px var(--font-ui)' }} />
+              <Legend wrapperStyle={{ font: '11px var(--font-ui)' }} />
+              <Bar dataKey="Ventes bon" fill="var(--accent)" /><Bar dataKey="Espèces" fill="var(--state-info)" /><Bar dataKey="Versé" fill="var(--state-ok)" />
             </BarChart>
           </ResponsiveContainer>
         </div>
-      </div>
+      </Panel>
 
-      <div className="card">
-        <h2>Réconciliation versements (par mois)</h2>
-        <div className="table-wrap">
-          <table>
-            <thead><tr><th>Mois</th><th className="num">Espèces</th><th className="num">Versé</th><th className="num">Écart</th><th className="num">Couv.</th></tr></thead>
-            <tbody>
-              {fm.map(m => {
-                const esp = N(m.recettes_especes), ver = N(m.total_verse), ec = esp - ver, cov = esp ? Math.round(100 * ver / esp) : 0
-                return (<tr key={m.mois}><td>{m.mois}</td><td className="num">{fcfa(esp)}</td><td className="num">{fcfa(ver)}</td>
-                  <td className="num" style={{ color: ec > 1000 ? 'var(--danger)' : 'inherit' }}>{fcfa(ec)}</td>
-                  <td className="num" style={{ color: cov >= 90 ? 'var(--ok)' : cov >= 60 ? 'var(--warn)' : 'var(--danger)' }}>{cov}%</td></tr>)
-              })}
-            </tbody>
-          </table>
-        </div>
-      </div>
+      <Panel title="Réconciliation versements (par mois)" flush>
+        {fm.length
+          ? <DataTable columns={reconColumns} rows={fm.map(m => ({ ...m, id: m.mois }))} />
+          : <PanelEmpty icon="chart-column" label="Aucune donnée sur la période" />}
+      </Panel>
     </div>
   )
-}
-function StockKpi({ label, main, sub, color }) {
-  return (<div className="kpi"><div className="label">{label}</div><div className="value" style={{ fontSize: 20, color: color || 'var(--primary)' }}>{main}</div>{sub && <div className="sub" style={{ color: color || 'var(--muted)' }}>{sub}</div>}</div>)
-}
-function Kpi({ label, value, sub, danger }) {
-  return (<div className="kpi"><div className="label">{label}</div><div className="value" style={{ color: danger ? 'var(--danger)' : 'var(--primary)' }}>{value}</div>{sub && <div className="sub">{sub}</div>}</div>)
 }
