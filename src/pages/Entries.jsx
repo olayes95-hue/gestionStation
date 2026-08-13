@@ -15,7 +15,9 @@ const MONTHS = ['01','02','03','04','05','06','07','08','09','10','11','12']
 const MONTH_OPTIONS = MONTHS.map(m => ({ value: m, label: m }))
 
 export default function Entries() {
-  const { stationId } = useStation()
+  const { stationId, current } = useStation()
+  const nombreMachines = Math.min(10, Math.max(1, N(current?.nombre_machines) || 4))
+  const machineNums = Array.from({ length: nombreMachines }, (_, i) => i + 1)
   const nav = useNavigate()
   const [rows, setRows] = useState([])
   const [atts, setAtts] = useState([])
@@ -106,10 +108,10 @@ export default function Entries() {
                       <Info l="Gaz / Supérette / Lubrifiant" v={`${fcfa(r.gaz_espece)} · ${fcfa(r.superette_espece)} · ${fcfa(r.lubrifiant_espece)}`} />
                     </Section>
                     <Section title="Compteurs">
-                      <Info l="Ouverture E1→E4" v={`${N(r.e1_m)} · ${N(r.e2_m)} · ${N(r.e3_m)} · ${N(r.e4_m)}`} />
-                      <Info l="Ouverture G1→G4" v={`${N(r.g1_m)} · ${N(r.g2_m)} · ${N(r.g3_m)} · ${N(r.g4_m)}`} />
-                      <Info l="16h E1→E4" v={`${N(r.e1)} · ${N(r.e2)} · ${N(r.e3)} · ${N(r.e4)}`} />
-                      <Info l="16h G1→G4" v={`${N(r.g1)} · ${N(r.g2)} · ${N(r.g3)} · ${N(r.g4)}`} />
+                      <Info l={`Ouverture E1→E${nombreMachines}`} v={machineNums.map(n => N(r['e' + n + '_m'])).join(' · ')} />
+                      <Info l={`Ouverture G1→G${nombreMachines}`} v={machineNums.map(n => N(r['g' + n + '_m'])).join(' · ')} />
+                      <Info l={`16h E1→E${nombreMachines}`} v={machineNums.map(n => N(r['e' + n])).join(' · ')} />
+                      <Info l={`16h G1→G${nombreMachines}`} v={machineNums.map(n => N(r['g' + n])).join(' · ')} />
                     </Section>
                     <Section title="Stock">
                       <Info l="Cuve essence / gasoil" v={`${N(r.ess_stock)} L · ${N(r.gas_stock)} L`} />

@@ -12,7 +12,8 @@ const TABLE_LABELS = {
 }
 const ACTION_LABELS = { INSERT: { l: 'Création', tone: 'ok' }, UPDATE: { l: 'Modification', tone: 'warn' }, DELETE: { l: 'Suppression', tone: 'alarm' } }
 // champs à surveiller pour le diff lisible
-const WATCH = ['ess_litres','gas_litres','ess_bon','ess_espece','gas_bon','gas_espece','montant','quantite_commandee','cuve_avant','cuve_apres','statut','e1_m','e2_m','e3_m','e4_m','e1','e2','e3','e4','g1','g2','g3','g4','ess_stock','gas_stock']
+const PUMP_FIELDS = Array.from({ length: 10 }, (_, i) => i + 1).flatMap(n => [`e${n}_m`, `g${n}_m`, `e${n}`, `g${n}`]) // jusqu'à 10 machines par station (stations.nombre_machines)
+const WATCH = ['ess_litres','gas_litres','ess_bon','ess_espece','gas_bon','gas_espece','montant','quantite_commandee','cuve_avant','cuve_apres','statut', ...PUMP_FIELDS, 'ess_stock','gas_stock']
 
 const TABLE_OPTIONS = [{ value: 'all', label: 'Toutes les données' }, ...Object.entries(TABLE_LABELS).map(([value, label]) => ({ value, label }))]
 const ACTION_OPTIONS = [

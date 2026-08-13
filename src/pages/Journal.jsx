@@ -14,12 +14,9 @@ import { Kpi } from '../lib/Kpi.jsx'
 
 const N = (v) => (v ? Number(v) : 0)
 const AUTONOMIE_TONE = (d) => d == null ? undefined : d < 3 ? 'alarm' : d < 6 ? 'warn' : 'ok'
-const MACHINES = [
-  { n: 1, e: 'e1', g: 'g1' },
-  { n: 2, e: 'e2', g: 'g2' },
-  { n: 3, e: 'e3', g: 'g3' },
-  { n: 4, e: 'e4', g: 'g4' },
-]
+// Jusqu'à 10 machines par station (stations.nombre_machines, réglable dans Stations & équipe).
+const MAX_MACHINES = 10
+const machineNums = (n) => Array.from({ length: n }, (_, i) => i + 1)
 
 const CHECKLIST = [
   { key: 'matin', label: 'Matin (8h) — stock & ouverture', hint: "Relève le stock en cuve et les compteurs d'ouverture, avec photo." },
@@ -72,7 +69,7 @@ export default function Journal() {
       supabase.from('v_alerts').select('*').eq('station_id', stationId).gte('report_date', monthStart).lte('report_date', monthEnd),
       supabase.from('fuel_orders').select('id', { count: 'exact', head: true }).eq('station_id', stationId).in('statut', ['lancee', 'partielle']),
       supabase.from('settings').select('pompe_inactive_apres').eq('id', 1).maybeSingle(),
-      supabase.from('daily_reports').select('report_date,e1,e2,e3,e4,g1,g2,g3,g4').eq('station_id', stationId).order('report_date', { ascending: false }).limit(60),
+      supabase.from('daily_reports').select(['report_date', ...machineNums(MAX_MACHINES).flatMap(n => [`e${n}`, `g${n}`])].join(',')).eq('station_id', stationId).order('report_date', { ascending: false }).limit(60),
     ])
     setMoments(new Set((sub.data || []).map(x => x.moment)))
     setForecast(fc.data || null)
@@ -121,10 +118,11 @@ export default function Journal() {
 
   const manqueTotal = manque.carburant + manque.gaz_lub + manque.superette - depGeneral
   const topAlerts = alerts.slice(0, 5)
-  const pumps = MACHINES.map(m => ({
-    ...m,
-    eStatus: pumpStatus(pumpRows, m.e, pompeInactiveApres),
-    gStatus: pumpStatus(pumpRows, m.g, pompeInactiveApres),
+  const nombreMachines = Math.min(MAX_MACHINES, Math.max(1, N(current?.nombre_machines) || 4))
+  const pumps = machineNums(nombreMachines).map(n => ({
+    n, e: `e${n}`, g: `g${n}`,
+    eStatus: pumpStatus(pumpRows, `e${n}`, pompeInactiveApres),
+    gStatus: pumpStatus(pumpRows, `g${n}`, pompeInactiveApres),
   }))
   const nbActives = pumps.reduce((s, p) => s + (p.eStatus === 'active' ? 1 : 0) + (p.gStatus === 'active' ? 1 : 0), 0)
   const nbInactives = pumps.reduce((s, p) => s + (p.eStatus === 'inactive' ? 1 : 0) + (p.gStatus === 'inactive' ? 1 : 0), 0)
@@ -139,7 +137,7 @@ export default function Journal() {
         <Kpi label="Autonomie gasoil" value={forecast?.jours_gasoil != null ? forecast.jours_gasoil : '—'} unit={forecast?.jours_gasoil != null ? 'j' : ''} status={AUTONOMIE_TONE(forecast?.jours_gasoil)} sub={forecast?.gas_stock != null ? `${Math.round(forecast.gas_stock)} L en cuve` : ''} />
         <Kpi label="Manque à verser (mois)" value={fcfa(manqueTotal)} status={manqueTotal > 0 ? 'alarm' : 'ok'} />
         <Kpi label="Pertes carburant (mois)" value={pertes?.perte_na_montant ? fcfa(pertes.perte_na_montant) : fcfa(0)} status={N(pertes?.perte_na_montant) > 0 ? 'alarm' : 'ok'} sub={pertes?.perte_na_litres ? `${Math.round(N(pertes.perte_na_litres)).toLocaleString('fr-FR')} L hors seuil` : ''} />
-        <Kpi label="Pompes actives" value={`${nbActives}/8`} status={nbInactives > 0 ? 'alarm' : 'ok'} sub={nbInactives > 0 ? `${nbInactives} hors service` : ''} />
+        <Kpi label="Pompes actives" value={`${nbActives}/${pumps.length * 2}`} status={nbInactives > 0 ? 'alarm' : 'ok'} sub={nbInactives > 0 ? `${nbInactives} hors service` : ''} />
       </div>
 
       <div style={{ display: 'flex', gap: 'var(--sp-6)', flexWrap: 'wrap' }}>

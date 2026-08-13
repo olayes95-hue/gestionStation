@@ -23,16 +23,21 @@ import { MetricTile } from '../ds/octane/components/data/MetricTile.jsx'
 const N = (v) => (v === '' || v === null || v === undefined ? 0 : (numFR(v) ?? 0))
 const LUB_TYPES = ['5W30 1L','5W30 5L','20W50 5L','15W40 5L','80W90 1L','50 SAE 5L','Dexron 1L','Dot4 1L','10W40 5L','5W40 5L','Graisse','Liquide refroid.','Nettoyant injecteur','Nettoyant essence']
 const GAZ = [['3','3 kg'],['6','6 kg'],['12','12 kg'],['38','38 kg']]
+// Jusqu'à 10 machines par station (chacune : une pompe essence + une gasoil) — voir
+// stations.nombre_machines (Stations & équipe). Les colonnes au-delà du nombre réellement
+// utilisé par une station restent vides en base, sans impact.
+const MAX_MACHINES = 10
+const machineNums = (n) => Array.from({ length: n }, (_, i) => i + 1)
+const pumpKeys = (suffix) => [...machineNums(MAX_MACHINES).map(n => `e${n}${suffix}`), ...machineNums(MAX_MACHINES).map(n => `g${n}${suffix}`)]
 const NUMFIELDS = [
   'ess_litres','ess_pu','ess_bon','ess_espece','gas_litres','gas_pu','gas_bon','gas_espece',
   'gaz_espece','superette_espece','lubrifiant_espece',
-  'e1','e2','e3','e4','g1','g2','g3','g4',           // relevés 16h (contrôle)
-  'e1_m','e2_m','e3_m','e4_m','g1_m','g2_m','g3_m','g4_m', // relevés d'ouverture (matin)
+  ...pumpKeys(''),   // relevés 16h (contrôle) : e1..e10, g1..g10
+  ...pumpKeys('_m'), // relevés d'ouverture (matin) : e1_m..e10_m, g1_m..g10_m
   'total_bon_cumul',
   'ess_stock','gas_stock','gaz_stock_3','gaz_stock_6','gaz_stock_12','gaz_stock_38',
   'gaz_vendu_3','gaz_vendu_6','gaz_vendu_12','gaz_vendu_38',
 ]
-const METERS_16H = ['e1','e2','e3','e4','g1','g2','g3','g4']
 // Champs pilotés par NumericStepper (compteurs de bouteilles) : jamais formatés avec des
 // espaces, NumericStepper attend une valeur numérique brute (Number(f[k])), pas une chaîne.
 const STEPPER_FIELDS = ['gaz_stock_3','gaz_stock_6','gaz_stock_12','gaz_stock_38','gaz_vendu_3','gaz_vendu_6','gaz_vendu_12','gaz_vendu_38']
@@ -103,14 +108,16 @@ export default function Submit() {
     if (!stationId || isVendeuse) return
     setForceMeter(false); setMeterWarn('')
     supabase.from('daily_reports')
-      .select('report_date,e1_m,e2_m,e3_m,e4_m,g1_m,g2_m,g3_m,g4_m')
+      .select(['report_date', ...pumpKeys('_m')].join(','))
       .eq('station_id', stationId).lt('report_date', date)
       .order('report_date', { ascending: false }).limit(1).maybeSingle()
       .then(({ data }) => {
         if (!data) { setPrevMorning(null); return }
+        // Somme sur les 10 emplacements possibles : les machines au-delà de celles réellement
+        // utilisées par la station restent toujours nulles en base, donc n'affectent pas le total.
         setPrevMorning({
-          ess: N(data.e1_m) + N(data.e2_m) + N(data.e3_m) + N(data.e4_m),
-          gas: N(data.g1_m) + N(data.g2_m) + N(data.g3_m) + N(data.g4_m),
+          ess: machineNums(MAX_MACHINES).reduce((s, n) => s + N(data['e' + n + '_m']), 0),
+          gas: machineNums(MAX_MACHINES).reduce((s, n) => s + N(data['g' + n + '_m']), 0),
           date: data.report_date,
         })
       })
@@ -250,6 +257,7 @@ export default function Submit() {
   const marge = (N(f.ess_litres) + N(f.gas_litres)) * N(settings.marge_unitaire)
   const show = (m) => showAll || moment === m
   const locked = !isAdmin && date < daysAgoIso(30)   // gérant/pompiste/vendeuse : passé verrouillé (>1 mois)
+  const nombreMachines = Math.min(MAX_MACHINES, Math.max(1, Number(current?.nombre_machines) || 4))
   const achatsOpen = openAchats ?? (deliveries.length > 0)
   const depensesOpen = openDepenses ?? (expenses.length > 0)
   const versementsOpen = openVersements ?? (deposits.length > 0)
@@ -277,9 +285,10 @@ export default function Submit() {
   async function save() {
     if (!stationId) { fail('Aucune station sélectionnée.'); return }
     if (locked) { fail('Journée verrouillée : seul l\'administrateur peut modifier un jour de plus d\'un mois.'); return }
-    // 16h obligatoire : les 8 relevés doivent être remplis pour l'envoi de 16h
-    if (moment === 'apres-midi' && METERS_16H.some(k => f[k] === '' || f[k] === null || f[k] === undefined)) {
-      fail('Relevés 16 h obligatoires : remplis les 8 index des pompes (E1–E4, G1–G4) avant d\'envoyer.', 'meters-16h', apresmidiMetersRef); return
+    // 16h obligatoire : tous les relevés de la station doivent être remplis pour l'envoi de 16h
+    const meters16h = [...machineNums(nombreMachines).map(n => `e${n}`), ...machineNums(nombreMachines).map(n => `g${n}`)]
+    if (moment === 'apres-midi' && meters16h.some(k => f[k] === '' || f[k] === null || f[k] === undefined)) {
+      fail(`Relevés 16 h obligatoires : remplis les ${meters16h.length} index des pompes avant d'envoyer.`, 'meters-16h', apresmidiMetersRef); return
     }
     // justificatifs obligatoires : photo pour chaque dépense EN ESPÈCES
     // (la catégorie CARBURANT = prélèvement carburant du propriétaire, non-cash → pas de reçu).
@@ -297,8 +306,12 @@ export default function Submit() {
     }
     // photo obligatoire pour chaque compteur saisi (du moment)
     const meterSets = []
-    if (moment === 'matin' || showAll) meterSets.push(['e1_m', 'Essence 1'], ['e2_m', 'Essence 2'], ['e3_m', 'Essence 3'], ['e4_m', 'Essence 4'], ['g1_m', 'Gasoil 1'], ['g2_m', 'Gasoil 2'], ['g3_m', 'Gasoil 3'], ['g4_m', 'Gasoil 4'])
-    if (moment === 'apres-midi' || showAll) meterSets.push(['e1', 'Pompe E1'], ['e2', 'Pompe E2'], ['e3', 'Pompe E3'], ['e4', 'Pompe E4'], ['g1', 'Pompe G1'], ['g2', 'Pompe G2'], ['g3', 'Pompe G3'], ['g4', 'Pompe G4'])
+    if (moment === 'matin' || showAll) meterSets.push(
+      ...machineNums(nombreMachines).map(n => [`e${n}_m`, `Essence ${n}`]),
+      ...machineNums(nombreMachines).map(n => [`g${n}_m`, `Gasoil ${n}`]))
+    if (moment === 'apres-midi' || showAll) meterSets.push(
+      ...machineNums(nombreMachines).map(n => [`e${n}`, `Pompe E${n}`]),
+      ...machineNums(nombreMachines).map(n => [`g${n}`, `Pompe G${n}`]))
     const missM = meterSets.find(([k, label]) => f[k] !== '' && f[k] != null && !meterHasPhoto(k, label))
     if (missM) {
       const isMatinField = missM[0].endsWith('_m')
@@ -307,8 +320,8 @@ export default function Submit() {
     }
     // Garde-fou décalage compteur : l'index du matin doit être > au dernier jour saisi.
     if ((moment === 'matin' || showAll) && prevMorning && !forceMeter) {
-      const essNow = N(f.e1_m) + N(f.e2_m) + N(f.e3_m) + N(f.e4_m)
-      const gasNow = N(f.g1_m) + N(f.g2_m) + N(f.g3_m) + N(f.g4_m)
+      const essNow = machineNums(nombreMachines).reduce((s, n) => s + N(f['e' + n + '_m']), 0)
+      const gasNow = machineNums(nombreMachines).reduce((s, n) => s + N(f['g' + n + '_m']), 0)
       const parts = []
       if (essNow > 0 && prevMorning.ess > 0 && essNow <= prevMorning.ess) parts.push(`essence ${Math.round(essNow)} ≤ ${Math.round(prevMorning.ess)}`)
       if (gasNow > 0 && prevMorning.gas > 0 && gasNow <= prevMorning.gas) parts.push(`gasoil ${Math.round(gasNow)} ≤ ${Math.round(prevMorning.gas)}`)
@@ -586,7 +599,7 @@ export default function Submit() {
             <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', marginTop: 0 }}>Index de chaque pompe ce matin, avec sa photo (preuve). Sert à vérifier les ventes de la veille.</p>
             {err && errTarget === 'meters-matin' && !meterWarn && <AlertBanner tone="alarm" title="Erreur" style={{ marginBottom: 'var(--sp-3)' }}>{err}</AlertBanner>}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 'var(--sp-3)' }}>
-              {[1, 2, 3, 4].map(n => meterMachine(n, `e${n}_m`, `Essence ${n}`, `g${n}_m`, `Gasoil ${n}`))}
+              {machineNums(nombreMachines).map(n => meterMachine(n, `e${n}_m`, `Essence ${n}`, `g${n}_m`, `Gasoil ${n}`))}
             </div>
             {prevMorning && <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', marginTop: 'var(--sp-3)' }}>Repère — index du matin du {frDate(prevMorning.date)} : essence <b>{Math.round(prevMorning.ess).toLocaleString('fr-FR')}</b>, gasoil <b>{Math.round(prevMorning.gas).toLocaleString('fr-FR')}</b>. Le nouvel index doit être supérieur.</p>}
             {meterWarn && (
@@ -649,7 +662,7 @@ export default function Submit() {
           <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)' }}>Index de chaque pompe à 16 h, avec sa photo (preuve). Ce relevé est <b>obligatoire</b>.</p>
           {err && errTarget === 'meters-16h' && <AlertBanner tone="alarm" title="Erreur" style={{ marginBottom: 'var(--sp-4)' }}>{err}</AlertBanner>}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 'var(--sp-3)' }}>
-            {[1, 2, 3, 4].map(n => meterMachine(n, `e${n}`, `Pompe E${n}`, `g${n}`, `Pompe G${n}`))}
+            {machineNums(nombreMachines).map(n => meterMachine(n, `e${n}`, `Pompe E${n}`, `g${n}`, `Pompe G${n}`))}
           </div>
         </Panel>
 
