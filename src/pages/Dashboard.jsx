@@ -36,8 +36,6 @@ export default function Dashboard() {
   const [stock, setStock] = useState(null)
   const [forecast, setForecast] = useState(null)
   const [reorder, setReorder] = useState([])
-  const [orders, setOrders] = useState([])
-  const [inspections, setInspections] = useState([])
   const [loading, setLoading] = useState(true)
   const [year, setYear] = useState('all')
   const [month, setMonth] = useState('all')
@@ -76,10 +74,6 @@ export default function Dashboard() {
     // Le stock (rapide) s'affiche en premier ; les autres blocs se remplissent dès qu'ils arrivent,
     // sans s'attendre les uns les autres. La vue mensuelle (la plus lourde) ne bloque plus le rendu.
     loadStock()
-    supabase.from('fuel_orders').select('categorie,statut,quantite_commandee,cuve_avant,cuve_apres,montant').eq('station_id', stationId)
-      .then(({ data }) => setOrders(data || []))
-    supabase.from('inspections').select('conforme').eq('station_id', stationId)
-      .then(({ data }) => setInspections(data || []))
     supabase.from('v_ventes_mensuelles').select('*').eq('station_id', stationId).order('mois')
       .then(({ data }) => { setMonths(data || []); setLoading(false) })
     // les alertes (vue lourde) se chargent après l'affichage, sans bloquer — mois en cours seulement,
@@ -147,9 +141,6 @@ export default function Dashboard() {
   const carbTotal = carbBon + carbEsp
   const pctCarbBon = carbTotal ? Math.round(100 * carbBon / carbTotal) : null
   const pctCarbEsp = carbTotal ? 100 - pctCarbBon : null
-
-  const ordRecues = orders.filter(o => o.statut === 'recue')
-  const nConf = inspections.filter(i => i.conforme === true).length, nNonConf = inspections.filter(i => i.conforme === false).length
 
   const chart = fm.map(m => ({ mois: m.mois.slice(2), 'Ventes bon': Math.round(N(m.ventes_bon)), 'Espèces': Math.round(N(m.recettes_especes)), 'Versé': Math.round(N(m.total_verse)) }))
 
@@ -237,23 +228,6 @@ export default function Dashboard() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-6)' }}>
-      {alerts.length > 0 && (
-        <Panel title="Alertes — mois en cours" meta={`${alerts.length}`} flush>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-3)', padding: 'var(--gutter-panel)' }}>
-            {alerts.slice(0, 5).map((a, i) => {
-              const meta = ALERT_TONES[a.type] || { label: a.type, tone: 'info' }
-              return (
-                <AlertBanner key={i} tone={meta.tone} title={meta.label} timestamp={frDate(a.report_date)}
-                  action={a.report_date && <Button size="sm" onClick={() => nav(`/saisie?date=${a.report_date}`)}>Traiter</Button>}>
-                  {a.detail}
-                </AlertBanner>
-              )
-            })}
-            {alerts.length > 5 && <p style={{ font: '400 12px/1 var(--font-ui)', color: 'var(--text-muted)', margin: 0 }}>+ {alerts.length - 5} autre(s) alerte(s) — voir Alertes.</p>}
-          </div>
-        </Panel>
-      )}
-
       <Panel title="Stock en temps réel & autonomie" status="accent" meta={`maj ${refreshedAt}`} actions={<Button size="sm" onClick={loadStock}>Rafraîchir</Button>}>
         {!stock ? <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', margin: 0 }}>Pas encore de stock saisi.</p> : (<>
           <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', marginTop: 0 }}>Dernière saisie : {frDate(stock.derniere_date)}</p>
@@ -350,43 +324,41 @@ export default function Dashboard() {
         </div>
       </Panel>
 
-      <Panel title="Commandes & contrôles ANM">
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 'var(--sp-4)' }}>
-          <Kpi label="Commandes reçues" value={ordRecues.length} sub={`${orders.length} au total`} />
-          <Kpi label="Contrôles ANM" value={inspections.length} sub={`${nConf} conformes · ${nNonConf} non conf.`} status={nNonConf > 0 ? 'alarm' : undefined} />
+      <div style={{ display: 'flex', gap: 'var(--sp-6)', flexWrap: 'wrap' }}>
+        <div style={{ flex: '1 1 420px' }}>
+          <Panel title="Évolution mensuelle" style={{ height: '100%' }}>
+            <div style={{ width: '100%', height: 300 }}>
+              <ResponsiveContainer>
+                <BarChart data={chart}>
+                  <XAxis dataKey="mois" fontSize={11} stroke="var(--text-muted)" />
+                  <YAxis fontSize={11} stroke="var(--text-muted)" tickFormatter={v => (v / 1e6).toFixed(0) + 'M'} />
+                  <Tooltip formatter={v => fcfa(v)} contentStyle={{ background: 'var(--surface-panel)', border: '1px solid var(--border-default)', borderRadius: 'var(--radius-1)', font: '12px var(--font-ui)' }} />
+                  <Legend wrapperStyle={{ font: '11px var(--font-ui)' }} />
+                  <Bar dataKey="Ventes bon" fill="var(--accent)" /><Bar dataKey="Espèces" fill="var(--state-info)" /><Bar dataKey="Versé" fill="var(--state-ok)" />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </Panel>
         </div>
-      </Panel>
-
-      <Panel title="Évolution mensuelle">
-        <div style={{ width: '100%', height: 320 }}>
-          <ResponsiveContainer>
-            <BarChart data={chart}>
-              <XAxis dataKey="mois" fontSize={11} stroke="var(--text-muted)" />
-              <YAxis fontSize={11} stroke="var(--text-muted)" tickFormatter={v => (v / 1e6).toFixed(0) + 'M'} />
-              <Tooltip formatter={v => fcfa(v)} contentStyle={{ background: 'var(--surface-panel)', border: '1px solid var(--border-default)', borderRadius: 'var(--radius-1)', font: '12px var(--font-ui)' }} />
-              <Legend wrapperStyle={{ font: '11px var(--font-ui)' }} />
-              <Bar dataKey="Ventes bon" fill="var(--accent)" /><Bar dataKey="Espèces" fill="var(--state-info)" /><Bar dataKey="Versé" fill="var(--state-ok)" />
-            </BarChart>
-          </ResponsiveContainer>
+        <div style={{ flex: '1 1 420px' }}>
+          <Panel title="Évolution mensuelle par pôle" style={{ height: '100%' }}>
+            <div style={{ width: '100%', height: 300 }}>
+              <ResponsiveContainer>
+                <BarChart data={chartPoles}>
+                  <XAxis dataKey="mois" fontSize={11} stroke="var(--text-muted)" />
+                  <YAxis fontSize={11} stroke="var(--text-muted)" tickFormatter={v => (v / 1e6).toFixed(0) + 'M'} />
+                  <Tooltip formatter={v => fcfa(v)} contentStyle={{ background: 'var(--surface-panel)', border: '1px solid var(--border-default)', borderRadius: 'var(--radius-1)', font: '12px var(--font-ui)' }} />
+                  <Legend wrapperStyle={{ font: '11px var(--font-ui)' }} />
+                  <Bar dataKey="Carburant" stackId="pole" fill={POLE_COLORS.Carburant} />
+                  <Bar dataKey="Gaz" stackId="pole" fill={POLE_COLORS.Gaz} />
+                  <Bar dataKey="Lubrifiant" stackId="pole" fill={POLE_COLORS.Lubrifiant} />
+                  <Bar dataKey="Supérette" stackId="pole" fill={POLE_COLORS['Supérette']} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </Panel>
         </div>
-      </Panel>
-
-      <Panel title="Évolution mensuelle par pôle">
-        <div style={{ width: '100%', height: 320 }}>
-          <ResponsiveContainer>
-            <BarChart data={chartPoles}>
-              <XAxis dataKey="mois" fontSize={11} stroke="var(--text-muted)" />
-              <YAxis fontSize={11} stroke="var(--text-muted)" tickFormatter={v => (v / 1e6).toFixed(0) + 'M'} />
-              <Tooltip formatter={v => fcfa(v)} contentStyle={{ background: 'var(--surface-panel)', border: '1px solid var(--border-default)', borderRadius: 'var(--radius-1)', font: '12px var(--font-ui)' }} />
-              <Legend wrapperStyle={{ font: '11px var(--font-ui)' }} />
-              <Bar dataKey="Carburant" stackId="pole" fill={POLE_COLORS.Carburant} />
-              <Bar dataKey="Gaz" stackId="pole" fill={POLE_COLORS.Gaz} />
-              <Bar dataKey="Lubrifiant" stackId="pole" fill={POLE_COLORS.Lubrifiant} />
-              <Bar dataKey="Supérette" stackId="pole" fill={POLE_COLORS['Supérette']} />
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
-      </Panel>
+      </div>
 
       <Panel title="Réconciliation versements (par mois)" meta={`${fm.length} mois`} flush
         bodyStyle={openRecon ? undefined : { display: 'none' }}
@@ -396,6 +368,23 @@ export default function Dashboard() {
           ? <DataTable columns={reconColumns} rows={fm.map(m => ({ ...m, id: m.mois }))} />
           : <PanelEmpty icon="chart-column" label="Aucune donnée sur la période" />}
       </Panel>
+
+      {alerts.length > 0 && (
+        <Panel title="Alertes — mois en cours" meta={`${alerts.length}`} flush>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-3)', padding: 'var(--gutter-panel)' }}>
+            {alerts.slice(0, 5).map((a, i) => {
+              const meta = ALERT_TONES[a.type] || { label: a.type, tone: 'info' }
+              return (
+                <AlertBanner key={i} tone={meta.tone} title={meta.label} timestamp={frDate(a.report_date)}
+                  action={a.report_date && <Button size="sm" onClick={() => nav(`/saisie?date=${a.report_date}`)}>Traiter</Button>}>
+                  {a.detail}
+                </AlertBanner>
+              )
+            })}
+            {alerts.length > 5 && <p style={{ font: '400 12px/1 var(--font-ui)', color: 'var(--text-muted)', margin: 0 }}>+ {alerts.length - 5} autre(s) alerte(s) — voir Alertes.</p>}
+          </div>
+        </Panel>
+      )}
     </div>
   )
 }
