@@ -14,6 +14,7 @@ import { Textarea } from '../ds/octane/components/forms/Textarea.jsx'
 import { AlertBanner } from '../ds/octane/components/feedback/AlertBanner.jsx'
 import { EvidenceUpload } from '../ds/octane/components/evidence/EvidenceUpload.jsx'
 import { PanelEmpty } from '../ds/octane/components/core/Panel.jsx'
+import { Kpi } from '../lib/Kpi.jsx'
 
 const N = (v) => (v ? Number(v) : 0)
 const CONFORME_OPTIONS = [
@@ -30,6 +31,7 @@ export default function Inspections() {
   const [file, setFile] = useState(null)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState(''); const [msg, setMsg] = useState('')
+  const [fYear, setFYear] = useState('all')
 
   async function load() {
     if (!stationId) return
@@ -60,10 +62,30 @@ export default function Inspections() {
   }
   async function del(id) { await supabase.from('inspections').delete().eq('id', id); load() }
 
+  // list est trié par date_controle décroissant : le premier élément est le dernier contrôle.
+  const dernier = list[0] || null
+  const nonConformes = list.filter(c => c.conforme === false).length
+  const years = [...new Set(list.map(c => (c.date_controle || '').slice(0, 4)).filter(Boolean))].sort().reverse()
+  const shownList = fYear === 'all' ? list : list.filter(c => (c.date_controle || '').slice(0, 4) === fYear)
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-6)' }}>
       {msg && <AlertBanner tone="ok" title="Succès">{msg}</AlertBanner>}
       {err && <AlertBanner tone="alarm" title="Erreur">{err}</AlertBanner>}
+
+      {dernier?.conforme === false && (
+        <AlertBanner tone="alarm" title="Dernier contrôle non conforme">
+          {frDate(dernier.date_controle)} — {dernier.organisme}{dernier.observations ? ` : ${dernier.observations}` : ''}. Vérifie que les corrections nécessaires ont bien été apportées.
+        </AlertBanner>
+      )}
+
+      {list.length > 0 && (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 'var(--sp-4)' }}>
+          <Kpi label="Contrôles enregistrés" value={list.length} />
+          <Kpi label="Dernier contrôle" value={frDate(dernier?.date_controle)} />
+          <Kpi label="Non conformes" value={nonConformes} status={nonConformes > 0 ? 'alarm' : 'ok'} />
+        </div>
+      )}
 
       <Panel title="Enregistrer un contrôle">
         <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', marginTop: 0 }}>
@@ -104,11 +126,13 @@ export default function Inspections() {
         </form>
       </Panel>
 
-      <Panel title="Historique des contrôles" meta={`${list.length}`}>
-        {!list.length
+      <Panel title="Historique des contrôles" meta={`${shownList.length}`}
+        actions={years.length > 1 && <Select size="sm" value={fYear} onChange={e => setFYear(e.target.value)}
+          options={[{ value: 'all', label: 'Toutes années' }, ...years.map(y => ({ value: y, label: y }))]} />}>
+        {!shownList.length
           ? <PanelEmpty icon="shield-check" label="Aucun contrôle enregistré" />
           : <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-4)' }}>
-              {list.map(c => (
+              {shownList.map(c => (
                 <div key={c.id} style={{ padding: 'var(--sp-5)', background: 'var(--surface-raised)', borderRadius: 'var(--radius-1)', border: '1px solid var(--border-hairline)' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', gap: 'var(--sp-3)', alignItems: 'center' }}>
                     <b style={{ font: 'var(--fw-semibold) 13px/1.2 var(--font-ui)', color: 'var(--text-primary)' }}>{frDate(c.date_controle)} — {c.organisme}</b>
