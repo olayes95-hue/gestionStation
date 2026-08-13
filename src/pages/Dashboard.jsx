@@ -266,11 +266,18 @@ export default function Dashboard() {
         <Tag>{sum('jours')} jour(s)</Tag>
       </>} />
 
+      {/* Bandeau financier principal : les 4 chiffres qui comptent le plus, tout de suite visibles. */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 'var(--sp-4)' }}>
-        <Kpi label="Ventes à bon" value={L(fcfa(totBon))} sub={pctBon != null ? `${pctBon}% du CA` : ''} />
-        <Kpi label="Recettes espèces" value={L(fcfa(totCash))} sub={pctEsp != null ? `${pctEsp}% du CA` : ''} />
-        <Kpi label="Versé banque" value={L(fcfa(totVerse))} />
+        <Kpi label="CA total (période)" value={L(fcfa(caTotal))} sub="ventes à bon + espèces" />
+        <Kpi label="Charges totales déclarées" value={L(fcfa(totDep))} />
         <Kpi label="Cash non tracé" value={L(fcfa(gapVerse))} status={gapVerse > 0 ? 'alarm' : undefined} sub="recettes − dépenses − versé" />
+        <Kpi label="Versé banque" value={L(fcfa(totVerse))} />
+      </div>
+
+      {/* Détail qui alimente les totaux ci-dessus. */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 'var(--sp-4)' }}>
+        <Kpi label="Recettes espèces" value={L(fcfa(totCash))} sub={pctEsp != null ? `${pctEsp}% du CA` : ''} />
+        <Kpi label="Ventes à bon" value={L(fcfa(totBon))} sub={pctBon != null ? `${pctBon}% du CA` : ''} />
         <Kpi label="Marge carburant" value={L(fcfa(totMarge))} sub="25 F/L" />
         <Kpi label="Livraisons / achats" value={L(fcfa(totLivr))} />
       </div>
@@ -278,7 +285,6 @@ export default function Dashboard() {
       <Panel title="Ventes carburant — Bon vs Espèce">
         {carbTotal ? (<>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 'var(--sp-4)' }}>
-            <Kpi label="Carburant à BON (crédit)" value={L(fcfa(carbBon))} sub={pctCarbBon != null ? `${pctCarbBon}% du carburant` : ''} />
             <Kpi label="Carburant en ESPÈCES" value={L(fcfa(carbEsp))} sub={pctCarbEsp != null ? `${pctCarbEsp}% du carburant` : ''} />
             <Kpi label="CA carburant (période)" value={L(fcfa(carbTotal))} />
           </div>
@@ -287,11 +293,15 @@ export default function Dashboard() {
             <div title={`Espèce ${pctCarbEsp}%`} style={{ width: `${pctCarbEsp || 0}%`, background: 'var(--state-ok)' }} />
           </div>
           <div style={{ font: '400 11px/1 var(--font-ui)', color: 'var(--text-muted)', marginTop: 'var(--sp-3)' }}>
-            <span style={{ color: 'var(--accent)' }}>■</span> Bon {pctCarbBon}% &nbsp;·&nbsp;
+            <span style={{ color: 'var(--accent)' }}>■</span> Bon {pctCarbBon}% (= Ventes à bon ci-dessus) &nbsp;·&nbsp;
             <span style={{ color: 'var(--state-ok)' }}>■</span> Espèce {pctCarbEsp}% — essence + gasoil uniquement
           </div>
         </>) : <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', margin: 0 }}>Pas de ventes carburant sur la période sélectionnée.</p>}
       </Panel>
+
+      <div style={{ font: 'var(--fw-semibold) 12px/1 var(--font-ui)', textTransform: 'uppercase', letterSpacing: 'var(--ls-label)', color: 'var(--text-muted)' }}>
+        Focus par pôle
+      </div>
 
       <div style={{ display: 'flex', gap: 'var(--sp-6)', flexWrap: 'wrap' }}>
         <div style={{ flex: '1 1 380px' }}>
