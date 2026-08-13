@@ -27,7 +27,6 @@ const AuditLog = lazy(() => import('./pages/AuditLog.jsx'))
 const Finance = lazy(() => import('./pages/Finance.jsx'))
 const Products = lazy(() => import('./pages/Products.jsx'))
 const Stock = lazy(() => import('./pages/Stock.jsx'))
-const Entries = lazy(() => import('./pages/Entries.jsx'))
 const Aide = lazy(() => import('./pages/Aide.jsx'))
 const Journal = lazy(() => import('./pages/Journal.jsx'))
 
@@ -58,8 +57,7 @@ function Shell({ children }) {
     ...(isAdmin ? [
       { section: 'Pilotage' },
       { to: '/tableau', icon: 'layout-dashboard', label: 'Tableau de bord' },
-      { to: '/historique', icon: 'calendar-days', label: 'Historique des points' },
-      { to: '/saisies', icon: 'folder-open', label: 'Saisies & photos' },
+      { to: '/historique', icon: 'calendar-days', label: 'Historique' },
       { to: '/alertes', icon: 'bell', label: 'Alertes' },
       { section: 'Finance' },
       { to: '/finance', icon: 'chart-column', label: 'Point financier' },
@@ -116,7 +114,7 @@ export default function App() {
           <Route path="/controles" element={<Inspections />} />
           <Route path="/historique" element={isAdmin ? <History /> : <Navigate to="/saisie" />} />
           <Route path="/tableau" element={isAdmin ? <Dashboard /> : <Navigate to="/saisie" />} />
-          <Route path="/saisies" element={isAdmin ? <Entries /> : <Navigate to="/saisie" />} />
+          <Route path="/saisies" element={<Navigate to="/historique" />} />
           <Route path="/stock" element={<Stock />} />
           <Route path="/alertes" element={isAdmin ? <AlertsPage /> : <Navigate to="/saisie" />} />
           <Route path="/rapprochement" element={isAdmin ? <BankRecon /> : <Navigate to="/saisie" />} />
