@@ -303,7 +303,10 @@ export default function History() {
 // poleState : état d'un pôle pour un jour donné, réutilisé par le résumé/filtre rapide et le
 // badge Statut du tableau. Distinct de caCell/verseCell/ecartCell (JSX) — ici juste un mot-clé.
 function poleState(g, espece) {
-  if (g && N(g.nb_cloture) > 0 && g.ecart != null) return N(g.ecart) > 1000 ? 'ecart' : 'ok'
+  // Tout manque réel (écart > 0) compte, pas seulement au-delà d'un seuil de tolérance —
+  // l'épsilon (0.5) n'est là que pour absorber le bruit d'arrondi flottant, pas pour masquer
+  // un vrai manque de quelques centaines de francs.
+  if (g && N(g.nb_cloture) > 0 && g.ecart != null) return N(g.ecart) > 0.5 ? 'ecart' : 'ok'
   if (g?.couvert) return 'ok'
   if (N(espece) > 0) return 'attente'
   return null
@@ -328,8 +331,10 @@ function ecartCell(g, dayVal) {
   if (!g) return N(dayVal) > 0 ? <span style={{ color: 'var(--text-muted)' }}>en attente</span> : '—'
   if (N(g.nb_cloture) > 0) {
     const e = N(g.ecart)
-    // écart > 0 = il manque du versé (rouge) ; écart < 0 = surplus versé (vert) ; ≈0 = ok (vert)
-    return <span style={{ fontWeight: 600, color: e > 1000 ? 'var(--state-alarm)' : 'var(--state-ok)' }}>{fcfa(e)}{e < -1000 ? ' (surplus)' : ''}</span>
+    // écart > 0 = il manque du versé (rouge) ; écart < 0 = surplus versé (vert) ; ≈0 = ok (vert).
+    // Tout manque compte, même petit — 0.5 F n'est qu'un épsilon anti-bruit d'arrondi, pas une
+    // tolérance métier (825 F par ex. doit être rouge, pas "ok" parce que sous un seuil arbitraire).
+    return <span style={{ fontWeight: 600, color: e > 0.5 ? 'var(--state-alarm)' : 'var(--state-ok)' }}>{fcfa(e)}{e < -0.5 ? ' (surplus)' : ''}</span>
   }
   if (g.couvert) return <span style={{ color: 'var(--state-ok)' }} title="Jour inclus dans une période versée ; l'écart sera calculé au dernier jour de la période.">✓ inclus</span>
   if (N(g.espece) > 0 || N(dayVal) > 0) return <span style={{ color: 'var(--text-muted)' }}>en attente</span>
