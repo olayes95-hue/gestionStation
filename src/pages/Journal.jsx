@@ -188,51 +188,56 @@ export default function Journal() {
         </div>
       </Panel>
 
-      {/* ===== ACTIONS À FAIRE ===== */}
-      <Panel title="Aujourd'hui — à faire" meta={frDate(today())}>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-3)' }}>
-          {CHECKLIST.map(c => {
-            const done = moments.has(c.key)
-            return (
-              <div key={c.key} style={{ display: 'flex', alignItems: 'flex-start', gap: 'var(--sp-4)', padding: 'var(--sp-4)', background: 'var(--surface-raised)', borderRadius: 'var(--radius-1)', borderLeft: 'var(--bw-accent) solid var(--state-' + (done ? 'ok' : 'warn') + ')' }}>
-                <Icon name={done ? 'check' : 'triangle-alert'} size={16} color={done ? 'var(--state-ok)' : 'var(--state-warn)'} style={{ marginTop: 2 }} />
-                <div style={{ flex: 1 }}>
-                  <div style={{ font: 'var(--fw-semibold) 13px/1.2 var(--font-ui)', color: 'var(--text-primary)' }}>{c.label}</div>
-                  {!done && <div style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', marginTop: 'var(--sp-2)' }}>{c.hint}</div>}
-                </div>
-                {done ? <Badge tone="ok">Envoyé</Badge> : <Button size="sm" tone="primary" onClick={() => nav(`/saisie?moment=${c.key}`)}>Faire</Button>}
-              </div>
-            )
-          })}
-          {pendingCount > 0 && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-4)', padding: 'var(--sp-4)', background: 'var(--surface-raised)', borderRadius: 'var(--radius-1)', borderLeft: 'var(--bw-accent) solid var(--state-info)' }}>
-              <Icon name="truck" size={16} color="var(--state-info)" />
-              <div style={{ flex: 1, font: '400 13px/1.3 var(--font-ui)', color: 'var(--text-body)' }}>{pendingCount} commande{pendingCount > 1 ? 's' : ''} en attente de réception</div>
-              <Button size="sm" tone="primary" onClick={() => nav('/saisie')}>Réceptionner</Button>
-            </div>
-          )}
-        </div>
-      </Panel>
-
-      {/* ===== ALERTES ===== */}
-      <Panel title="Alertes du mois" meta={`${alerts.length}`} flush>
-        {topAlerts.length
-          ? <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-3)', padding: 'var(--gutter-panel)' }}>
-              {topAlerts.map((a, i) => {
-                const meta = ALERT_TONES[a.type] || { label: a.type, tone: 'info' }
+      {/* ===== ACTIONS À FAIRE + ALERTES ===== */}
+      <div style={{ display: 'flex', gap: 'var(--sp-6)', flexWrap: 'wrap' }}>
+        <div style={{ flex: '1 1 380px' }}>
+          <Panel title="Aujourd'hui — à faire" meta={frDate(today())} style={{ height: '100%' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-3)' }}>
+              {CHECKLIST.map(c => {
+                const done = moments.has(c.key)
                 return (
-                  <AlertBanner key={i} tone={meta.tone} title={meta.label} timestamp={frDate(a.report_date)}
-                    action={a.report_date && <Button size="sm" onClick={() => nav(`/saisie?date=${a.report_date}`)}>Traiter</Button>}>
-                    {a.detail}
-                  </AlertBanner>
+                  <div key={c.key} style={{ display: 'flex', alignItems: 'flex-start', gap: 'var(--sp-4)', padding: 'var(--sp-4)', background: 'var(--surface-raised)', borderRadius: 'var(--radius-1)', borderLeft: 'var(--bw-accent) solid var(--state-' + (done ? 'ok' : 'warn') + ')' }}>
+                    <Icon name={done ? 'check' : 'triangle-alert'} size={16} color={done ? 'var(--state-ok)' : 'var(--state-warn)'} style={{ marginTop: 2 }} />
+                    <div style={{ flex: 1 }}>
+                      <div style={{ font: 'var(--fw-semibold) 13px/1.2 var(--font-ui)', color: 'var(--text-primary)' }}>{c.label}</div>
+                      {!done && <div style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', marginTop: 'var(--sp-2)' }}>{c.hint}</div>}
+                    </div>
+                    {done ? <Badge tone="ok">Envoyé</Badge> : <Button size="sm" tone="primary" onClick={() => nav(`/saisie?moment=${c.key}`)}>Faire</Button>}
+                  </div>
                 )
               })}
-              {alerts.length > topAlerts.length && (
-                <p style={{ font: '400 12px/1 var(--font-ui)', color: 'var(--text-muted)', margin: 0 }}>+ {alerts.length - topAlerts.length} autre(s) alerte(s).</p>
+              {pendingCount > 0 && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-4)', padding: 'var(--sp-4)', background: 'var(--surface-raised)', borderRadius: 'var(--radius-1)', borderLeft: 'var(--bw-accent) solid var(--state-info)' }}>
+                  <Icon name="truck" size={16} color="var(--state-info)" />
+                  <div style={{ flex: 1, font: '400 13px/1.3 var(--font-ui)', color: 'var(--text-body)' }}>{pendingCount} commande{pendingCount > 1 ? 's' : ''} en attente de réception</div>
+                  <Button size="sm" tone="primary" onClick={() => nav('/saisie')}>Réceptionner</Button>
+                </div>
               )}
             </div>
-          : <PanelEmpty icon="check" label="Aucune alerte ce mois" />}
-      </Panel>
+          </Panel>
+        </div>
+
+        <div style={{ flex: '1 1 380px' }}>
+          <Panel title="Alertes du mois" meta={`${alerts.length}`} flush style={{ height: '100%' }}>
+            {topAlerts.length
+              ? <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-3)', padding: 'var(--gutter-panel)' }}>
+                  {topAlerts.map((a, i) => {
+                    const meta = ALERT_TONES[a.type] || { label: a.type, tone: 'info' }
+                    return (
+                      <AlertBanner key={i} tone={meta.tone} title={meta.label} timestamp={frDate(a.report_date)}
+                        action={a.report_date && <Button size="sm" onClick={() => nav(`/saisie?date=${a.report_date}`)}>Traiter</Button>}>
+                        {a.detail}
+                      </AlertBanner>
+                    )
+                  })}
+                  {alerts.length > topAlerts.length && (
+                    <p style={{ font: '400 12px/1 var(--font-ui)', color: 'var(--text-muted)', margin: 0 }}>+ {alerts.length - topAlerts.length} autre(s) alerte(s).</p>
+                  )}
+                </div>
+              : <PanelEmpty icon="check" label="Aucune alerte ce mois" />}
+          </Panel>
+        </div>
+      </div>
     </div>
   )
 }
