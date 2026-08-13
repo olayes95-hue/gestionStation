@@ -63,7 +63,7 @@ h1,h2{letter-spacing:-.02em}
 .appbar-spacer{flex:1}
 .hamburger{display:none;background:none;border:1px solid var(--border);border-radius:9px;width:38px;height:38px;
   font-size:18px;cursor:pointer;color:var(--text)}
-.content{padding:22px 20px 64px;max-width:1160px;width:100%;margin:0 auto}
+.content{padding:22px 20px 64px;max-width:var(--content-max, 1680px);width:100%;margin:0 auto}
 .chip{display:inline-flex;align-items:center;gap:4px;background:#eef1f6;color:#42506a;
   padding:6px 12px;border-radius:999px;font-size:13px;font-weight:550}
 .role-chip{background:var(--primary-soft);color:var(--primary)}

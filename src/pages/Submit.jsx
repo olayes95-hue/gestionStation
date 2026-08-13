@@ -168,9 +168,9 @@ export default function Submit() {
         <Icon name="fuel" size={12} color="var(--text-muted)" />
         <span style={{ font: 'var(--fw-semibold) 10px/1 var(--font-ui)', textTransform: 'uppercase', letterSpacing: 'var(--ls-micro)', color: 'var(--text-muted)' }}>Machine {n}</span>
       </div>
-      <div style={{ display: 'flex', gap: 'var(--sp-3)' }}>
-        {meterField(eKey, eLabel)}
-        {meterField(gKey, gLabel)}
+      <div style={{ display: 'flex', gap: 'var(--sp-3)', flexWrap: 'wrap' }}>
+        <div style={{ flex: '1 1 110px', minWidth: 0 }}>{meterField(eKey, eLabel)}</div>
+        <div style={{ flex: '1 1 110px', minWidth: 0 }}>{meterField(gKey, gLabel)}</div>
       </div>
     </div>
   )
@@ -561,7 +561,7 @@ export default function Submit() {
           <FormSection title="Relevés compteurs à l'ouverture" style={{ marginTop: 'var(--sp-4)' }} innerRef={matinMetersRef}>
             <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', marginTop: 0 }}>Index de chaque pompe ce matin, avec sa photo (preuve). Sert à vérifier les ventes de la veille.</p>
             {err && errTarget === 'meters-matin' && !meterWarn && <AlertBanner tone="alarm" title="Erreur" style={{ marginBottom: 'var(--sp-3)' }}>{err}</AlertBanner>}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 'var(--sp-3)' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 'var(--sp-3)' }}>
               {[1, 2, 3, 4].map(n => meterMachine(n, `e${n}_m`, `Essence ${n}`, `g${n}_m`, `Gasoil ${n}`))}
             </div>
             {prevMorning && <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', marginTop: 'var(--sp-3)' }}>Repère — index du matin du {frDate(prevMorning.date)} : essence <b>{Math.round(prevMorning.ess).toLocaleString('fr-FR')}</b>, gasoil <b>{Math.round(prevMorning.gas).toLocaleString('fr-FR')}</b>. Le nouvel index doit être supérieur.</p>}
@@ -624,7 +624,7 @@ export default function Submit() {
           <StepHead n="3" title="Relevés 16 h — obligatoire" />
           <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)' }}>Index de chaque pompe à 16 h, avec sa photo (preuve). Ce relevé est <b>obligatoire</b>.</p>
           {err && errTarget === 'meters-16h' && <AlertBanner tone="alarm" title="Erreur" style={{ marginBottom: 'var(--sp-4)' }}>{err}</AlertBanner>}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 'var(--sp-3)' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 'var(--sp-3)' }}>
             {[1, 2, 3, 4].map(n => meterMachine(n, `e${n}`, `Pompe E${n}`, `g${n}`, `Pompe G${n}`))}
           </div>
         </Panel>
