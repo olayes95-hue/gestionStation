@@ -37,7 +37,7 @@ export default function Orders() {
   const [recv, setRecv] = useState({})
   const [recvTotals, setRecvTotals] = useState({})
   const [livreReel, setLivreReel] = useState({})   // {order_id: somme des (cuve_après−cuve_avant) PAR réception}
-  const [fStatut, setFStatut] = useState('tous'); const [fCat, setFCat] = useState('tous'); const [fProduit, setFProduit] = useState('tous')
+  const [fStatut, setFStatut] = useState('tous'); const [fCat, setFCat] = useState('tous')
   // Filtre par défaut : mois en cours (plus lisible qu'un historique complet non filtré).
   const now = new Date()
   const [year, setYear] = useState(String(now.getFullYear())); const [month, setMonth] = useState(String(now.getMonth() + 1).padStart(2, '0'))
@@ -165,7 +165,6 @@ export default function Orders() {
   const delaiJours = (o) => (o.date_lancement && o.report_date)
     ? Math.round((new Date(o.report_date) - new Date(o.date_lancement)) / 86400000) : null
   const count = (s) => orders.filter(o => o.statut === s).length
-  const produits = [...new Set(orders.map(o => o.produit).filter(Boolean))].sort()
   const orderYears = [...new Set([...orders.map(o => dateOf(o).slice(0, 4)).filter(Boolean), String(now.getFullYear())])].sort()
 
   const inPeriod = (d) => {
@@ -175,8 +174,8 @@ export default function Orders() {
     if (month !== 'all' && d.slice(5, 7) !== month) return false
     return true
   }
-  const resetFilters = () => { setYear('all'); setMonth('all'); setDateFrom(''); setDateTo(''); setFCat('tous'); setFProduit('tous'); setFStatut('tous') }
-  const filtersActive = year !== 'all' || month !== 'all' || dateFrom || dateTo || fCat !== 'tous' || fProduit !== 'tous' || fStatut !== 'tous'
+  const resetFilters = () => { setYear('all'); setMonth('all'); setDateFrom(''); setDateTo(''); setFCat('tous'); setFStatut('tous') }
+  const filtersActive = year !== 'all' || month !== 'all' || dateFrom || dateTo || fCat !== 'tous' || fStatut !== 'tous'
 
   // « À réceptionner » : liste toujours complète, peu importe le mois de lancement ou la catégorie —
   // une commande lancée peut être livrée bien après le mois où elle a été proposée/lancée, et il ne faut
@@ -186,13 +185,12 @@ export default function Orders() {
     : orders.filter(o =>
         inPeriod(dateOf(o)) &&
         (fStatut === 'tous' || o.statut === fStatut) &&
-        (fCat === 'tous' || (o.categorie || 'carburant') === fCat) &&
-        (fProduit === 'tous' || o.produit === fProduit))
+        (fCat === 'tous' || (o.categorie || 'carburant') === fCat))
   const totalMontant = shown.reduce((s, o) => s + orderMontant(o), 0)
   const pageCount = Math.max(1, Math.ceil(shown.length / pageSize))
   const pageClamped = Math.min(page, pageCount)
   const pageRows = shown.slice((pageClamped - 1) * pageSize, pageClamped * pageSize)
-  useEffect(() => { setPage(1) }, [fStatut, fCat, fProduit, year, month, dateFrom, dateTo])
+  useEffect(() => { setPage(1) }, [fStatut, fCat, year, month, dateFrom, dateTo])
 
   // Compte des commandes qui attendent une action, tous statuts confondus — résumé en haut de page.
   const nbAValider = count('proposee')
@@ -387,12 +385,10 @@ export default function Orders() {
             {filtersActive && <Button size="sm" onClick={resetFilters}>Réinitialiser</Button>}
           </div>
           <div style={{ display: 'flex', gap: 'var(--sp-2)', flexWrap: 'wrap' }}>
-            <Button size="sm" tone={fCat === 'tous' ? 'primary' : 'outline'} onClick={() => { setFCat('tous'); setFProduit('tous') }}>Toutes catégories</Button>
-            {CATS.map(([k, l]) => <Button key={k} size="sm" tone={fCat === k ? 'primary' : 'outline'} onClick={() => { setFCat(k); setFProduit('tous') }}>{l}</Button>)}
+            <Button size="sm" tone={fCat === 'tous' ? 'primary' : 'outline'} onClick={() => setFCat('tous')}>Toutes catégories</Button>
+            {CATS.map(([k, l]) => <Button key={k} size="sm" tone={fCat === k ? 'primary' : 'outline'} onClick={() => setFCat(k)}>{l}</Button>)}
           </div>
           <div style={{ display: 'flex', gap: 'var(--sp-2)', flexWrap: 'wrap', alignItems: 'center' }}>
-            <Select size="sm" value={fProduit} onChange={e => setFProduit(e.target.value)}
-              options={[{ value: 'tous', label: 'Tous produits' }, ...produits.filter(p => fCat === 'tous' || orders.some(o => o.produit === p && (o.categorie || 'carburant') === fCat)).map(p => ({ value: p, label: p }))]} />
             <Select size="sm" value={fStatut} onChange={e => setFStatut(e.target.value)}
               options={[['tous', 'Tous statuts'], ['proposee', `Proposées (${count('proposee')})`], ['validee', `Validées (${count('validee')})`], ['a_receptionner', `À réceptionner (${nbAReceptionner})`], ['lancee', `Lancées (${count('lancee')})`], ['partielle', `Partielles (${count('partielle')})`], ['recue', `Reçues (${count('recue')})`], ['annulee', `Refusées (${count('annulee')})`]].map(([k, l]) => ({ value: k, label: l }))} />
           </div>
