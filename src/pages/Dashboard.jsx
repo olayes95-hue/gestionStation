@@ -46,9 +46,10 @@ export default function Dashboard() {
   const [inited, setInited] = useState(false)
   const [openRecon, setOpenRecon] = useState(false)
   const [overview, setOverview] = useState([])   // vue comparative multi-stations (indép. de la station sélectionnée)
-  const [polePeriod, setPolePeriod] = useState({ dr: [], dep: [], exp: [], sup: [] })   // brut, pour manque-à-verser et détail par pôle/catégorie sur la période sélectionnée
+  const [polePeriod, setPolePeriod] = useState({ dr: [], dep: [], exp: [], sup: [], lub: [] })   // brut, pour manque-à-verser et détail par pôle/catégorie sur la période sélectionnée
   const [charges, setCharges] = useState([])   // table "charges" du Point financier (Finance.jsx) — loyer, salaires, impôts...
   const [gazPrices, setGazPrices] = useState({})   // {nom bouteille: prix_vente actuel} — pour estimer le CA gaz par taille
+  const [lubPrices, setLubPrices] = useState({})   // {nom référence: prix_vente actuel} — pour estimer le CA lubrifiant par type
   const [uniteMode, setUniteMode] = useState(false)   // false = CFA, true = unité physique (L, bouteilles, articles...)
   const [poleEvolution, setPoleEvolution] = useState('carburant')   // pôle affiché par "Évolution mensuelle par pôle" en mode Unité
   const [poleUniteSeries, setPoleUniteSeries] = useState([])   // [{mois, value}] pour gaz/supérette en mode Unité (carburant vient directement de `months`)
@@ -79,6 +80,12 @@ export default function Dashboard() {
           const m = r.report_date.slice(0, 7)
           byMonth[m] = (byMonth[m] || 0) + N(r.quantite)
         }
+      } else if (poleEvolution === 'lubrifiant') {
+        const { data } = await supabase.from('v_sorties_deduites').select('report_date,sortie_deduite').eq('station_id', stationId).eq('categorie', 'lubrifiant').gte('report_date', from).lte('report_date', to)
+        for (const r of (data || [])) {
+          const m = r.report_date.slice(0, 7)
+          byMonth[m] = (byMonth[m] || 0) + Math.max(0, N(r.sortie_deduite))
+        }
       }
       setPoleUniteSeries(Object.entries(byMonth).sort(([a], [b]) => a.localeCompare(b)).map(([mois, value]) => ({ mois, value })))
     })()
@@ -88,20 +95,24 @@ export default function Dashboard() {
     supabase.from('products').select('nom,prix_vente').eq('categorie', 'gaz').then(({ data }) => {
       const m = {}; for (const p of (data || [])) m[p.nom] = N(p.prix_vente); setGazPrices(m)
     })
+    supabase.from('products').select('nom,prix_vente').eq('categorie', 'lubrifiant').then(({ data }) => {
+      const m = {}; for (const p of (data || [])) m[p.nom] = N(p.prix_vente); setLubPrices(m)
+    })
   }, [])
 
   useEffect(() => {
     if (!stationId) return
     const { from, to } = periodBounds(year, month)
     ;(async () => {
-      const [dr, dep, exp, sup] = await Promise.all([
+      const [dr, dep, exp, sup, lub] = await Promise.all([
         supabase.from('daily_reports').select('ess_espece,gas_espece,gaz_espece,superette_espece,lubrifiant_espece,ess_litres,ess_pu,gas_litres,gas_pu,gaz_vendu_3,gaz_vendu_6,gaz_vendu_12,gaz_vendu_38').eq('station_id', stationId).gte('report_date', from).lte('report_date', to),
         supabase.from('deposits').select('pole,montant,periode_fin,report_date').eq('station_id', stationId)
           .or(`and(periode_fin.gte.${from},periode_fin.lte.${to}),and(periode_fin.is.null,report_date.gte.${from},report_date.lte.${to})`),
         supabase.from('expenses').select('categorie,montant,non_cash').eq('station_id', stationId).gte('report_date', from).lte('report_date', to),
         supabase.from('superette_sales').select('nom,montant,quantite').eq('station_id', stationId).gte('report_date', from).lte('report_date', to),
+        supabase.from('v_sorties_deduites').select('produit,sortie_deduite').eq('station_id', stationId).eq('categorie', 'lubrifiant').gte('report_date', from).lte('report_date', to),
       ])
-      setPolePeriod({ dr: dr.data || [], dep: dep.data || [], exp: exp.data || [], sup: sup.data || [] })
+      setPolePeriod({ dr: dr.data || [], dep: dep.data || [], exp: exp.data || [], sup: sup.data || [], lub: lub.data || [] })
     })()
   }, [stationId, year, month])
 
@@ -289,16 +300,29 @@ export default function Dashboard() {
     return topN(rows)
   })()
 
+  // Lubrifiant par type : pas de "quantité vendue" saisie directement, mais la consommation se
+  // DÉDUIT des relevés de stock successifs (v_sorties_deduites, même mécanisme que "Sorties
+  // déduites" sur Stock & mouvements) — stock veille + entrées − stock jour, par référence.
+  // Une valeur négative (entrée oubliée un jour donné) est ramenée à 0 plutôt que soustraite du
+  // total, pour ne pas faire disparaître de la vraie consommation d'un autre jour.
+  const lubrifiantMix = (() => {
+    const totals = {}
+    for (const r of polePeriod.lub) { totals[r.produit] = (totals[r.produit] || 0) + Math.max(0, N(r.sortie_deduite)) }
+    const rows = Object.entries(totals).filter(([, v]) => v > 0).map(([k, v]) => ({ name: k, value: uniteMode ? v : v * N(lubPrices[k]) })).filter(r => r.value > 0).sort((a, b) => b.value - a.value)
+    return topN(rows)
+  })()
+
   // "Évolution mensuelle par pôle" en mode Unité : un pôle à la fois (les unités diffèrent
   // d'un pôle à l'autre, pas de sens à les empiler). Carburant a sa tendance déjà prête dans
-  // l'agrégat mensuel (litres_carburant) ; gaz/supérette viennent de poleUniteSeries (chargé à
-  // la demande, cf. l'effet ci-dessus).
+  // l'agrégat mensuel (litres_carburant) ; gaz/supérette/lubrifiant viennent de poleUniteSeries
+  // (chargé à la demande, cf. l'effet ci-dessus).
   const POLE_EVOLUTION_OPTIONS = [
     { value: 'carburant', label: 'Carburant' },
     { value: 'gaz', label: 'Gaz' },
     { value: 'superette', label: 'Supérette' },
+    { value: 'lubrifiant', label: 'Lubrifiant' },
   ]
-  const POLE_EVOLUTION_UNIT = { carburant: 'L', gaz: 'bout.', superette: 'unités' }
+  const POLE_EVOLUTION_UNIT = { carburant: 'L', gaz: 'bout.', superette: 'unités', lubrifiant: 'unités' }
   const chartPoleUnite = (poleEvolution === 'carburant'
     ? fm.map(m => ({ mois: m.mois.slice(2), value: Math.round(N(m.litres_carburant)) }))
     : poleUniteSeries.map(r => ({ mois: r.mois.slice(2), value: Math.round(r.value) })))
@@ -456,10 +480,13 @@ export default function Dashboard() {
             {superetteMix.length ? <PoleShare data={superetteMix} unit={uniteMode ? 'unités' : undefined} /> : <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', margin: 0 }}>Pas de vente supérette détaillée sur la période (nécessite la saisie vendeuse par article).</p>}
           </Panel>
         </div>
+        <div style={{ flex: '1 1 320px' }}>
+          <Panel title="Lubrifiant — par type" meta={polePeriod.lub.length ? `top ${Math.min(SUP_TOP_N, lubrifiantMix.length)}` : undefined} style={{ height: '100%' }}>
+            {lubrifiantMix.length ? <PoleShare data={lubrifiantMix} unit={uniteMode ? 'unités' : undefined} /> : <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', margin: 0 }}>Pas de consommation déduite sur la période (aucun relevé de stock lubrifiant consécutif).</p>}
+            <p style={{ font: '400 11px/1.3 var(--font-ui)', color: 'var(--text-muted)', margin: 'var(--sp-3) 0 0' }}>Déduit des relevés de stock successifs (stock veille + entrées − stock jour), pas d'une vente saisie directement.{!uniteMode ? ' Valeur estimée au prix actuel.' : ''}</p>
+          </Panel>
+        </div>
       </div>
-      <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', margin: 0 }}>
-        Lubrifiant : pas de détail par type disponible (en CFA ni en unité) — seul le total en espèces est saisi au quotidien, aucune vente par référence n'est tracée.
-      </p>
 
       <div style={{ display: 'flex', gap: 'var(--sp-6)', flexWrap: 'wrap' }}>
         <div style={{ flex: '1 1 420px' }}>
