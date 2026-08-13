@@ -18,6 +18,12 @@ const N = (v) => (v ? Number(v) : 0)
 const MONTHS = ['01','02','03','04','05','06','07','08','09','10','11','12']
 const ML = { '01':'Janv','02':'Févr','03':'Mars','04':'Avril','05':'Mai','06':'Juin','07':'Juil','08':'Août','09':'Sept','10':'Oct','11':'Nov','12':'Déc' }
 const MONTH_OPTIONS = [{ value: 'all', label: 'Tous mois' }, ...MONTHS.map(m => ({ value: m, label: ML[m] }))]
+const POLE_FILTER_OPTIONS = [
+  { value: 'tous', label: 'Tous les pôles' },
+  { value: 'carburant', label: 'Carburant' },
+  { value: 'gaz_lub', label: 'Gaz + Lubrifiant' },
+  { value: 'superette', label: 'Supérette' },
+]
 
 // Fusion de « Historique des points » (réconciliation financière) et « Saisies & photos »
 // (détail opérationnel + preuves) — même donnée journalière parcourue sous deux angles avant,
@@ -32,7 +38,8 @@ export default function History() {
   const [loading, setLoading] = useState(true)
   const [year, setYear] = useState('all')
   const [month, setMonth] = useState('all')
-  const [quickFilter, setQuickFilter] = useState('tous')   // tous | ecarts | sans-photo
+  const [quickFilter, setQuickFilter] = useState('tous')   // tous | ecarts | sans-photo (filtre les LIGNES)
+  const [poleFilter, setPoleFilter] = useState('tous')      // tous | carburant | gaz_lub | superette (filtre les COLONNES)
   const [detailDate, setDetailDate] = useState(null)
   const [detailExtra, setDetailExtra] = useState({ at: [], dep: [], exp: [], urls: {} })   // chargé à la demande, pour le seul jour ouvert
 
@@ -134,19 +141,47 @@ export default function History() {
     exportRowsToCsv(`historique-${station}-${label}.csv`, columns, data)
   }
 
+  // Colonnes détaillées par pôle (CA/Espèce/Versé/Écart), comme l'ancien tableau — poleFilter
+  // choisit lesquels afficher au lieu d'imposer soit tout, soit un résumé compressé.
+  const showCarb = poleFilter === 'tous' || poleFilter === 'carburant'
+  const showGL = poleFilter === 'tous' || poleFilter === 'gaz_lub'
+  const showSup = poleFilter === 'tous' || poleFilter === 'superette'
   const columns = [
     { key: 'date', header: 'Date', render: r => frDate(r.report_date) },
-    { key: 'ca_total', header: 'CA du jour', numeric: true, align: 'right', render: r => fcfa(N(r.ca_carburant) + N(r.gaz_espece) + N(r.lubrifiant_espece) + N(r.superette_espece)) },
-    { key: 'statut', header: 'Statut', render: r => {
-      const s = dayStatus(r)
-      return s === 'ecart' ? <Badge tone="alarm">Écart</Badge> : s === 'attente' ? <Badge tone="idle">En attente</Badge> : <Badge tone="ok">OK</Badge>
-    } },
+    ...(showCarb ? [
+      { key: 'ca_carb', header: 'CA Carbu.', numeric: true, align: 'right', render: r => fcfa(r.ca_carburant) },
+      { key: 'esp_carb', header: 'Espèce carbu.', numeric: true, align: 'right', render: r => (recon[r.report_date]?.carburant ? caCell(recon[r.report_date].carburant, recon[r.report_date].carburant.espece) : '—') },
+      { key: 'ver_carb', header: 'Versé carbu.', numeric: true, align: 'right', render: r => verseCell(recon[r.report_date]?.carburant) },
+      { key: 'ec_carb', header: 'Écart carbu.', numeric: true, align: 'right', render: r => ecartCell(recon[r.report_date]?.carburant) },
+    ] : []),
+    ...(showGL ? [
+      { key: 'ca_gl', header: 'CA Gaz+Lub.', numeric: true, align: 'right', render: r => caCell(recon[r.report_date]?.gaz_lub, N(r.gaz_espece) + N(r.lubrifiant_espece)) },
+      { key: 'ver_gl', header: 'Versé Gaz+Lub.', numeric: true, align: 'right', render: r => verseCell(recon[r.report_date]?.gaz_lub) },
+      { key: 'ec_gl', header: 'Écart Gaz+Lub.', numeric: true, align: 'right', render: r => ecartCell(recon[r.report_date]?.gaz_lub) },
+    ] : []),
+    ...(showSup ? [
+      { key: 'ca_sup', header: 'CA Supérette', numeric: true, align: 'right', render: r => caCell(recon[r.report_date]?.superette, r.superette_espece) },
+      { key: 'ver_sup', header: 'Versé Sup.', numeric: true, align: 'right', render: r => verseCell(recon[r.report_date]?.superette) },
+      { key: 'ec_sup', header: 'Écart Sup.', numeric: true, align: 'right', render: r => ecartCell(recon[r.report_date]?.superette) },
+    ] : []),
+    ...(showCarb ? [{ key: 'bon', header: 'Bon', numeric: true, align: 'right', render: r => fcfa(r.ventes_bon) }] : []),
     { key: 'photos', header: 'Photos', render: r => photoDates.has(r.report_date) ? <Badge tone="ok">Oui</Badge> : <Badge tone="alarm">Non</Badge> },
   ]
 
-  const footer = {
-    date: `TOTAL (${shownRows.length} j)`,
-    ca_total: fcfa(shownRows.reduce((s, r) => s + N(r.ca_carburant) + N(r.gaz_espece) + N(r.lubrifiant_espece) + N(r.superette_espece), 0)),
+  const footer = { date: `TOTAL (${shownRows.length} j)` }
+  if (showCarb) {
+    footer.ca_carb = fcfa(shownRows.reduce((s, r) => s + N(r.ca_carburant), 0))
+    footer.esp_carb = fcfa(shownRows.reduce((s, r) => s + N(recon[r.report_date]?.carburant?.espece), 0))
+    footer.ver_carb = fcfa(shownRows.reduce((s, r) => s + N(recon[r.report_date]?.carburant?.verse), 0))
+    footer.bon = fcfa(shownRows.reduce((s, r) => s + N(r.ventes_bon), 0))
+  }
+  if (showGL) {
+    footer.ca_gl = fcfa(shownRows.reduce((s, r) => s + N(r.gaz_espece) + N(r.lubrifiant_espece), 0))
+    footer.ver_gl = fcfa(shownRows.reduce((s, r) => s + N(recon[r.report_date]?.gaz_lub?.verse), 0))
+  }
+  if (showSup) {
+    footer.ca_sup = fcfa(shownRows.reduce((s, r) => s + N(r.superette_espece), 0))
+    footer.ver_sup = fcfa(shownRows.reduce((s, r) => s + N(recon[r.report_date]?.superette?.verse), 0))
   }
 
   const detailRow = frows.find(r => r.report_date === detailDate) || null
@@ -165,6 +200,7 @@ export default function History() {
       meta={`${shownRows.length}`}
       flush
       actions={<>
+        <Select size="sm" value={poleFilter} onChange={e => setPoleFilter(e.target.value)} options={POLE_FILTER_OPTIONS} />
         <Select size="sm" value={year} onChange={e => setYear(e.target.value)} options={yearOptions} />
         <Select size="sm" value={month} onChange={e => setMonth(e.target.value)} options={MONTH_OPTIONS} />
         {(year !== 'all' || month !== 'all') && <Button size="sm" onClick={() => { setYear('all'); setMonth('all') }}>Réinitialiser</Button>}
