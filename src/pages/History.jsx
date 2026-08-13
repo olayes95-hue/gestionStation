@@ -130,9 +130,9 @@ export default function History() {
       const caGL = N(r.gaz_espece) + N(r.lubrifiant_espece)
       return {
         date: frDate(r.report_date),
-        ca_carb: Math.round(N(r.ca_carburant)), esp_carb: caVal(carb, carb?.espece), ver_carb: verseVal(carb), ec_carb: ecartVal(carb),
-        ca_gl: caVal(gl, caGL), ver_gl: verseVal(gl), ec_gl: ecartVal(gl),
-        ca_sup: caVal(sup, r.superette_espece), ver_sup: verseVal(sup), ec_sup: ecartVal(sup),
+        ca_carb: Math.round(N(r.ca_carburant)), esp_carb: caVal(carb, carb?.espece), ver_carb: verseVal(carb), ec_carb: ecartVal(carb, carb?.espece),
+        ca_gl: caVal(gl, caGL), ver_gl: verseVal(gl), ec_gl: ecartVal(gl, caGL),
+        ca_sup: caVal(sup, r.superette_espece), ver_sup: verseVal(sup), ec_sup: ecartVal(sup, r.superette_espece),
         bon: Math.round(N(r.ventes_bon)), photos: photoDates.has(r.report_date) ? 'Oui' : 'Non',
       }
     })
@@ -152,17 +152,17 @@ export default function History() {
       { key: 'ca_carb', header: 'CA Carbu.', numeric: true, align: 'right', render: r => fcfa(r.ca_carburant) },
       { key: 'esp_carb', header: 'Espèce carbu.', numeric: true, align: 'right', render: r => (recon[r.report_date]?.carburant ? caCell(recon[r.report_date].carburant, recon[r.report_date].carburant.espece) : '—') },
       { key: 'ver_carb', header: 'Versé carbu.', numeric: true, align: 'right', render: r => verseCell(recon[r.report_date]?.carburant) },
-      { key: 'ec_carb', header: 'Écart carbu.', numeric: true, align: 'right', render: r => ecartCell(recon[r.report_date]?.carburant) },
+      { key: 'ec_carb', header: 'Écart carbu.', numeric: true, align: 'right', render: r => ecartCell(recon[r.report_date]?.carburant, recon[r.report_date]?.carburant?.espece) },
     ] : []),
     ...(showGL ? [
       { key: 'ca_gl', header: 'CA Gaz+Lub.', numeric: true, align: 'right', render: r => caCell(recon[r.report_date]?.gaz_lub, N(r.gaz_espece) + N(r.lubrifiant_espece)) },
       { key: 'ver_gl', header: 'Versé Gaz+Lub.', numeric: true, align: 'right', render: r => verseCell(recon[r.report_date]?.gaz_lub) },
-      { key: 'ec_gl', header: 'Écart Gaz+Lub.', numeric: true, align: 'right', render: r => ecartCell(recon[r.report_date]?.gaz_lub) },
+      { key: 'ec_gl', header: 'Écart Gaz+Lub.', numeric: true, align: 'right', render: r => ecartCell(recon[r.report_date]?.gaz_lub, N(r.gaz_espece) + N(r.lubrifiant_espece)) },
     ] : []),
     ...(showSup ? [
       { key: 'ca_sup', header: 'CA Supérette', numeric: true, align: 'right', render: r => caCell(recon[r.report_date]?.superette, r.superette_espece) },
       { key: 'ver_sup', header: 'Versé Sup.', numeric: true, align: 'right', render: r => verseCell(recon[r.report_date]?.superette) },
-      { key: 'ec_sup', header: 'Écart Sup.', numeric: true, align: 'right', render: r => ecartCell(recon[r.report_date]?.superette) },
+      { key: 'ec_sup', header: 'Écart Sup.', numeric: true, align: 'right', render: r => ecartCell(recon[r.report_date]?.superette, r.superette_espece) },
     ] : []),
     ...(showCarb ? [{ key: 'bon', header: 'Bon', numeric: true, align: 'right', render: r => fcfa(r.ventes_bon) }] : []),
     { key: 'photos', header: 'Photos', render: r => photoDates.has(r.report_date) ? <Badge tone="ok">Oui</Badge> : <Badge tone="alarm">Non</Badge> },
@@ -241,11 +241,11 @@ export default function History() {
             <>
               <Section title="Réconciliation">
                 <Info l="CA carburant" v={caCell(g.carburant, g.carburant?.espece)} />
-                <Info l="Versé / Écart carburant" v={<>{verseCell(g.carburant)} · {ecartCell(g.carburant)}</>} />
+                <Info l="Versé / Écart carburant" v={<>{verseCell(g.carburant)} · {ecartCell(g.carburant, g.carburant?.espece)}</>} />
                 <Info l="CA gaz + lubrifiant" v={caCell(g.gaz_lub, caGL)} />
-                <Info l="Versé / Écart gaz + lubrifiant" v={<>{verseCell(g.gaz_lub)} · {ecartCell(g.gaz_lub)}</>} />
+                <Info l="Versé / Écart gaz + lubrifiant" v={<>{verseCell(g.gaz_lub)} · {ecartCell(g.gaz_lub, caGL)}</>} />
                 <Info l="CA supérette" v={caCell(g.superette, detailRow.superette_espece)} />
-                <Info l="Versé / Écart supérette" v={<>{verseCell(g.superette)} · {ecartCell(g.superette)}</>} />
+                <Info l="Versé / Écart supérette" v={<>{verseCell(g.superette)} · {ecartCell(g.superette, detailRow.superette_espece)}</>} />
                 <Info l="Ventes à bon" v={fcfa(detailRow.ventes_bon)} />
               </Section>
 
@@ -320,15 +320,19 @@ function caCell(g, dayVal) {
 function verseCell(g) {
   return g && N(g.verse) ? fcfa(g.verse) : '—'
 }
-function ecartCell(g) {
-  if (!g) return '—'
+// dayVal (la même valeur que celle passée à caCell pour la colonne CA/Espèce voisine) sert de
+// filet : si la caisse déclarée du jour est non nulle, le jour est "en attente" même si g.espece
+// est absent/à 0 pour une raison quelconque — la colonne Écart ne doit jamais afficher un tiret
+// à côté d'une colonne CA/Espèce qui montre un montant réel, ça n'a pas de sens pour le gérant.
+function ecartCell(g, dayVal) {
+  if (!g) return N(dayVal) > 0 ? <span style={{ color: 'var(--text-muted)' }}>en attente</span> : '—'
   if (N(g.nb_cloture) > 0) {
     const e = N(g.ecart)
     // écart > 0 = il manque du versé (rouge) ; écart < 0 = surplus versé (vert) ; ≈0 = ok (vert)
     return <span style={{ fontWeight: 600, color: e > 1000 ? 'var(--state-alarm)' : 'var(--state-ok)' }}>{fcfa(e)}{e < -1000 ? ' (surplus)' : ''}</span>
   }
   if (g.couvert) return <span style={{ color: 'var(--state-ok)' }} title="Jour inclus dans une période versée ; l'écart sera calculé au dernier jour de la période.">✓ inclus</span>
-  if (N(g.espece) > 0) return <span style={{ color: 'var(--text-muted)' }}>en attente</span>
+  if (N(g.espece) > 0 || N(dayVal) > 0) return <span style={{ color: 'var(--text-muted)' }}>en attente</span>
   return '—'
 }
 // Équivalents en VALEUR BRUTE (nombres/texte, pas de JSX) — pour l'export CSV, miroir de caCell/verseCell/ecartCell.
@@ -337,11 +341,11 @@ function caVal(g, dayVal) {
   return Math.round(N(dayVal))
 }
 function verseVal(g) { return g && N(g.verse) ? Math.round(N(g.verse)) : '' }
-function ecartVal(g) {
-  if (!g) return ''
+function ecartVal(g, dayVal) {
+  if (!g) return N(dayVal) > 0 ? 'en attente' : ''
   if (N(g.nb_cloture) > 0) return Math.round(N(g.ecart))
   if (g.couvert) return 'inclus'
-  if (N(g.espece) > 0) return 'en attente'
+  if (N(g.espece) > 0 || N(dayVal) > 0) return 'en attente'
   return ''
 }
 
