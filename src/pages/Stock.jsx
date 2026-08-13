@@ -80,14 +80,31 @@ export default function Stock() {
     .map(s => ({ ...s, pr: products.find(p => p.categorie === s.categorie && p.nom === s.produit) }))
     .filter(s => s.pr && N(s.stock) < N(s.pr.seuil)), [stock, products])
 
+  // Tendance = dernier écart (jour − veille) connu par produit, tiré de v_sorties_deduites
+  // (déjà trié report_date desc) : le premier match par produit est donc le plus récent.
+  const latestTrendByProduct = useMemo(() => {
+    const o = {}
+    for (const s of sorties) {
+      const key = s.categorie + '|' + s.produit
+      if (!(key in o)) o[key] = N(s.stock_jour) - N(s.stock_veille)
+    }
+    return o
+  }, [sorties])
+
   const productColumns = (cat) => [
     { key: 'produit', header: 'Produit' },
     { key: 'stock', header: 'Reste', numeric: true, align: 'right', render: s => {
       const pr = products.find(p => p.categorie === cat && p.nom === s.produit)
       const low = pr && N(s.stock) < N(pr.seuil)
-      return <span style={{ display: 'inline-flex', alignItems: 'center', gap: 'var(--sp-2)', justifyContent: 'flex-end' }}>
-        <span style={{ fontWeight: 600 }}>{N(s.stock)}</span>{low && <Badge tone="alarm">Bas</Badge>}
-      </span>
+      const trend = latestTrendByProduct[cat + '|' + s.produit]
+      return <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}>
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 'var(--sp-2)' }}>
+          <span style={{ fontWeight: 600 }}>{N(s.stock)}</span>{low && <Badge tone="alarm">Bas</Badge>}
+        </span>
+        {!!trend && <span style={{ font: '400 10px/1 var(--font-data)', color: trend < 0 ? 'var(--state-alarm)' : 'var(--state-ok)' }}>
+          {trend < 0 ? '↓' : '↑'}{Math.abs(trend)} depuis hier
+        </span>}
+      </div>
     } },
     { key: 'seuil', header: 'Seuil', numeric: true, align: 'right', muted: true, render: s => { const pr = products.find(p => p.categorie === cat && p.nom === s.produit); return pr ? N(pr.seuil) : '—' } },
   ]
