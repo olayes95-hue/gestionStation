@@ -32,7 +32,7 @@ function periodBounds(year, month) {
 }
 
 export default function Dashboard() {
-  const { stationId, stations, setStationId } = useStation()
+  const { stationId } = useStation()
   const nav = useNavigate()
   const [months, setMonths] = useState([])   // v_ventes_mensuelles (agrégé, rapide)
   const [alerts, setAlerts] = useState([])   // v_alerts du mois en cours (station active), triées par gravité
@@ -45,7 +45,6 @@ export default function Dashboard() {
   const [refreshedAt, setRefreshedAt] = useState('')
   const [inited, setInited] = useState(false)
   const [openRecon, setOpenRecon] = useState(false)
-  const [overview, setOverview] = useState([])   // vue comparative multi-stations (indép. de la station sélectionnée)
   const [polePeriod, setPolePeriod] = useState({ dr: [], dep: [], exp: [], sup: [], lub: [] })   // brut, pour manque-à-verser et détail par pôle/catégorie sur la période sélectionnée
   const [charges, setCharges] = useState([])   // table "charges" du Point financier (Finance.jsx) — loyer, salaires, impôts...
   const [gazPrices, setGazPrices] = useState({})   // {nom bouteille: prix_vente actuel} — pour estimer le CA gaz par taille
@@ -146,33 +145,6 @@ export default function Dashboard() {
     return () => { supabase.removeChannel(ch) }
   }, [stationId])
 
-  // Vue comparative multi-stations : indépendante de la station sélectionnée, pour repérer en un
-  // coup d'œil laquelle a besoin d'attention sans avoir à basculer le sélecteur station par station.
-  useEffect(() => {
-    if (!stations.length) return
-    (async () => {
-      const day = new Date().toISOString().slice(0, 10)
-      const monthStart = day.slice(0, 7) + '-01', monthEnd = day.slice(0, 7) + '-31'
-      const [sf, al, vm] = await Promise.all([
-        supabase.from('v_stock_forecast').select('*'),
-        supabase.from('v_alerts').select('station_id').gte('report_date', monthStart).lte('report_date', monthEnd),
-        supabase.from('v_ventes_mensuelles').select('*').eq('mois', day.slice(0, 7)),
-      ])
-      const byStation = (rows) => { const m = {}; for (const r of (rows || [])) (m[r.station_id] = m[r.station_id] || []).push(r); return m }
-      const sfMap = {}; for (const r of (sf.data || [])) sfMap[r.station_id] = r
-      const alMap = byStation(al.data)
-      const vmMap = {}; for (const r of (vm.data || [])) vmMap[r.station_id] = r
-      setOverview(stations.map(s => {
-        const f = sfMap[s.id], m = vmMap[s.id]
-        const gap = m ? N(m.recettes_especes) - N(m.total_depense) - N(m.total_verse) : null
-        return {
-          id: s.id, nom: s.nom,
-          joursEssence: f?.jours_essence ?? null, joursGasoil: f?.jours_gasoil ?? null,
-          cashNonTrace: gap, nbAlertes: (alMap[s.id] || []).length,
-        }
-      }))
-    })()
-  }, [stations])
 
   const years = useMemo(() => [...new Set(months.map(m => m.mois.slice(0, 4)))].sort(), [months])
   useEffect(() => { if (!inited && months.length) { const m = months.map(x => x.mois).sort().at(-1); setYear(m.slice(0, 4)); setMonth(m.slice(5, 7)); setInited(true) } }, [months, inited])
@@ -345,15 +317,6 @@ export default function Dashboard() {
         : <span style={{ color: 'var(--state-ok)' }}>ok</span> },
   ]
 
-  const overviewColumns = [
-    { key: 'nom', header: 'Station', render: r => <span style={{ fontWeight: r.id === stationId ? 700 : 400 }}>{r.nom}{r.id === stationId ? ' (active)' : ''}</span> },
-    { key: 'ess', header: 'Essence', numeric: true, align: 'right', render: r => <span style={{ color: YEAR_COLOR(r.joursEssence) }}>{r.joursEssence != null ? `≈ ${r.joursEssence} j` : '—'}</span> },
-    { key: 'gas', header: 'Gasoil', numeric: true, align: 'right', render: r => <span style={{ color: YEAR_COLOR(r.joursGasoil) }}>{r.joursGasoil != null ? `≈ ${r.joursGasoil} j` : '—'}</span> },
-    { key: 'cash', header: 'Cash non tracé (mois)', numeric: true, align: 'right', render: r => r.cashNonTrace != null ? <span style={{ color: r.cashNonTrace > 0 ? 'var(--state-alarm)' : 'var(--state-ok)' }}>{fcfa(r.cashNonTrace)}</span> : '—' },
-    { key: 'al', header: 'Alertes (mois)', numeric: true, align: 'right', render: r => r.nbAlertes > 0 ? <Badge tone="alarm">{r.nbAlertes}</Badge> : <span style={{ color: 'var(--state-ok)' }}>0</span> },
-    { key: 'action', header: '', align: 'right', render: r => r.id === stationId ? null : <Button size="sm" onClick={() => setStationId(r.id)}>Voir</Button> },
-  ]
-
   const reconColumns = [
     { key: 'mois', header: 'Mois' },
     { key: 'esp', header: 'Espèces', numeric: true, align: 'right', render: m => fcfa(N(m.recettes_especes)) },
@@ -377,12 +340,6 @@ export default function Dashboard() {
           </div>
         </>)}
       </Panel>
-
-      {overview.length > 1 && (
-        <Panel title="Vue d'ensemble des stations" flush>
-          <DataTable columns={overviewColumns} rows={overview} rowStatus={r => r.nbAlertes > 0 || (r.cashNonTrace != null && r.cashNonTrace > 0) ? 'alarm' : undefined} />
-        </Panel>
-      )}
 
       {reorder.length > 0 && (
         <Panel title="Prévision de commande carburant" status={reorder.some(r => r.commander_maintenant) ? 'alarm' : 'ok'} flush>
