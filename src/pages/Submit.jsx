@@ -546,7 +546,7 @@ export default function Submit() {
           <MomentTile icon="moon" t="Soir" d="Clôture &amp; versement" active={moment === 'soir'} done={submittedMoments.has('soir')} onClick={() => setMoment('soir')} />
         </div>
         {!isPompiste && !isVendeuse && (
-          <Button icon="truck" style={{ marginTop: 'var(--sp-4)' }} onClick={() => {
+          <Button tone="primary" icon="truck" block style={{ marginTop: 'var(--sp-4)' }} onClick={() => {
             setOpenReception(true)
             orderReceptionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
           }}>J'ai reçu une commande</Button>
@@ -678,8 +678,10 @@ export default function Submit() {
       {/* ---- RÉCEPTION COMMANDES : affichage PARTAGÉ avec « Commandes », à tout moment ---- */}
       {!isPompiste && !isVendeuse && (
         <div ref={orderReceptionRef}>
-          <OrderReception stationId={stationId} date={date} settings={settings} onDone={() => load(date)}
-            open={openReception} onToggle={() => setOpenReception(v => !v)} />
+          {openReception && (
+            <OrderReception stationId={stationId} date={date} settings={settings} onDone={() => load(date)}
+              open={openReception} onToggle={() => setOpenReception(v => !v)} />
+          )}
         </div>
       )}
 
