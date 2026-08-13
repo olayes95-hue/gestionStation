@@ -133,7 +133,63 @@ export default function Journal() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-6)' }}>
-      <Panel title="Aujourd'hui" meta={frDate(today())}>
+      {/* ===== MÉTRIQUES ===== */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 'var(--sp-4)' }}>
+        <Kpi label="Autonomie essence" value={forecast?.jours_essence != null ? forecast.jours_essence : '—'} unit={forecast?.jours_essence != null ? 'j' : ''} status={AUTONOMIE_TONE(forecast?.jours_essence)} sub={forecast?.ess_stock != null ? `${Math.round(forecast.ess_stock)} L en cuve` : ''} />
+        <Kpi label="Autonomie gasoil" value={forecast?.jours_gasoil != null ? forecast.jours_gasoil : '—'} unit={forecast?.jours_gasoil != null ? 'j' : ''} status={AUTONOMIE_TONE(forecast?.jours_gasoil)} sub={forecast?.gas_stock != null ? `${Math.round(forecast.gas_stock)} L en cuve` : ''} />
+        <Kpi label="Manque à verser (mois)" value={fcfa(manqueTotal)} status={manqueTotal > 0 ? 'alarm' : 'ok'} />
+        <Kpi label="Pertes carburant (mois)" value={pertes?.perte_na_montant ? fcfa(pertes.perte_na_montant) : fcfa(0)} status={N(pertes?.perte_na_montant) > 0 ? 'alarm' : 'ok'} sub={pertes?.perte_na_litres ? `${Math.round(N(pertes.perte_na_litres)).toLocaleString('fr-FR')} L hors seuil` : ''} />
+        <Kpi label="Pompes actives" value={`${nbActives}/8`} status={nbInactives > 0 ? 'alarm' : 'ok'} sub={nbInactives > 0 ? `${nbInactives} hors service` : ''} />
+      </div>
+
+      <div style={{ display: 'flex', gap: 'var(--sp-6)', flexWrap: 'wrap' }}>
+        <div style={{ flex: '1 1 280px' }}>
+          <Panel title="État des cuves" style={{ height: '100%' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-5)' }}>
+              <GaugeBar value={N(forecast?.ess_stock)} max={capaciteEssence} label="Essence" valueLabel={`${Math.round(N(forecast?.ess_stock)).toLocaleString('fr-FR')} / ${capaciteEssence.toLocaleString('fr-FR')} L`} />
+              <GaugeBar value={N(forecast?.gas_stock)} max={capaciteGasoil} label="Gasoil" valueLabel={`${Math.round(N(forecast?.gas_stock)).toLocaleString('fr-FR')} / ${capaciteGasoil.toLocaleString('fr-FR')} L`} />
+            </div>
+          </Panel>
+        </div>
+        <div style={{ flex: '2 1 480px' }}>
+          <Panel title="Pompes" meta={`sur les ${pompeInactiveApres} derniers relevés`} style={{ height: '100%' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 'var(--sp-4)' }}>
+              {pumps.map(m => (
+                <div key={m.n} style={{ padding: 'var(--sp-4)', background: 'var(--surface-raised)', borderRadius: 'var(--radius-1)', border: '1px solid var(--border-hairline)', display: 'flex', flexDirection: 'column', gap: 'var(--sp-3)' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-2)' }}>
+                    <Icon name="fuel" size={13} color="var(--text-muted)" />
+                    <span style={{ font: 'var(--fw-semibold) 11px/1 var(--font-ui)', textTransform: 'uppercase', letterSpacing: 'var(--ls-label)', color: 'var(--text-muted)' }}>Machine {m.n}</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ font: '400 12px/1 var(--font-ui)', color: 'var(--text-body)' }}>Essence (E{m.n})</span>
+                    <Badge tone={m.eStatus === 'active' ? 'ok' : m.eStatus === 'inactive' ? 'alarm' : 'idle'}>{m.eStatus === 'active' ? 'Active' : m.eStatus === 'inactive' ? 'Hors service' : '—'}</Badge>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ font: '400 12px/1 var(--font-ui)', color: 'var(--text-body)' }}>Gasoil (G{m.n})</span>
+                    <Badge tone={m.gStatus === 'active' ? 'ok' : m.gStatus === 'inactive' ? 'alarm' : 'idle'}>{m.gStatus === 'active' ? 'Active' : m.gStatus === 'inactive' ? 'Hors service' : '—'}</Badge>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </Panel>
+        </div>
+      </div>
+
+      <Panel title="Manque à verser par pôle" meta="ce mois">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-3)' }}>
+          <PoleLine label="Carburant" value={manque.carburant} />
+          <PoleLine label="Gaz + Lubrifiant" value={manque.gaz_lub} />
+          <PoleLine label="Supérette" value={manque.superette} />
+          <PoleLine label="Charges générales (SBEE, autre)" value={-depGeneral} muted />
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: 'var(--sp-3) var(--sp-4)', borderTop: '1px solid var(--border-default)', marginTop: 'var(--sp-2)' }}>
+            <span style={{ font: 'var(--fw-semibold) 13px/1.3 var(--font-ui)', color: 'var(--text-primary)' }}>= Cash non tracé (mois)</span>
+            <span style={{ font: '600 13px/1 var(--font-data)', color: manqueTotal > 0 ? 'var(--state-alarm)' : 'var(--state-ok)' }}>{fcfa(manqueTotal)}</span>
+          </div>
+        </div>
+      </Panel>
+
+      {/* ===== ACTIONS À FAIRE ===== */}
+      <Panel title="Aujourd'hui — à faire" meta={frDate(today())}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-3)' }}>
           {CHECKLIST.map(c => {
             const done = moments.has(c.key)
@@ -158,62 +214,17 @@ export default function Journal() {
         </div>
       </Panel>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 'var(--sp-4)' }}>
-        <Kpi label="Autonomie essence" value={forecast?.jours_essence != null ? forecast.jours_essence : '—'} unit={forecast?.jours_essence != null ? 'j' : ''} status={AUTONOMIE_TONE(forecast?.jours_essence)} sub={forecast?.ess_stock != null ? `${Math.round(forecast.ess_stock)} L en cuve` : ''} />
-        <Kpi label="Autonomie gasoil" value={forecast?.jours_gasoil != null ? forecast.jours_gasoil : '—'} unit={forecast?.jours_gasoil != null ? 'j' : ''} status={AUTONOMIE_TONE(forecast?.jours_gasoil)} sub={forecast?.gas_stock != null ? `${Math.round(forecast.gas_stock)} L en cuve` : ''} />
-        <Kpi label="Manque à verser (mois)" value={fcfa(manqueTotal)} status={manqueTotal > 0 ? 'alarm' : 'ok'} />
-        <Kpi label="Pertes carburant (mois)" value={pertes?.perte_na_montant ? fcfa(pertes.perte_na_montant) : fcfa(0)} status={N(pertes?.perte_na_montant) > 0 ? 'alarm' : 'ok'} sub={pertes?.perte_na_litres ? `${Math.round(N(pertes.perte_na_litres)).toLocaleString('fr-FR')} L hors seuil` : ''} />
-        <Kpi label="Pompes actives" value={`${nbActives}/8`} status={nbInactives > 0 ? 'alarm' : 'ok'} sub={nbInactives > 0 ? `${nbInactives} hors service` : ''} />
-      </div>
-
-      <Panel title="État des cuves">
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-5)' }}>
-          <GaugeBar value={N(forecast?.ess_stock)} max={capaciteEssence} label="Essence" valueLabel={`${Math.round(N(forecast?.ess_stock)).toLocaleString('fr-FR')} / ${capaciteEssence.toLocaleString('fr-FR')} L`} />
-          <GaugeBar value={N(forecast?.gas_stock)} max={capaciteGasoil} label="Gasoil" valueLabel={`${Math.round(N(forecast?.gas_stock)).toLocaleString('fr-FR')} / ${capaciteGasoil.toLocaleString('fr-FR')} L`} />
-        </div>
-      </Panel>
-
-      <Panel title="Pompes" meta={`sur les ${pompeInactiveApres} derniers relevés`}>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 'var(--sp-4)' }}>
-          {pumps.map(m => (
-            <div key={m.n} style={{ padding: 'var(--sp-4)', background: 'var(--surface-raised)', borderRadius: 'var(--radius-1)', border: '1px solid var(--border-hairline)', display: 'flex', flexDirection: 'column', gap: 'var(--sp-3)' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-2)' }}>
-                <Icon name="fuel" size={13} color="var(--text-muted)" />
-                <span style={{ font: 'var(--fw-semibold) 11px/1 var(--font-ui)', textTransform: 'uppercase', letterSpacing: 'var(--ls-label)', color: 'var(--text-muted)' }}>Machine {m.n}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span style={{ font: '400 12px/1 var(--font-ui)', color: 'var(--text-body)' }}>Essence (E{m.n})</span>
-                <Badge tone={m.eStatus === 'active' ? 'ok' : m.eStatus === 'inactive' ? 'alarm' : 'idle'}>{m.eStatus === 'active' ? 'Active' : m.eStatus === 'inactive' ? 'Hors service' : '—'}</Badge>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span style={{ font: '400 12px/1 var(--font-ui)', color: 'var(--text-body)' }}>Gasoil (G{m.n})</span>
-                <Badge tone={m.gStatus === 'active' ? 'ok' : m.gStatus === 'inactive' ? 'alarm' : 'idle'}>{m.gStatus === 'active' ? 'Active' : m.gStatus === 'inactive' ? 'Hors service' : '—'}</Badge>
-              </div>
-            </div>
-          ))}
-        </div>
-      </Panel>
-
-      <Panel title="Manque à verser par pôle" meta="ce mois">
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-3)' }}>
-          <PoleLine label="Carburant" value={manque.carburant} />
-          <PoleLine label="Gaz + Lubrifiant" value={manque.gaz_lub} />
-          <PoleLine label="Supérette" value={manque.superette} />
-          <PoleLine label="Charges générales (SBEE, autre)" value={-depGeneral} muted />
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: 'var(--sp-3) var(--sp-4)', borderTop: '1px solid var(--border-default)', marginTop: 'var(--sp-2)' }}>
-            <span style={{ font: 'var(--fw-semibold) 13px/1.3 var(--font-ui)', color: 'var(--text-primary)' }}>= Cash non tracé (mois)</span>
-            <span style={{ font: '600 13px/1 var(--font-data)', color: manqueTotal > 0 ? 'var(--state-alarm)' : 'var(--state-ok)' }}>{fcfa(manqueTotal)}</span>
-          </div>
-        </div>
-      </Panel>
-
+      {/* ===== ALERTES ===== */}
       <Panel title="Alertes du mois" meta={`${alerts.length}`} flush>
         {topAlerts.length
           ? <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-3)', padding: 'var(--gutter-panel)' }}>
               {topAlerts.map((a, i) => {
                 const meta = ALERT_TONES[a.type] || { label: a.type, tone: 'info' }
                 return (
-                  <AlertBanner key={i} tone={meta.tone} title={meta.label} timestamp={frDate(a.report_date)}>{a.detail}</AlertBanner>
+                  <AlertBanner key={i} tone={meta.tone} title={meta.label} timestamp={frDate(a.report_date)}
+                    action={a.report_date && <Button size="sm" onClick={() => nav(`/saisie?date=${a.report_date}`)}>Traiter</Button>}>
+                    {a.detail}
+                  </AlertBanner>
                 )
               })}
               {alerts.length > topAlerts.length && (
