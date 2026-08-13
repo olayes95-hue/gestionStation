@@ -14,7 +14,10 @@ import { Input } from '../ds/octane/components/forms/Input.jsx'
 import { Select } from '../ds/octane/components/forms/Select.jsx'
 import { Checkbox } from '../ds/octane/components/forms/Checkbox.jsx'
 import { AlertBanner } from '../ds/octane/components/feedback/AlertBanner.jsx'
+import { Drawer, DrawerRow } from '../ds/octane/components/feedback/Drawer.jsx'
+import { IconButton } from '../ds/octane/components/core/IconButton.jsx'
 import { DataTable } from '../ds/octane/components/data/DataTable.jsx'
+import { Kpi } from '../lib/Kpi.jsx'
 
 const N = (v) => (v ? (numFR(v) ?? 0) : 0)
 const CATS = [['carburant', 'Carburant'], ['gaz', 'Gaz'], ['lubrifiant', 'Lubrifiant'], ['superette', 'Supérette']]
@@ -39,6 +42,8 @@ export default function Orders() {
   const [dateFrom, setDateFrom] = useState(''); const [dateTo, setDateTo] = useState('')
   const [err, setErr] = useState(''); const [msg, setMsg] = useState('')
   const [bonsRestant, setBonsRestant] = useState(0)
+  const [openCombos, setOpenCombos] = useState(false)
+  const [detailId, setDetailId] = useState(null)   // id de la commande ouverte dans le panneau de détail
 
   async function load() {
     if (!stationId) return
@@ -216,6 +221,11 @@ export default function Orders() {
     (fProduit === 'tous' || o.produit === fProduit))
   const totalMontant = shown.reduce((s, o) => s + orderMontant(o), 0)
 
+  // Compte des commandes qui attendent une action, tous statuts confondus — résumé en haut de page.
+  const nbAValider = count('proposee')
+  const nbALancer = count('validee')
+  const nbAReceptionner = count('lancee') + count('partielle')
+
   const columns = [
     { key: 'dates', header: 'Dates', render: o => (
       <div style={{ fontSize: 12, whiteSpace: 'nowrap' }}>
@@ -224,87 +234,50 @@ export default function Orders() {
         {o.statut === 'recue' && o.report_date && <><br />Reçue {frDate(o.report_date)}</>}
       </div>
     ) },
-    { key: 'delai', header: 'Délai', numeric: true, align: 'right', render: o => delaiJours(o) != null ? `${delaiJours(o)} j` : '—' },
     { key: 'categorie', header: 'Catégorie', render: o => (CATS.find(c => c[0] === (o.categorie || 'carburant')) || [, o.categorie])[1] },
     { key: 'produit', header: 'Produit / détail', render: o => (o.categorie || 'carburant') === 'superette'
       ? <span title={(o.lignes || []).map(l => `${l.article} ×${l.qte}`).join(' · ')}>{(o.lignes || []).length} article(s)</span>
       : o.produit },
     { key: 'qte', header: 'Qté', numeric: true, align: 'right', render: o => (o.categorie || 'carburant') !== 'superette' && N(o.quantite_commandee) ? N(o.quantite_commandee).toLocaleString('fr-FR') : '—' },
     { key: 'statut', header: 'Statut', render: o => { const st = ORDER_STATUS_TONES[o.statut] || { label: o.statut, tone: 'idle' }; return <Badge tone={st.tone}>{st.label}</Badge> } },
-    { key: 'paiement', header: 'Paiement', render: o => <span style={{ fontSize: 12 }}>{(o.categorie || 'carburant') === 'carburant'
-      ? <>{fcfa(orderMontant(o))}{o.bons_base ? ` · bons ${fcfa(o.bons_base)}` : ''}{o.cheque_montant ? ` · chèque ${fcfa(o.cheque_montant)}` : ''}</>
-      : <>{o.mode_paiement || '—'} · {fcfa(o.montant_paiement)}</>}</span> },
-    { key: 'avancement', header: 'Avancement', render: o => {
-      const cat = o.categorie || 'carburant'
-      const livre = cat !== 'carburant' ? null
-        : livreReel[o.id] != null ? livreReel[o.id]
-        : (o.cuve_apres != null && o.cuve_avant != null) ? N(o.cuve_apres) - N(o.cuve_avant) : null
-      const perte = livre != null ? Math.max(0, N(o.quantite_commandee) - livre) : null
-      const seuil = N(o.quantite_commandee) * N(settings.taux_perte_acceptable) / 100
-      const perteNA = perte != null ? Math.max(0, perte - seuil) : null
-      const t = recvTotals[o.id] || {}; const deja = N(t.quantite_recue_total)
-      const reste = Math.max(N(o.quantite_commandee) - deja, 0)
-      return <span style={{ fontSize: 12 }}>
-        {(o.statut === 'lancee' || o.statut === 'partielle') && <Tag>reçu {deja.toLocaleString('fr-FR')}/{N(o.quantite_commandee).toLocaleString('fr-FR')} · reste {reste.toLocaleString('fr-FR')}</Tag>}
-        {o.statut === 'recue' && cat === 'carburant' && livre != null && (
-          <span style={{ color: perteNA > 0 ? 'var(--state-alarm)' : 'var(--state-ok)' }}>
-            livré {livre.toLocaleString('fr-FR')} · perte {perte.toLocaleString('fr-FR')}{perteNA > 0 ? ` (${Math.round(perteNA).toLocaleString('fr-FR')} hors seuil)` : ' ✓'}
-          </span>
-        )}
-        {o.statut === 'recue' && cat !== 'carburant' && <span>reçu {deja.toLocaleString('fr-FR')}/{N(o.quantite_commandee).toLocaleString('fr-FR')}</span>}
-        {!['lancee', 'partielle', 'recue'].includes(o.statut) && '—'}
-      </span>
-    } },
-    { key: 'note', header: 'Note', render: o => <span style={{ fontSize: 12, maxWidth: 140, display: 'inline-block' }}>{o.note || ''}</span> },
-    { key: 'actions', header: 'Actions', render: o => {
-      const cat = o.categorie || 'carburant'
-      const t = recvTotals[o.id] || {}; const deja = N(t.quantite_recue_total)
-      const reste = Math.max(N(o.quantite_commandee) - deja, 0)
-      return (
-        <div style={{ whiteSpace: 'nowrap', display: 'flex', flexDirection: 'column', gap: 'var(--sp-2)' }}>
-          {o.statut === 'proposee' && isAdmin && <div style={{ display: 'flex', gap: 'var(--sp-2)' }}>
-            <Button size="sm" tone="primary" onClick={() => valider(o)}>✓</Button>
-            <Button size="sm" tone="danger" onClick={() => refuser(o)}>✕</Button>
-          </div>}
-          {o.statut === 'proposee' && !isAdmin && <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>en attente admin</span>}
-          {o.statut === 'validee' && <div style={{ display: 'flex', gap: 'var(--sp-2)', alignItems: 'center' }}>
-            <Input type="date" size="sm" value={launch[o.id] || today()} max={today()} onChange={e => setLaunch(p => ({ ...p, [o.id]: e.target.value }))} style={{ width: 130 }} />
-            <Button size="sm" tone="primary" onClick={() => lancer(o)}>Lancer</Button>
-          </div>}
-          {(o.statut === 'lancee' || o.statut === 'partielle') && (() => {
-            const r = recv[o.id]
-            if (!r) return <Button size="sm" onClick={() => setRecv(p => ({ ...p, [o.id]: { cuve_avant: '', cuve_apres: '', date: today(), quantite_recue: reste ? String(reste) : '' } }))}>Réceptionner{deja > 0 ? ' (suite)' : ''}</Button>
-            return (
-              <div style={{ minWidth: 200, display: 'flex', flexDirection: 'column', gap: 'var(--sp-2)' }}>
-                <Field label="Qté reçue *"><Input size="sm" type="text" inputMode="decimal" numeric value={r.quantite_recue || ''} onChange={e => setRecv(p => ({ ...p, [o.id]: { ...r, quantite_recue: e.target.value } }))} /></Field>
-                {cat === 'carburant' && <div style={{ display: 'flex', gap: 'var(--sp-2)' }}>
-                  <Field label="Cuve avant"><Input size="sm" type="text" inputMode="decimal" numeric value={r.cuve_avant} onChange={e => setRecv(p => ({ ...p, [o.id]: { ...r, cuve_avant: e.target.value } }))} /></Field>
-                  <Field label="Cuve après"><Input size="sm" type="text" inputMode="decimal" numeric value={r.cuve_apres} onChange={e => setRecv(p => ({ ...p, [o.id]: { ...r, cuve_apres: e.target.value } }))} /></Field>
-                </div>}
-                <Field label="Date"><Input size="sm" type="date" value={r.date || today()} max={today()} onChange={e => setRecv(p => ({ ...p, [o.id]: { ...r, date: e.target.value } }))} /></Field>
-                {r.warnEcart && (
-                  <AlertBanner tone="warn" title="Écart" style={{ padding: 'var(--sp-3)' }}>
-                    <span style={{ fontSize: 11 }}>{r.warnEcart}</span>
-                    <Checkbox label="Forcer (c'est correct malgré tout)" checked={!!r.forceEcart} onChange={v => setRecv(p => ({ ...p, [o.id]: { ...r, forceEcart: v, warnEcart: v ? '' : r.warnEcart } }))} style={{ marginTop: 'var(--sp-2)' }} />
-                  </AlertBanner>
-                )}
-                <div style={{ display: 'flex', gap: 'var(--sp-2)' }}>
-                  <Button size="sm" tone="primary" onClick={() => receptionner(o)}>Valider</Button>
-                  <Button size="sm" onClick={() => setRecv(p => ({ ...p, [o.id]: undefined }))}>Annuler</Button>
-                </div>
-              </div>
-            )
-          })()}
-          {isAdmin && <Button size="sm" tone="danger" onClick={() => delOrder(o)}>Suppr.</Button>}
-        </div>
-      )
-    } },
+    { key: 'actions', header: '', align: 'right', render: o => (
+      <div onClick={e => e.stopPropagation()}>
+        <Button size="sm" tone={['proposee', 'validee', 'lancee', 'partielle'].includes(o.statut) ? 'primary' : 'outline'} onClick={() => setDetailId(o.id)}>
+          {o.statut === 'lancee' || o.statut === 'partielle' ? 'Réceptionner' : 'Détail'}
+        </Button>
+      </div>
+    ) },
   ]
+
+  // Délai, paiement, avancement et note : déplacés du tableau (trop dense) vers le panneau de
+  // détail, ouvert au clic sur une ligne ou sur le bouton Détail/Réceptionner.
+  const detailOrder = orders.find(o => o.id === detailId) || null
+  function avancementInfo(o) {
+    const cat = o.categorie || 'carburant'
+    const livre = cat !== 'carburant' ? null
+      : livreReel[o.id] != null ? livreReel[o.id]
+      : (o.cuve_apres != null && o.cuve_avant != null) ? N(o.cuve_apres) - N(o.cuve_avant) : null
+    const perte = livre != null ? Math.max(0, N(o.quantite_commandee) - livre) : null
+    const seuil = N(o.quantite_commandee) * N(settings.taux_perte_acceptable) / 100
+    const perteNA = perte != null ? Math.max(0, perte - seuil) : null
+    const t = recvTotals[o.id] || {}; const deja = N(t.quantite_recue_total)
+    const reste = Math.max(N(o.quantite_commandee) - deja, 0)
+    return { cat, livre, perte, perteNA, deja, reste }
+  }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-6)' }}>
       {msg && <AlertBanner tone="ok" title="Succès">{msg}</AlertBanner>}
       {err && <AlertBanner tone="alarm" title="Erreur">{err}</AlertBanner>}
+
+      {/* ===== À TRAITER — résumé cliquable, filtre directement le tableau ===== */}
+      {(nbAValider > 0 || nbALancer > 0 || nbAReceptionner > 0) && (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 'var(--sp-4)' }}>
+          {nbAValider > 0 && <div onClick={() => setFStatut('proposee')} style={{ cursor: 'pointer' }}><Kpi label="À valider" value={nbAValider} status="warn" /></div>}
+          {nbALancer > 0 && <div onClick={() => setFStatut('validee')} style={{ cursor: 'pointer' }}><Kpi label="À lancer" value={nbALancer} status="info" /></div>}
+          {nbAReceptionner > 0 && <div onClick={() => setFStatut('lancee')} style={{ cursor: 'pointer' }}><Kpi label="À réceptionner" value={nbAReceptionner} status="alarm" /></div>}
+        </div>
+      )}
 
       {!isPompiste && !showPropose && (
         <Button tone="primary" onClick={() => setShowPropose(true)} style={{ alignSelf: 'flex-start' }}>+ Proposer une nouvelle commande</Button>
@@ -337,7 +310,10 @@ export default function Orders() {
               {!bonsOn && <AlertBanner tone="info" title="Info">Les bons sont désormais virés directement en banque : les commandes se règlent à 100 % par chèque.</AlertBanner>}
 
               {bonsOn && (
-                <Panel title="Combinaisons possibles" meta={`bons disponibles : ${fcfa(bonsRestant)}`} flush>
+                <Panel title="Combinaisons possibles" meta={`bons disponibles : ${fcfa(bonsRestant)}`} flush
+                  bodyStyle={openCombos ? undefined : { display: 'none' }}
+                  actions={<IconButton icon="chevron-down" size="sm" title={openCombos ? 'Masquer' : 'Afficher'}
+                    onClick={() => setOpenCombos(v => !v)} style={{ transform: openCombos ? 'rotate(180deg)' : 'none' }} />}>
                   <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', margin: 'var(--sp-4) var(--gutter-panel) 0' }}>
                     Pour une quantité donnée, part payée en bons (dans la limite du disponible) vs complément en chèque — calculé indépendamment pour chaque produit.
                   </p>
@@ -445,12 +421,81 @@ export default function Orders() {
           <div style={{ display: 'flex', gap: 'var(--sp-2)', flexWrap: 'wrap', alignItems: 'center' }}>
             <Select size="sm" value={fProduit} onChange={e => setFProduit(e.target.value)}
               options={[{ value: 'tous', label: 'Tous produits' }, ...produits.filter(p => fCat === 'tous' || orders.some(o => o.produit === p && (o.categorie || 'carburant') === fCat)).map(p => ({ value: p, label: p }))]} />
-            {[['tous', 'Tous statuts'], ['proposee', `Proposées (${count('proposee')})`], ['validee', `Validées (${count('validee')})`], ['lancee', `Lancées (${count('lancee')})`], ['partielle', `Partielles (${count('partielle')})`], ['recue', `Reçues (${count('recue')})`], ['annulee', `Refusées (${count('annulee')})`]].map(([k, l]) =>
-              <Button key={k} size="sm" tone={fStatut === k ? 'primary' : 'outline'} onClick={() => setFStatut(k)}>{l}</Button>)}
+            <Select size="sm" value={fStatut} onChange={e => setFStatut(e.target.value)}
+              options={[['tous', 'Tous statuts'], ['proposee', `Proposées (${count('proposee')})`], ['validee', `Validées (${count('validee')})`], ['lancee', `Lancées (${count('lancee')})`], ['partielle', `Partielles (${count('partielle')})`], ['recue', `Reçues (${count('recue')})`], ['annulee', `Refusées (${count('annulee')})`]].map(([k, l]) => ({ value: k, label: l }))} />
           </div>
         </div>
-        <DataTable columns={columns} rows={shown} />
+        <DataTable columns={columns} rows={shown} onRowClick={o => setDetailId(o.id)} />
       </Panel>
+
+      {/* ===== PANNEAU DE DÉTAIL — délai/paiement/avancement/note + actions contextuelles ===== */}
+      <Drawer open={!!detailOrder} onClose={() => setDetailId(null)}
+        title={detailOrder ? `${(CATS.find(c => c[0] === (detailOrder.categorie || 'carburant')) || [, detailOrder.categorie])[1]}${detailOrder.produit ? ' — ' + detailOrder.produit : ''}` : ''}
+        meta={detailOrder && (ORDER_STATUS_TONES[detailOrder.statut] || {}).label}>
+        {detailOrder && (() => {
+          const o = detailOrder
+          const cat = o.categorie || 'carburant'
+          const { livre, perte, perteNA, deja, reste } = avancementInfo(o)
+          const r = recv[o.id]
+          return (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-5)' }}>
+              <div>
+                <DrawerRow label="Proposée le" value={frDate(dateOf(o))} />
+                {o.date_lancement && <DrawerRow label="Lancée le" value={frDate(o.date_lancement)} />}
+                {o.statut === 'recue' && o.report_date && <DrawerRow label="Reçue le" value={frDate(o.report_date)} />}
+                <DrawerRow label="Délai lancement→réception" value={delaiJours(o) != null ? `${delaiJours(o)} j` : '—'} />
+                <DrawerRow label="Paiement" mono={false} value={cat === 'carburant'
+                  ? <>{fcfa(orderMontant(o))}{o.bons_base ? ` · bons ${fcfa(o.bons_base)}` : ''}{o.cheque_montant ? ` · chèque ${fcfa(o.cheque_montant)}` : ''}</>
+                  : <>{o.mode_paiement || '—'} · {fcfa(o.montant_paiement)}</>} />
+                {(o.statut === 'lancee' || o.statut === 'partielle') && <DrawerRow label="Avancement" value={`reçu ${deja.toLocaleString('fr-FR')}/${N(o.quantite_commandee).toLocaleString('fr-FR')} · reste ${reste.toLocaleString('fr-FR')}`} />}
+                {o.statut === 'recue' && cat === 'carburant' && livre != null && (
+                  <DrawerRow label="Avancement" status={perteNA > 0 ? 'alarm' : 'ok'}
+                    value={`livré ${livre.toLocaleString('fr-FR')} · perte ${perte.toLocaleString('fr-FR')}${perteNA > 0 ? ` (${Math.round(perteNA).toLocaleString('fr-FR')} hors seuil)` : ' ✓'}`} />
+                )}
+                {o.statut === 'recue' && cat !== 'carburant' && <DrawerRow label="Avancement" value={`reçu ${deja.toLocaleString('fr-FR')}/${N(o.quantite_commandee).toLocaleString('fr-FR')}`} />}
+                {o.note && <DrawerRow label="Note" mono={false} value={o.note} />}
+                {cat === 'superette' && o.lignes && <DrawerRow label="Articles" mono={false} value={o.lignes.map(l => `${l.article} ×${l.qte}`).join(' · ')} />}
+              </div>
+
+              {o.statut === 'proposee' && isAdmin && (
+                <div style={{ display: 'flex', gap: 'var(--sp-3)' }}>
+                  <Button tone="primary" onClick={() => { valider(o); setDetailId(null) }}>Valider</Button>
+                  <Button tone="danger" onClick={() => { refuser(o); setDetailId(null) }}>Refuser</Button>
+                </div>
+              )}
+              {o.statut === 'proposee' && !isAdmin && <AlertBanner tone="info" title="En attente">En attente de validation par l'administrateur.</AlertBanner>}
+
+              {o.statut === 'validee' && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-3)' }}>
+                  <Field label="Date de lancement"><Input type="date" value={launch[o.id] || today()} max={today()} onChange={e => setLaunch(p => ({ ...p, [o.id]: e.target.value }))} /></Field>
+                  <Button tone="primary" onClick={() => { lancer(o); setDetailId(null) }} style={{ alignSelf: 'flex-start' }}>Lancer la commande</Button>
+                </div>
+              )}
+
+              {(o.statut === 'lancee' || o.statut === 'partielle') && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-3)' }}>
+                  <div style={{ font: 'var(--fw-semibold) 11px/1 var(--font-ui)', textTransform: 'uppercase', letterSpacing: 'var(--ls-label)', color: 'var(--text-muted)' }}>Réceptionner</div>
+                  <Field label="Qté reçue *"><Input type="text" inputMode="decimal" numeric value={r?.quantite_recue ?? (reste ? String(reste) : '')} onChange={e => setRecv(p => ({ ...p, [o.id]: { ...(p[o.id] || { cuve_avant: '', cuve_apres: '', date: today() }), quantite_recue: e.target.value } }))} /></Field>
+                  {cat === 'carburant' && <div style={{ display: 'flex', gap: 'var(--sp-3)' }}>
+                    <Field label="Cuve avant"><Input type="text" inputMode="decimal" numeric value={r?.cuve_avant ?? ''} onChange={e => setRecv(p => ({ ...p, [o.id]: { ...(p[o.id] || {}), cuve_avant: e.target.value } }))} /></Field>
+                    <Field label="Cuve après"><Input type="text" inputMode="decimal" numeric value={r?.cuve_apres ?? ''} onChange={e => setRecv(p => ({ ...p, [o.id]: { ...(p[o.id] || {}), cuve_apres: e.target.value } }))} /></Field>
+                  </div>}
+                  <Field label="Date"><Input type="date" value={r?.date || today()} max={today()} onChange={e => setRecv(p => ({ ...p, [o.id]: { ...(p[o.id] || {}), date: e.target.value } }))} /></Field>
+                  {r?.warnEcart && (
+                    <AlertBanner tone="warn" title="Écart détecté">
+                      {r.warnEcart}
+                      <Checkbox label="Forcer (c'est correct malgré tout)" checked={!!r.forceEcart} onChange={v => setRecv(p => ({ ...p, [o.id]: { ...r, forceEcart: v, warnEcart: v ? '' : r.warnEcart } }))} style={{ marginTop: 'var(--sp-3)' }} />
+                    </AlertBanner>
+                  )}
+                  <Button tone="primary" onClick={() => receptionner(o)} style={{ alignSelf: 'flex-start' }}>Valider la réception</Button>
+                </div>
+              )}
+
+              {isAdmin && <Button tone="danger" onClick={() => { delOrder(o); setDetailId(null) }} style={{ alignSelf: 'flex-start' }}>Supprimer la commande</Button>}
+            </div>
+          )
+        })()}
+      </Drawer>
     </div>
   )
 }
