@@ -49,11 +49,40 @@ export default function Dashboard() {
   const [polePeriod, setPolePeriod] = useState({ dr: [], dep: [], exp: [], sup: [] })   // brut, pour manque-à-verser et détail par pôle/catégorie sur la période sélectionnée
   const [charges, setCharges] = useState([])   // table "charges" du Point financier (Finance.jsx) — loyer, salaires, impôts...
   const [gazPrices, setGazPrices] = useState({})   // {nom bouteille: prix_vente actuel} — pour estimer le CA gaz par taille
+  const [uniteMode, setUniteMode] = useState(false)   // false = CFA, true = unité physique (L, bouteilles, articles...)
+  const [poleEvolution, setPoleEvolution] = useState('carburant')   // pôle affiché par "Évolution mensuelle par pôle" en mode Unité
+  const [poleUniteSeries, setPoleUniteSeries] = useState([])   // [{mois, value}] pour gaz/supérette en mode Unité (carburant vient directement de `months`)
 
   useEffect(() => {
     if (!stationId) return
     supabase.from('charges').select('mois,categorie,montant').eq('station_id', stationId).then(({ data }) => setCharges(data || []))
   }, [stationId])
+
+  // Chargé seulement quand nécessaire : la tendance mensuelle en UNITÉ (pas en CFA) n'existe pas
+  // dans l'agrégat v_ventes_mensuelles pour gaz/supérette (qui ne connaît que la valeur en F) —
+  // il faut regrouper les lignes brutes par mois côté client. Le carburant, lui, a déjà sa
+  // colonne litres_carburant dans l'agrégat mensuel : pas besoin de requête supplémentaire.
+  useEffect(() => {
+    if (!uniteMode || !stationId || poleEvolution === 'carburant') { setPoleUniteSeries([]); return }
+    const { from, to } = periodBounds(year, month)
+    ;(async () => {
+      const byMonth = {}
+      if (poleEvolution === 'gaz') {
+        const { data } = await supabase.from('daily_reports').select('report_date,gaz_vendu_3,gaz_vendu_6,gaz_vendu_12,gaz_vendu_38').eq('station_id', stationId).gte('report_date', from).lte('report_date', to)
+        for (const r of (data || [])) {
+          const m = r.report_date.slice(0, 7)
+          byMonth[m] = (byMonth[m] || 0) + N(r.gaz_vendu_3) + N(r.gaz_vendu_6) + N(r.gaz_vendu_12) + N(r.gaz_vendu_38)
+        }
+      } else if (poleEvolution === 'superette') {
+        const { data } = await supabase.from('superette_sales').select('report_date,quantite').eq('station_id', stationId).gte('report_date', from).lte('report_date', to)
+        for (const r of (data || [])) {
+          const m = r.report_date.slice(0, 7)
+          byMonth[m] = (byMonth[m] || 0) + N(r.quantite)
+        }
+      }
+      setPoleUniteSeries(Object.entries(byMonth).sort(([a], [b]) => a.localeCompare(b)).map(([mois, value]) => ({ mois, value })))
+    })()
+  }, [uniteMode, poleEvolution, stationId, year, month])
 
   useEffect(() => {
     supabase.from('products').select('nom,prix_vente').eq('categorie', 'gaz').then(({ data }) => {
@@ -70,7 +99,7 @@ export default function Dashboard() {
         supabase.from('deposits').select('pole,montant,periode_fin,report_date').eq('station_id', stationId)
           .or(`and(periode_fin.gte.${from},periode_fin.lte.${to}),and(periode_fin.is.null,report_date.gte.${from},report_date.lte.${to})`),
         supabase.from('expenses').select('categorie,montant,non_cash').eq('station_id', stationId).gte('report_date', from).lte('report_date', to),
-        supabase.from('superette_sales').select('nom,montant').eq('station_id', stationId).gte('report_date', from).lte('report_date', to),
+        supabase.from('superette_sales').select('nom,montant,quantite').eq('station_id', stationId).gte('report_date', from).lte('report_date', to),
       ])
       setPolePeriod({ dr: dr.data || [], dep: dep.data || [], exp: exp.data || [], sup: sup.data || [] })
     })()
@@ -221,31 +250,58 @@ export default function Dashboard() {
   })()
   const DEP_CAT_COLORS = { 'SBEE (électricité)': 'var(--state-warn)', 'Carburant (prélèvement propriétaire)': 'var(--accent)' }
 
-  // Détail par produit AU SEIN de chaque pôle (essence/gasoil, gaz par taille, articles supérette).
-  // Le lubrifiant n'a pas d'équivalent : seul le total espèces est saisi, aucune vente par type
-  // n'est tracée nulle part — impossible à ventiler sans ajouter un nouveau suivi.
-  const carburantMix = [
-    { name: 'Essence', value: polePeriod.dr.reduce((s, r) => s + N(r.ess_litres) * N(r.ess_pu), 0) },
-    { name: 'Gasoil', value: polePeriod.dr.reduce((s, r) => s + N(r.gas_litres) * N(r.gas_pu), 0) },
-  ].filter(r => r.value > 0)
-  const CARBURANT_MIX_COLORS = { Essence: 'var(--accent)', Gasoil: 'var(--state-info)' }
-
-  // CA gaz estimé = quantité vendue (fiable, saisie chaque jour) × prix de vente ACTUEL du produit
-  // (le prix historique n'est pas conservé) — approximation si le prix a changé sur la période.
-  const gazMix = ['3 kg', '6 kg', '12 kg', '38 kg'].map(nom => ({
-    name: nom, value: polePeriod.dr.reduce((s, r) => s + N(r['gaz_vendu_' + nom.replace(' kg', '')]), 0) * N(gazPrices[nom]),
-  })).filter(r => r.value > 0)
-
+  // Détail par produit AU SEIN de chaque pôle (essence/gasoil, gaz par taille, articles supérette),
+  // en CFA ou en unité physique selon uniteMode. Le lubrifiant n'a pas d'équivalent : seul le
+  // total espèces est saisi, aucune vente par type n'est tracée nulle part — impossible à
+  // ventiler (en CFA ou en unité) sans ajouter un nouveau suivi.
   const SUP_TOP_N = 6
-  const superetteMix = (() => {
-    const totals = {}
-    for (const s of polePeriod.sup) { const k = s.nom || 'Autre'; totals[k] = (totals[k] || 0) + N(s.montant) }
-    const rows = Object.entries(totals).filter(([, v]) => v > 0).map(([k, v]) => ({ name: k, value: v })).sort((a, b) => b.value - a.value)
+  const topN = (rows) => {
     if (rows.length <= SUP_TOP_N) return rows
     const top = rows.slice(0, SUP_TOP_N)
     const reste = rows.slice(SUP_TOP_N).reduce((s, r) => s + r.value, 0)
     return [...top, { name: 'Autres articles', value: reste }]
+  }
+
+  const carburantMix = (uniteMode
+    ? [
+        { name: 'Essence', value: polePeriod.dr.reduce((s, r) => s + N(r.ess_litres), 0) },
+        { name: 'Gasoil', value: polePeriod.dr.reduce((s, r) => s + N(r.gas_litres), 0) },
+      ]
+    : [
+        { name: 'Essence', value: polePeriod.dr.reduce((s, r) => s + N(r.ess_litres) * N(r.ess_pu), 0) },
+        { name: 'Gasoil', value: polePeriod.dr.reduce((s, r) => s + N(r.gas_litres) * N(r.gas_pu), 0) },
+      ]).filter(r => r.value > 0)
+  const CARBURANT_MIX_COLORS = { Essence: 'var(--accent)', Gasoil: 'var(--state-info)' }
+
+  // CA gaz estimé = quantité vendue (fiable, saisie chaque jour) × prix de vente ACTUEL du produit
+  // (le prix historique n'est pas conservé) — approximation si le prix a changé sur la période.
+  // En unité, pas d'approximation : la quantité vendue est directement la donnée saisie.
+  const gazMix = ['3 kg', '6 kg', '12 kg', '38 kg'].map(nom => {
+    const qte = polePeriod.dr.reduce((s, r) => s + N(r['gaz_vendu_' + nom.replace(' kg', '')]), 0)
+    return { name: nom, value: uniteMode ? qte : qte * N(gazPrices[nom]) }
+  }).filter(r => r.value > 0)
+
+  const superetteMix = (() => {
+    const totals = {}
+    const field = uniteMode ? 'quantite' : 'montant'
+    for (const s of polePeriod.sup) { const k = s.nom || 'Autre'; totals[k] = (totals[k] || 0) + N(s[field]) }
+    const rows = Object.entries(totals).filter(([, v]) => v > 0).map(([k, v]) => ({ name: k, value: v })).sort((a, b) => b.value - a.value)
+    return topN(rows)
   })()
+
+  // "Évolution mensuelle par pôle" en mode Unité : un pôle à la fois (les unités diffèrent
+  // d'un pôle à l'autre, pas de sens à les empiler). Carburant a sa tendance déjà prête dans
+  // l'agrégat mensuel (litres_carburant) ; gaz/supérette viennent de poleUniteSeries (chargé à
+  // la demande, cf. l'effet ci-dessus).
+  const POLE_EVOLUTION_OPTIONS = [
+    { value: 'carburant', label: 'Carburant' },
+    { value: 'gaz', label: 'Gaz' },
+    { value: 'superette', label: 'Supérette' },
+  ]
+  const POLE_EVOLUTION_UNIT = { carburant: 'L', gaz: 'bout.', superette: 'unités' }
+  const chartPoleUnite = (poleEvolution === 'carburant'
+    ? fm.map(m => ({ mois: m.mois.slice(2), value: Math.round(N(m.litres_carburant)) }))
+    : poleUniteSeries.map(r => ({ mois: r.mois.slice(2), value: Math.round(r.value) })))
 
   const yearOptions = [{ value: 'all', label: 'Toutes années' }, ...years.map(y => ({ value: y, label: y }))]
   const monthOptions = [{ value: 'all', label: 'Tous mois' }, ...MONTHS.map(m => ({ value: m, label: ML[m] }))]
@@ -373,30 +429,36 @@ export default function Dashboard() {
         </div>
       </Panel>
 
-      <div style={{ font: 'var(--fw-semibold) 12px/1 var(--font-ui)', textTransform: 'uppercase', letterSpacing: 'var(--ls-label)', color: 'var(--text-muted)' }}>
-        Détail par produit, au sein de chaque pôle
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 'var(--sp-3)' }}>
+        <div style={{ font: 'var(--fw-semibold) 12px/1 var(--font-ui)', textTransform: 'uppercase', letterSpacing: 'var(--ls-label)', color: 'var(--text-muted)' }}>
+          Détail par produit, au sein de chaque pôle
+        </div>
+        <div style={{ display: 'flex', gap: 'var(--sp-2)' }}>
+          <Button size="sm" tone={!uniteMode ? 'primary' : 'outline'} onClick={() => setUniteMode(false)}>CFA</Button>
+          <Button size="sm" tone={uniteMode ? 'primary' : 'outline'} onClick={() => setUniteMode(true)}>Unité (L, bouteilles...)</Button>
+        </div>
       </div>
 
       <div style={{ display: 'flex', gap: 'var(--sp-6)', flexWrap: 'wrap' }}>
         <div style={{ flex: '1 1 320px' }}>
           <Panel title="Carburant — Essence vs Gasoil" style={{ height: '100%' }}>
-            {carburantMix.length ? <PoleShare data={carburantMix} colors={CARBURANT_MIX_COLORS} /> : <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', margin: 0 }}>Pas de ventes carburant sur la période.</p>}
+            {carburantMix.length ? <PoleShare data={carburantMix} colors={CARBURANT_MIX_COLORS} unit={uniteMode ? 'L' : undefined} /> : <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', margin: 0 }}>Pas de ventes carburant sur la période.</p>}
           </Panel>
         </div>
         <div style={{ flex: '1 1 320px' }}>
           <Panel title="Gaz — par taille de bouteille" style={{ height: '100%' }}>
-            {gazMix.length ? <PoleShare data={gazMix} /> : <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', margin: 0 }}>Pas de ventes gaz sur la période.</p>}
-            <p style={{ font: '400 11px/1.3 var(--font-ui)', color: 'var(--text-muted)', margin: 'var(--sp-3) 0 0' }}>Estimé : quantité vendue × prix de vente actuel (le prix historique n'est pas conservé).</p>
+            {gazMix.length ? <PoleShare data={gazMix} unit={uniteMode ? 'bout.' : undefined} /> : <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', margin: 0 }}>Pas de ventes gaz sur la période.</p>}
+            {!uniteMode && <p style={{ font: '400 11px/1.3 var(--font-ui)', color: 'var(--text-muted)', margin: 'var(--sp-3) 0 0' }}>Estimé : quantité vendue × prix de vente actuel (le prix historique n'est pas conservé).</p>}
           </Panel>
         </div>
         <div style={{ flex: '1 1 320px' }}>
           <Panel title="Supérette — par article" meta={polePeriod.sup.length ? `top ${Math.min(SUP_TOP_N, superetteMix.length)}` : undefined} style={{ height: '100%' }}>
-            {superetteMix.length ? <PoleShare data={superetteMix} /> : <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', margin: 0 }}>Pas de vente supérette détaillée sur la période (nécessite la saisie vendeuse par article).</p>}
+            {superetteMix.length ? <PoleShare data={superetteMix} unit={uniteMode ? 'unités' : undefined} /> : <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', margin: 0 }}>Pas de vente supérette détaillée sur la période (nécessite la saisie vendeuse par article).</p>}
           </Panel>
         </div>
       </div>
       <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', margin: 0 }}>
-        Lubrifiant : pas de détail par type disponible — seul le total en espèces est saisi au quotidien, aucune vente par référence n'est tracée.
+        Lubrifiant : pas de détail par type disponible (en CFA ni en unité) — seul le total en espèces est saisi au quotidien, aucune vente par référence n'est tracée.
       </p>
 
       <div style={{ display: 'flex', gap: 'var(--sp-6)', flexWrap: 'wrap' }}>
@@ -416,19 +478,29 @@ export default function Dashboard() {
           </Panel>
         </div>
         <div style={{ flex: '1 1 420px' }}>
-          <Panel title="Évolution mensuelle par pôle" style={{ height: '100%' }}>
+          <Panel title="Évolution mensuelle par pôle" style={{ height: '100%' }}
+            actions={uniteMode && <Select size="sm" value={poleEvolution} onChange={e => setPoleEvolution(e.target.value)} options={POLE_EVOLUTION_OPTIONS} />}>
             <div style={{ width: '100%', height: 300 }}>
               <ResponsiveContainer>
-                <BarChart data={chartPoles}>
-                  <XAxis dataKey="mois" fontSize={11} stroke="var(--text-muted)" />
-                  <YAxis fontSize={11} stroke="var(--text-muted)" tickFormatter={v => (v / 1e6).toFixed(0) + 'M'} />
-                  <Tooltip formatter={v => fcfa(v)} contentStyle={{ background: 'var(--surface-panel)', border: '1px solid var(--border-default)', borderRadius: 'var(--radius-1)', font: '12px var(--font-ui)' }} />
-                  <Legend wrapperStyle={{ font: '11px var(--font-ui)' }} />
-                  <Bar dataKey="Carburant" stackId="pole" fill={POLE_COLORS.Carburant} />
-                  <Bar dataKey="Gaz" stackId="pole" fill={POLE_COLORS.Gaz} />
-                  <Bar dataKey="Lubrifiant" stackId="pole" fill={POLE_COLORS.Lubrifiant} />
-                  <Bar dataKey="Supérette" stackId="pole" fill={POLE_COLORS['Supérette']} />
-                </BarChart>
+                {uniteMode ? (
+                  <BarChart data={chartPoleUnite}>
+                    <XAxis dataKey="mois" fontSize={11} stroke="var(--text-muted)" />
+                    <YAxis fontSize={11} stroke="var(--text-muted)" />
+                    <Tooltip formatter={v => `${Math.round(v).toLocaleString('fr-FR')} ${POLE_EVOLUTION_UNIT[poleEvolution]}`} contentStyle={{ background: 'var(--surface-panel)', border: '1px solid var(--border-default)', borderRadius: 'var(--radius-1)', font: '12px var(--font-ui)' }} />
+                    <Bar dataKey="value" name={POLE_EVOLUTION_OPTIONS.find(o => o.value === poleEvolution)?.label} fill={POLE_COLORS[POLE_EVOLUTION_OPTIONS.find(o => o.value === poleEvolution)?.label] || 'var(--accent)'} />
+                  </BarChart>
+                ) : (
+                  <BarChart data={chartPoles}>
+                    <XAxis dataKey="mois" fontSize={11} stroke="var(--text-muted)" />
+                    <YAxis fontSize={11} stroke="var(--text-muted)" tickFormatter={v => (v / 1e6).toFixed(0) + 'M'} />
+                    <Tooltip formatter={v => fcfa(v)} contentStyle={{ background: 'var(--surface-panel)', border: '1px solid var(--border-default)', borderRadius: 'var(--radius-1)', font: '12px var(--font-ui)' }} />
+                    <Legend wrapperStyle={{ font: '11px var(--font-ui)' }} />
+                    <Bar dataKey="Carburant" stackId="pole" fill={POLE_COLORS.Carburant} />
+                    <Bar dataKey="Gaz" stackId="pole" fill={POLE_COLORS.Gaz} />
+                    <Bar dataKey="Lubrifiant" stackId="pole" fill={POLE_COLORS.Lubrifiant} />
+                    <Bar dataKey="Supérette" stackId="pole" fill={POLE_COLORS['Supérette']} />
+                  </BarChart>
+                )}
               </ResponsiveContainer>
             </div>
           </Panel>
@@ -467,9 +539,10 @@ export default function Dashboard() {
 
 // Camembert + légende avec montant et part (%) — utilisé pour la répartition du CA par pôle
 // et la répartition des dépenses par catégorie.
-function PoleShare({ data, colors = {} }) {
+function PoleShare({ data, colors = {}, unit }) {
   const total = data.reduce((s, r) => s + r.value, 0)
   const colorOf = (r, i) => colors[r.name] || SIGNAL_PALETTE[i % SIGNAL_PALETTE.length]
+  const fmt = unit ? (v => `${Math.round(v).toLocaleString('fr-FR')} ${unit}`) : fcfa
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-5)', flexWrap: 'wrap' }}>
       <div style={{ width: 160, height: 160, flex: '0 0 auto' }}>
@@ -478,7 +551,7 @@ function PoleShare({ data, colors = {} }) {
             <Pie data={data} dataKey="value" nameKey="name" innerRadius={40} outerRadius={78} paddingAngle={2}>
               {data.map((r, i) => <Cell key={i} fill={colorOf(r, i)} />)}
             </Pie>
-            <Tooltip formatter={v => fcfa(v)} contentStyle={{ background: 'var(--surface-panel)', border: '1px solid var(--border-default)', borderRadius: 'var(--radius-1)', font: '12px var(--font-ui)' }} />
+            <Tooltip formatter={v => fmt(v)} contentStyle={{ background: 'var(--surface-panel)', border: '1px solid var(--border-default)', borderRadius: 'var(--radius-1)', font: '12px var(--font-ui)' }} />
           </PieChart>
         </ResponsiveContainer>
       </div>
@@ -486,7 +559,7 @@ function PoleShare({ data, colors = {} }) {
         {data.map((r, i) => (
           <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 'var(--sp-3)', font: '400 12px/1.3 var(--font-ui)' }}>
             <span style={{ color: 'var(--text-body)' }}><span style={{ color: colorOf(r, i) }}>■</span> {r.name}</span>
-            <span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>{fcfa(r.value)} <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>({total ? Math.round(100 * r.value / total) : 0}%)</span></span>
+            <span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>{fmt(r.value)} <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>({total ? Math.round(100 * r.value / total) : 0}%)</span></span>
           </div>
         ))}
       </div>
