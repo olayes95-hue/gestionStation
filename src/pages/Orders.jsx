@@ -216,11 +216,16 @@ export default function Orders() {
   const resetFilters = () => { setYear('all'); setMonth('all'); setDateFrom(''); setDateTo(''); setFCat('tous'); setFProduit('tous'); setFStatut('tous') }
   const filtersActive = year !== 'all' || month !== 'all' || dateFrom || dateTo || fCat !== 'tous' || fProduit !== 'tous' || fStatut !== 'tous'
 
-  const shown = orders.filter(o =>
-    inPeriod(dateOf(o)) &&
-    (fStatut === 'tous' || o.statut === fStatut) &&
-    (fCat === 'tous' || (o.categorie || 'carburant') === fCat) &&
-    (fProduit === 'tous' || o.produit === fProduit))
+  // « À réceptionner » : liste toujours complète, peu importe le mois de lancement ou la catégorie —
+  // une commande lancée peut être livrée bien après le mois où elle a été proposée/lancée, et il ne faut
+  // jamais la perdre de vue derrière un filtre de période ou de catégorie.
+  const shown = fStatut === 'a_receptionner'
+    ? orders.filter(o => o.statut === 'lancee' || o.statut === 'partielle')
+    : orders.filter(o =>
+        inPeriod(dateOf(o)) &&
+        (fStatut === 'tous' || o.statut === fStatut) &&
+        (fCat === 'tous' || (o.categorie || 'carburant') === fCat) &&
+        (fProduit === 'tous' || o.produit === fProduit))
   const totalMontant = shown.reduce((s, o) => s + orderMontant(o), 0)
 
   // Compte des commandes qui attendent une action, tous statuts confondus — résumé en haut de page.
@@ -276,7 +281,7 @@ export default function Orders() {
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 'var(--sp-4)' }}>
           {nbAValider > 0 && <div onClick={() => setFStatut('proposee')} style={{ cursor: 'pointer' }}><Kpi label="À valider" value={nbAValider} status="warn" /></div>}
           {nbALancer > 0 && <div onClick={() => setFStatut('validee')} style={{ cursor: 'pointer' }}><Kpi label="À lancer" value={nbALancer} status="info" /></div>}
-          {nbAReceptionner > 0 && <div onClick={() => setFStatut('lancee')} style={{ cursor: 'pointer' }}><Kpi label="À réceptionner" value={nbAReceptionner} status="alarm" /></div>}
+          {nbAReceptionner > 0 && <div onClick={() => setFStatut('a_receptionner')} style={{ cursor: 'pointer' }}><Kpi label="À réceptionner" value={nbAReceptionner} status="alarm" /></div>}
         </div>
       )}
 
@@ -423,7 +428,7 @@ export default function Orders() {
             <Select size="sm" value={fProduit} onChange={e => setFProduit(e.target.value)}
               options={[{ value: 'tous', label: 'Tous produits' }, ...produits.filter(p => fCat === 'tous' || orders.some(o => o.produit === p && (o.categorie || 'carburant') === fCat)).map(p => ({ value: p, label: p }))]} />
             <Select size="sm" value={fStatut} onChange={e => setFStatut(e.target.value)}
-              options={[['tous', 'Tous statuts'], ['proposee', `Proposées (${count('proposee')})`], ['validee', `Validées (${count('validee')})`], ['lancee', `Lancées (${count('lancee')})`], ['partielle', `Partielles (${count('partielle')})`], ['recue', `Reçues (${count('recue')})`], ['annulee', `Refusées (${count('annulee')})`]].map(([k, l]) => ({ value: k, label: l }))} />
+              options={[['tous', 'Tous statuts'], ['proposee', `Proposées (${count('proposee')})`], ['validee', `Validées (${count('validee')})`], ['a_receptionner', `À réceptionner (${nbAReceptionner})`], ['lancee', `Lancées (${count('lancee')})`], ['partielle', `Partielles (${count('partielle')})`], ['recue', `Reçues (${count('recue')})`], ['annulee', `Refusées (${count('annulee')})`]].map(([k, l]) => ({ value: k, label: l }))} />
           </div>
         </div>
         <DataTable columns={columns} rows={shown} onRowClick={o => setDetailId(o.id)} />
