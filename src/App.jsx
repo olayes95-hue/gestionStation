@@ -29,6 +29,7 @@ const Products = lazy(() => import('./pages/Products.jsx'))
 const Stock = lazy(() => import('./pages/Stock.jsx'))
 const Entries = lazy(() => import('./pages/Entries.jsx'))
 const Aide = lazy(() => import('./pages/Aide.jsx'))
+const Journal = lazy(() => import('./pages/Journal.jsx'))
 
 function StationPicker() {
   const { stations, stationId, setStationId, isAdmin, current } = useStation()
@@ -48,6 +49,7 @@ function Shell({ children }) {
 
   const items = [
     { section: 'Exploitation' },
+    ...(!isVendeuse && !isPompiste ? [{ to: '/journal', icon: 'clipboard-list', label: 'Journal de bord' }] : []),
     { to: '/saisie', icon: 'file-pen-line', label: isVendeuse ? 'Saisie supérette' : 'Saisie du jour' },
     { to: '/aide', icon: 'circle-question-mark', label: 'Aide' },
     { to: '/stock', icon: isVendeuse ? 'shopping-cart' : 'package', label: isVendeuse ? 'Supérette' : 'Stock & mouvements' },
@@ -108,6 +110,7 @@ export default function App() {
         <Suspense fallback={<div className="center">Chargement…</div>}>
         <Routes>
           <Route path="/saisie" element={<Submit />} />
+          <Route path="/journal" element={isVendeuse || isPompiste ? <Navigate to="/saisie" /> : <Journal />} />
           <Route path="/aide" element={<Aide />} />
           <Route path="/commandes" element={isPompiste ? <Navigate to="/saisie" /> : <Orders />} />
           <Route path="/controles" element={<Inspections />} />

@@ -66,6 +66,7 @@ export default function Stations() {
       taux_gaz: num(settings.taux_gaz), taux_superette: num(settings.taux_superette),
       seuil_rupture: num(settings.seuil_rupture),
       bons_utilisables_commande: !!settings.bons_utilisables_commande,
+      pompe_inactive_apres: num(settings.pompe_inactive_apres) ?? 5,
     }).eq('id', 1)
     error ? fail(error) : flash('Prix enregistrés')
   }
@@ -190,6 +191,14 @@ export default function Stations() {
                 Quand les bons seront virés directement en banque, désactive cette option : le formulaire de commande n'affichera plus que le chèque comme mode de paiement (carburant + gaz/lubrifiant).
               </p>
               <Checkbox label="Les bons peuvent financer une commande" checked={settings.bons_utilisables_commande !== false} onChange={v => setSettings({ ...settings, bons_utilisables_commande: v })} />
+            </FormSection>
+            <FormSection title="Détection pompes inactives">
+              <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', marginTop: 0 }}>
+                Une pompe (E1-E4, G1-G4) est signalée « hors service » dans le Journal de bord si son relevé 16h n'a pas bougé sur les N dernières saisies où elle a été renseignée.
+              </p>
+              <Field label="N — nombre de saisies" style={{ maxWidth: 160 }}>
+                <Input type="number" numeric value={settings.pompe_inactive_apres ?? 5} onChange={e => setSettings({ ...settings, pompe_inactive_apres: e.target.value })} />
+              </Field>
             </FormSection>
             <Button type="submit" tone="primary" style={{ alignSelf: 'flex-start' }}>Enregistrer les prix</Button>
           </form>
