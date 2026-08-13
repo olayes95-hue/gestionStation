@@ -6,6 +6,17 @@ import { useStation } from '../lib/station.jsx'
 import { fcfa, today, numFR, frDate } from '../lib/format'
 import { compressImage } from '../lib/image'
 import OrderReception from '../components/OrderReception.jsx'
+import { Panel } from '../ds/octane/components/core/Panel.jsx'
+import { Button } from '../ds/octane/components/core/Button.jsx'
+import { Icon } from '../ds/octane/components/core/Icon.jsx'
+import { Field } from '../ds/octane/components/forms/Field.jsx'
+import { Input } from '../ds/octane/components/forms/Input.jsx'
+import { Select } from '../ds/octane/components/forms/Select.jsx'
+import { Checkbox } from '../ds/octane/components/forms/Checkbox.jsx'
+import { NumericStepper } from '../ds/octane/components/forms/NumericStepper.jsx'
+import { AlertBanner } from '../ds/octane/components/feedback/AlertBanner.jsx'
+import { EvidenceThumb } from '../ds/octane/components/evidence/EvidenceThumb.jsx'
+import { MetricTile } from '../ds/octane/components/data/MetricTile.jsx'
 
 const N = (v) => (v === '' || v === null || v === undefined ? 0 : (numFR(v) ?? 0))
 const LUB_TYPES = ['5W30 1L','5W30 5L','20W50 5L','15W40 5L','80W90 1L','50 SAE 5L','Dexron 1L','Dot4 1L','10W40 5L','5W40 5L','Graisse','Liquide refroid.','Nettoyant injecteur','Nettoyant essence']
@@ -117,15 +128,15 @@ export default function Submit() {
 
   // champ compteur avec photo-preuve par pompe
   const meterField = (k, label) => (
-    <div>
-      <label>{label}</label>
-      <input type="text" inputMode="decimal" value={f[k]} onChange={e => set(k, e.target.value)} />
-      <label style={{ display: 'flex', alignItems: 'center', gap: 6, margin: '4px 0 0', fontSize: 11.5, color: 'var(--primary)', cursor: 'pointer' }}>
-        📷 {meterPhotos[k]?.file ? '✓ photo' : 'photo'}
+    <Field label={label} key={k}>
+      <Input type="text" inputMode="decimal" numeric value={f[k]} onChange={e => set(k, e.target.value)} />
+      <label style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-2)', marginTop: 'var(--sp-2)', cursor: 'pointer' }}>
+        <Icon name="camera" size={12} color={meterPhotos[k]?.file ? 'var(--state-ok)' : 'var(--accent)'} />
+        <span style={{ font: '500 11px/1 var(--font-ui)', color: meterPhotos[k]?.file ? 'var(--state-ok)' : 'var(--accent)' }}>{meterPhotos[k]?.file ? 'Photo ✓' : 'Photo'}</span>
         <input type="file" accept="image/*" capture="environment" style={{ display: 'none' }}
           onChange={e => setMeterPhotos(p => ({ ...p, [k]: e.target.files[0] ? { file: e.target.files[0], label } : undefined }))} />
       </label>
-    </div>
+    </Field>
   )
 
   async function receptionOrder(o) {
@@ -133,7 +144,7 @@ export default function Submit() {
     const recu = numFR(r.quantite_recue)
     if (!recu || recu <= 0) { setErr('Renseigne les litres effectivement reçus (> 0).'); return }
     if (r.cuve_avant === '' || r.cuve_apres === '' || r.cuve_avant == null || r.cuve_apres == null) { setErr('Renseigne cuve avant ET après pour la réception.'); return }
-    if (!r._file) { setErr('📷 Photo obligatoire pour valider la réception (bon de livraison / jauge).'); return }
+    if (!r._file) { setErr('Photo obligatoire pour valider la réception (bon de livraison / jauge).'); return }
     const prix = o.produit === 'gasoil' ? Number(settings.gasoil_pa || 730) : Number(settings.essence_pa || 705)
     // photo de réception
     const path = `${stationId}/reception/${date}/${Date.now()}_${r._file.name.replace(/[^\w.\-]/g, '_')}`
@@ -160,7 +171,7 @@ export default function Submit() {
     // 3) stock cuve = niveau après cette réception
     const sf = o.produit === 'gasoil' ? 'gas_stock' : 'ess_stock'
     await supabase.from('daily_reports').upsert({ station_id: stationId, report_date: date, [sf]: numFR(r.cuve_apres), created_by: session.user.id }, { onConflict: 'station_id,report_date' })
-    setMsg(complet ? '✅ Commande entièrement reçue — stock cuve mis à jour' : `Réception partielle enregistrée ✓ (${total.toLocaleString('fr-FR')} / ${N(o.quantite_commandee).toLocaleString('fr-FR')} L)`); load(date)
+    setMsg(complet ? 'Commande entièrement reçue — stock cuve mis à jour' : `Réception partielle enregistrée (${total.toLocaleString('fr-FR')} / ${N(o.quantite_commandee).toLocaleString('fr-FR')} L)`); load(date)
   }
 
   // un compteur a-t-il déjà sa photo (nouvelle ou déjà enregistrée) ?
@@ -190,32 +201,32 @@ export default function Submit() {
 
   async function save() {
     if (!stationId) { setErr('Aucune station sélectionnée.'); return }
-    if (locked) { setErr('🔒 Journée verrouillée : seul l\'administrateur peut modifier un jour de plus d\'un mois.'); return }
+    if (locked) { setErr('Journée verrouillée : seul l\'administrateur peut modifier un jour de plus d\'un mois.'); return }
     // 16h obligatoire : les 8 relevés doivent être remplis pour l'envoi de 16h
     if (moment === 'apres-midi' && METERS_16H.some(k => f[k] === '' || f[k] === null || f[k] === undefined)) {
-      setErr('⚠️ Relevés 16 h obligatoires : remplis les 8 index des pompes (E1–E4, G1–G4) avant d\'envoyer.')
+      setErr('Relevés 16 h obligatoires : remplis les 8 index des pompes (E1–E4, G1–G4) avant d\'envoyer.')
       window.scrollTo({ top: 0, behavior: 'smooth' }); return
     }
     // justificatifs obligatoires : photo pour chaque dépense EN ESPÈCES
     // (la catégorie CARBURANT = prélèvement carburant du propriétaire, non-cash → pas de reçu).
     if (expenses.some(e => N(e.montant) > 0 && (e.categorie || '').toUpperCase() !== 'CARBURANT' && !e.photo_path && !e._file)) {
-      setErr('⚠️ Photo du justificatif obligatoire pour chaque dépense en espèces.'); return
+      setErr('Photo du justificatif obligatoire pour chaque dépense en espèces.'); return
     }
     if (deposits.some(d => N(d.montant) > 0 && !d.photo_path && !d._file)) {
-      setErr('⚠️ Photo du bordereau obligatoire pour chaque versement.'); return
+      setErr('Photo du bordereau obligatoire pour chaque versement.'); return
     }
     if (deposits.some(d => N(d.montant) > 0 && (!d.periode_debut || !d.periode_fin))) {
-      setErr('⚠️ Indique la période concernée (du… au…) pour chaque versement.'); return
+      setErr('Indique la période concernée (du… au…) pour chaque versement.'); return
     }
     if (deposits.some(d => N(d.montant) > 0 && d.periode_debut > d.periode_fin)) {
-      setErr('⚠️ La date de début d\'un versement doit être avant sa date de fin.'); return
+      setErr('La date de début d\'un versement doit être avant sa date de fin.'); return
     }
     // photo obligatoire pour chaque compteur saisi (du moment)
     const meterSets = []
     if (moment === 'matin' || showAll) meterSets.push(['e1_m', 'Essence 1'], ['e2_m', 'Essence 2'], ['e3_m', 'Essence 3'], ['e4_m', 'Essence 4'], ['g1_m', 'Gasoil 1'], ['g2_m', 'Gasoil 2'], ['g3_m', 'Gasoil 3'], ['g4_m', 'Gasoil 4'])
     if (moment === 'apres-midi' || showAll) meterSets.push(['e1', 'Pompe E1'], ['e2', 'Pompe E2'], ['e3', 'Pompe E3'], ['e4', 'Pompe E4'], ['g1', 'Pompe G1'], ['g2', 'Pompe G2'], ['g3', 'Pompe G3'], ['g4', 'Pompe G4'])
     const missM = meterSets.find(([k, label]) => f[k] !== '' && f[k] != null && !meterHasPhoto(k, label))
-    if (missM) { setErr(`⚠️ Photo obligatoire pour le compteur ${missM[1]} (bouton 📷).`); window.scrollTo({ top: 0, behavior: 'smooth' }); return }
+    if (missM) { setErr(`Photo obligatoire pour le compteur ${missM[1]}.`); window.scrollTo({ top: 0, behavior: 'smooth' }); return }
     // Garde-fou décalage compteur : l'index du matin doit être > au dernier jour saisi.
     if ((moment === 'matin' || showAll) && prevMorning && !forceMeter) {
       const essNow = N(f.e1_m) + N(f.e2_m) + N(f.e3_m) + N(f.e4_m)
@@ -225,7 +236,7 @@ export default function Submit() {
       if (gasNow > 0 && prevMorning.gas > 0 && gasNow <= prevMorning.gas) parts.push(`gasoil ${Math.round(gasNow)} ≤ ${Math.round(prevMorning.gas)}`)
       if (parts.length) {
         setMeterWarn(`Index du matin ${parts.join(' et ')} — relevé du ${frDate(prevMorning.date)}. Un index de pompe ne peut que MONTER : sans ça, l'écart compteur sera décalé d'un jour.`)
-        setErr('⚠️ Relevé compteur du matin incohérent — voir la section « Relevés compteurs à l\'ouverture » plus bas.')
+        setErr('Relevé compteur du matin incohérent — voir la section « Relevés compteurs à l\'ouverture » plus bas.')
         window.scrollTo({ top: 0, behavior: 'smooth' }); return
       }
     }
@@ -320,7 +331,7 @@ export default function Submit() {
 
       await supabase.from('submissions').insert({ report_date: date, station_id: sid, moment, created_by: session.user.id })
 
-      setMsg(`✅ Enregistré ! (${momentLabel(moment)} — ${date})`)
+      setMsg(`Enregistré ! (${momentLabel(moment)} — ${date})`)
       load(date)
       window.scrollTo({ top: 0, behavior: 'smooth' })
     } catch (e) { setErr(e.message || String(e)) } finally { setBusy(false) }
@@ -359,7 +370,7 @@ export default function Submit() {
 
   async function saveVendeuse() {
     if (!stationId) { setErr('Aucune station sélectionnée.'); return }
-    if (locked) { setErr('🔒 Journée verrouillée (plus d\'un mois).'); return }
+    if (locked) { setErr('Journée verrouillée (plus d\'un mois).'); return }
     const lines = sales.filter(s => N(s.quantite) > 0)
     setBusy(true); setErr(''); setMsg('')
     try {
@@ -377,223 +388,209 @@ export default function Submit() {
         if (si) throw si
       }
       await supabase.from('submissions').insert({ report_date: date, station_id: stationId, moment: 'superette', created_by: session.user.id })
-      setMsg('✅ Ventes supérette enregistrées')
+      setMsg('Ventes supérette enregistrées')
       window.scrollTo({ top: 0, behavior: 'smooth' })
     } catch (e) { setErr(e.message || String(e)) } finally { setBusy(false) }
   }
 
   // ===== VENDEUSE : accès à la Saisie du jour, UNIQUEMENT la partie supérette =====
   if (isVendeuse) return (
-    <div>
-      <div className="card">
-        <label>📅 Date</label>
-        <input type="date" value={date} onChange={e => setDate(e.target.value)} max={today()} />
-      </div>
-      {err && <div className="err">{err}</div>}
-      {msg && <div className="ok">{msg}</div>}
-      {locked && <div className="err">🔒 Journée verrouillée (plus d'un mois). Seul l'administrateur peut la corriger.</div>}
-      <div className="card">
-        <h2>🛒 Produits vendus — supérette</h2>
-        <p className="hint">Choisis un produit dans la liste, mets la <b>quantité</b> et le <b>prix de vente</b>. Si un produit n'existe pas encore, ajoute-le : l'administrateur le validera ensuite.</p>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-5)' }}>
+      <Panel title="Date" bodyStyle={{ display: 'none' }} actions={<Input size="sm" type="date" value={date} onChange={e => setDate(e.target.value)} max={today()} />} />
+      {err && <AlertBanner tone="alarm" title="Erreur">{err}</AlertBanner>}
+      {msg && <AlertBanner tone="ok" title="Succès">{msg}</AlertBanner>}
+      {locked && <AlertBanner tone="alarm" title="Verrouillé">Journée verrouillée (plus d'un mois). Seul l'administrateur peut la corriger.</AlertBanner>}
+      <Panel title="Produits vendus — supérette">
+        <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', marginTop: 0 }}>
+          Choisis un produit dans la liste, mets la <b>quantité</b> et le <b>prix de vente</b>. Si un produit n'existe pas encore, ajoute-le : l'administrateur le validera ensuite.
+        </p>
 
         {sales.length > 0 && (
-          <div className="table-wrap">
-            <table>
-              <thead><tr><th>Produit</th><th className="num" style={{ width: 70 }}>Qté</th><th className="num" style={{ width: 100 }}>Prix (F)</th><th className="num" style={{ width: 90 }}>Total</th><th></th></tr></thead>
-              <tbody>
-                {sales.map((s, i) => (
-                  <tr key={i}>
-                    <td>{s.nom}</td>
-                    <td><input type="text" inputMode="decimal" value={s.quantite} onChange={e => updLine(i, 'quantite', e.target.value)} style={{ width: 60, textAlign: 'right' }} /></td>
-                    <td><input type="text" inputMode="decimal" value={s.prix_vente} onChange={e => updLine(i, 'prix_vente', e.target.value)} style={{ width: 90, textAlign: 'right' }} /></td>
-                    <td className="num">{fcfa(lineMontant(s))}</td>
-                    <td><button className="btn sec small" onClick={() => removeLine(i)}>✕</button></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-3)', marginBottom: 'var(--sp-4)' }}>
+            {sales.map((s, i) => (
+              <div key={i} style={{ display: 'flex', gap: 'var(--sp-3)', alignItems: 'center', padding: 'var(--sp-3)', background: 'var(--surface-raised)', borderRadius: 'var(--radius-1)', border: '1px solid var(--border-hairline)' }}>
+                <span style={{ flex: 1, font: '400 13px/1.3 var(--font-ui)', color: 'var(--text-body)' }}>{s.nom}</span>
+                <Input size="sm" type="text" inputMode="decimal" numeric value={s.quantite} onChange={e => updLine(i, 'quantite', e.target.value)} style={{ width: 70 }} />
+                <Input size="sm" type="text" inputMode="decimal" numeric value={s.prix_vente} onChange={e => updLine(i, 'prix_vente', e.target.value)} style={{ width: 100 }} />
+                <span style={{ width: 90, textAlign: 'right', font: '500 13px/1 var(--font-data)' }}>{fcfa(lineMontant(s))}</span>
+                <Button size="sm" tone="danger" onClick={() => removeLine(i)}>✕</Button>
+              </div>
+            ))}
           </div>
         )}
-        {!sales.length && <p className="muted">Aucune vente saisie pour le moment.</p>}
+        {!sales.length && <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)' }}>Aucune vente saisie pour le moment.</p>}
 
-        <div className="row" style={{ marginTop: 12, gap: 8, alignItems: 'end', flexWrap: 'wrap' }}>
-          <div style={{ flex: 1, minWidth: 160 }}>
-            <label>Ajouter un produit de la liste</label>
-            <select value={pick} onChange={e => setPick(e.target.value)}>
-              <option value="">— choisir —</option>
-              {prods.map(p => <option key={p.id} value={p.id}>{p.nom}{p.prix_vente != null ? ` (${fcfa(p.prix_vente)})` : ''}</option>)}
-            </select>
-          </div>
-          <button className="btn small" onClick={addLineFromPick} disabled={!pick}>+ Ajouter</button>
+        <div style={{ display: 'flex', gap: 'var(--sp-3)', alignItems: 'end', flexWrap: 'wrap' }}>
+          <Field label="Ajouter un produit de la liste" style={{ flex: '1 1 200px' }}>
+            <Select value={pick} onChange={e => setPick(e.target.value)} style={{ width: '100%' }}
+              options={[{ value: '', label: '— choisir —' }, ...prods.map(p => ({ value: p.id, label: `${p.nom}${p.prix_vente != null ? ` (${fcfa(p.prix_vente)})` : ''}` }))]} />
+          </Field>
+          <Button tone="primary" onClick={addLineFromPick} disabled={!pick}>+ Ajouter</Button>
         </div>
 
-        <div style={{ marginTop: 10 }}>
+        <div style={{ marginTop: 'var(--sp-4)' }}>
           {!showNew
-            ? <button className="btn sec small" onClick={() => setShowNew(true)}>➕ Produit absent de la liste</button>
+            ? <Button onClick={() => setShowNew(true)}>+ Produit absent de la liste</Button>
             : (
-              <div className="card" style={{ background: 'var(--bg-soft, #f7f7f9)', marginTop: 4 }}>
-                <label>Nouveau produit (à valider par l'admin)</label>
-                <input value={newProd.nom} onChange={e => setNewProd({ ...newProd, nom: e.target.value })} placeholder="ex : Eau 1,5L" />
-                <div className="row" style={{ gap: 8, marginTop: 8 }}>
-                  <div style={{ flex: 1 }}><label>Prix d'achat (F)</label><input type="text" inputMode="decimal" value={newProd.prix_achat} onChange={e => setNewProd({ ...newProd, prix_achat: e.target.value })} /></div>
-                  <div style={{ flex: 1 }}><label>Prix de vente (F)</label><input type="text" inputMode="decimal" value={newProd.prix_vente} onChange={e => setNewProd({ ...newProd, prix_vente: e.target.value })} /></div>
+              <div style={{ padding: 'var(--sp-4)', background: 'var(--surface-raised)', borderRadius: 'var(--radius-1)', border: '1px solid var(--border-hairline)', display: 'flex', flexDirection: 'column', gap: 'var(--sp-3)' }}>
+                <Field label="Nouveau produit (à valider par l'admin)">
+                  <Input value={newProd.nom} onChange={e => setNewProd({ ...newProd, nom: e.target.value })} placeholder="ex : Eau 1,5L" />
+                </Field>
+                <div style={{ display: 'flex', gap: 'var(--sp-3)' }}>
+                  <Field label="Prix d'achat (F)" style={{ flex: 1 }}><Input type="text" inputMode="decimal" numeric value={newProd.prix_achat} onChange={e => setNewProd({ ...newProd, prix_achat: e.target.value })} /></Field>
+                  <Field label="Prix de vente (F)" style={{ flex: 1 }}><Input type="text" inputMode="decimal" numeric value={newProd.prix_vente} onChange={e => setNewProd({ ...newProd, prix_vente: e.target.value })} /></Field>
                 </div>
-                <div className="row" style={{ gap: 8, marginTop: 8 }}>
-                  <button className="btn small" onClick={addNewProduct}>Ajouter & vendre</button>
-                  <button className="btn sec small" onClick={() => { setShowNew(false); setNewProd({ nom: '', prix_achat: '', prix_vente: '' }) }}>Annuler</button>
+                <div style={{ display: 'flex', gap: 'var(--sp-3)' }}>
+                  <Button tone="primary" onClick={addNewProduct}>Ajouter &amp; vendre</Button>
+                  <Button onClick={() => { setShowNew(false); setNewProd({ nom: '', prix_achat: '', prix_vente: '' }) }}>Annuler</Button>
                 </div>
               </div>
             )}
         </div>
-      </div>
+      </Panel>
 
-      <div className="card" style={{ position: 'sticky', bottom: 0, boxShadow: '0 -2px 12px rgba(0,0,0,.08)' }}>
-        <div className="grid kpis"><Sum label="Recette supérette" v={salesTotal} strong /></div>
-        <div style={{ height: 10 }} />
-        <button className="btn big-save" onClick={saveVendeuse} disabled={busy || locked}>{busy ? 'Enregistrement…' : locked ? '🔒 Verrouillé' : '✅ Envoyer'}</button>
+      <div style={{ position: 'sticky', bottom: 0, background: 'var(--surface-panel)', border: 'var(--border-panel)', borderRadius: 'var(--radius-1)', padding: 'var(--gutter-panel)', boxShadow: '0 -4px 16px rgba(0,0,0,.12)', display: 'flex', flexDirection: 'column', gap: 'var(--sp-4)' }}>
+        <MetricTile label="Recette supérette" value={fcfa(salesTotal)} />
+        <Button tone="primary" block onClick={saveVendeuse} disabled={busy || locked}>{busy ? 'Enregistrement…' : locked ? 'Verrouillé' : 'Envoyer'}</Button>
       </div>
     </div>
   )
 
   return (
-    <div>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-5)' }}>
       {/* ---- En-tête : date + moment ---- */}
-      <div className="card">
-        <label>📅 Date</label>
-        <input type="date" value={date} onChange={e => setDate(e.target.value)} max={today()} />
-        <p className="hint" style={{ marginTop: 8 }}>Choisis le moment de l'envoi. On ne te montre que ce qu'il faut remplir.</p>
-        <div className="moment-tiles">
-          <Tile emo="🌅" t="Matin (8h)" d="Stock + ouverture" active={moment === 'matin'} onClick={() => setMoment('matin')} />
-          <Tile emo="🕓" t="16 h" d="Ventes & compteurs" active={moment === 'apres-midi'} onClick={() => setMoment('apres-midi')} />
-          <Tile emo="🌙" t="Soir" d="Clôture & versement" active={moment === 'soir'} onClick={() => setMoment('soir')} />
+      <Panel>
+        <Field label="Date"><Input type="date" value={date} onChange={e => setDate(e.target.value)} max={today()} style={{ maxWidth: 200 }} /></Field>
+        <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', margin: 'var(--sp-4) 0' }}>Choisis le moment de l'envoi. On ne te montre que ce qu'il faut remplir.</p>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 'var(--sp-3)' }}>
+          <MomentTile icon="calendar-days" t="Matin (8h)" d="Stock + ouverture" active={moment === 'matin'} onClick={() => setMoment('matin')} />
+          <MomentTile icon="clock" t="16 h" d="Ventes &amp; compteurs" active={moment === 'apres-midi'} onClick={() => setMoment('apres-midi')} />
+          <MomentTile icon="moon" t="Soir" d="Clôture &amp; versement" active={moment === 'soir'} onClick={() => setMoment('soir')} />
         </div>
-        <label className="toggle-all">
-          <input type="checkbox" style={{ width: 18 }} checked={showAll} onChange={e => setShowAll(e.target.checked)} /> Tout afficher (avancé)
-        </label>
-      </div>
+        <Checkbox label="Tout afficher (avancé)" checked={showAll} onChange={v => setShowAll(v)} style={{ marginTop: 'var(--sp-4)' }} />
+      </Panel>
 
-      {err && <div className="err">{err}</div>}
-      {msg && <div className="ok">{msg}</div>}
-      {locked && <div className="err">🔒 Journée verrouillée (plus d'un mois). Lecture seule — seul l'administrateur peut la corriger.</div>}
-      {isPompiste && <div className="ok">👷 Mode pompiste : tu saisis les compteurs, le stock et les photos. Les ventes et versements sont gérés par le gérant.</div>}
+      {err && <AlertBanner tone="alarm" title="Erreur">{err}</AlertBanner>}
+      {msg && <AlertBanner tone="ok" title="Succès">{msg}</AlertBanner>}
+      {locked && <AlertBanner tone="alarm" title="Verrouillé">Journée verrouillée (plus d'un mois). Lecture seule — seul l'administrateur peut la corriger.</AlertBanner>}
+      {isPompiste && <AlertBanner tone="info" title="Mode pompiste">Tu saisis les compteurs, le stock et les photos. Les ventes et versements sont gérés par le gérant.</AlertBanner>}
 
       {/* ---- PHOTOS DU JOUR (vue seule, pour vérification admin) ---- */}
       {attachments.length > 0 && (
-        <div className="card">
-          <div className="step-head"><div className="step-num">📷</div><h2>Photos du jour</h2></div>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+        <Panel title="Photos du jour">
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--sp-4)' }}>
             {attachments.map(a => (
-              <div key={a.id} style={{ textAlign: 'center' }}>
-                <a href={photoUrl(a.photo_path)} target="_blank" rel="noreferrer">
-                  <img src={photoUrl(a.photo_path)} alt="" style={{ width: 92, height: 92, objectFit: 'cover', borderRadius: 10, border: '1px solid var(--border)' }} /></a>
-                <div className="pill" style={{ marginTop: 4 }}>{a.categorie}</div>
-                {a.note && <div className="muted" style={{ fontSize: 10.5, maxWidth: 92 }}>{a.note}</div>}
-                <div><button className="btn sec small" style={{ marginTop: 4 }} onClick={() => delAttachment(a)}>Suppr.</button></div>
-              </div>
+              <EvidenceThumb key={a.id} src={photoUrl(a.photo_path)} label={a.categorie} timestamp={a.note} status="none" size={92}
+                onClick={() => window.open(photoUrl(a.photo_path), '_blank')} onRemove={() => delAttachment(a)} />
             ))}
           </div>
-        </div>
+        </Panel>
       )}
 
       {/* ---- MATIN : STOCK ---- */}
       {show('matin') && (
-        <div className="card">
-          <Step n="1" title="🌅 Stock du matin" />
-          <p className="hint">Combien reste-t-il en cuve et en boutiques ce matin ?</p>
-          <div className="row">
-            <div><label>Essence en cuve (litres)</label><input type="text" inputMode="decimal" value={f.ess_stock} onChange={e => set('ess_stock', e.target.value)} /></div>
-            <div><label>Gasoil en cuve (litres)</label><input type="text" inputMode="decimal" value={f.gas_stock} onChange={e => set('gas_stock', e.target.value)} /></div>
+        <Panel>
+          <StepHead n="1" title="Stock du matin" />
+          <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)' }}>Combien reste-t-il en cuve et en boutiques ce matin ?</p>
+          <div style={{ display: 'flex', gap: 'var(--sp-4)', flexWrap: 'wrap' }}>
+            <Field label="Essence en cuve (litres)" style={{ flex: '1 1 180px' }}><Input type="text" inputMode="decimal" numeric value={f.ess_stock} onChange={e => set('ess_stock', e.target.value)} /></Field>
+            <Field label="Gasoil en cuve (litres)" style={{ flex: '1 1 180px' }}><Input type="text" inputMode="decimal" numeric value={f.gas_stock} onChange={e => set('gas_stock', e.target.value)} /></Field>
           </div>
-          <fieldset className="fieldset"><legend>🔢 Relevés compteurs à l'ouverture</legend>
-            <p className="hint" style={{ marginTop: 0 }}>Index de chaque pompe ce matin, avec sa photo (preuve). Sert à vérifier les ventes de la veille.</p>
-            <div className="row">{meterField('e1_m', 'Essence 1')}{meterField('e2_m', 'Essence 2')}</div>
-            <div className="row">{meterField('e3_m', 'Essence 3')}{meterField('e4_m', 'Essence 4')}</div>
-            <div className="row">{meterField('g1_m', 'Gasoil 1')}{meterField('g2_m', 'Gasoil 2')}</div>
-            <div className="row">{meterField('g3_m', 'Gasoil 3')}{meterField('g4_m', 'Gasoil 4')}</div>
-            {prevMorning && <p className="muted" style={{ fontSize: 12, marginTop: 6 }}>Repère — index du matin du {frDate(prevMorning.date)} : essence <b>{Math.round(prevMorning.ess).toLocaleString('fr-FR')}</b>, gasoil <b>{Math.round(prevMorning.gas).toLocaleString('fr-FR')}</b>. Le nouvel index doit être supérieur.</p>}
+          <FormSection title="Relevés compteurs à l'ouverture" style={{ marginTop: 'var(--sp-4)' }}>
+            <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', marginTop: 0 }}>Index de chaque pompe ce matin, avec sa photo (preuve). Sert à vérifier les ventes de la veille.</p>
+            <div style={{ display: 'flex', gap: 'var(--sp-4)', flexWrap: 'wrap' }}>{meterField('e1_m', 'Essence 1')}{meterField('e2_m', 'Essence 2')}</div>
+            <div style={{ display: 'flex', gap: 'var(--sp-4)', flexWrap: 'wrap', marginTop: 'var(--sp-3)' }}>{meterField('e3_m', 'Essence 3')}{meterField('e4_m', 'Essence 4')}</div>
+            <div style={{ display: 'flex', gap: 'var(--sp-4)', flexWrap: 'wrap', marginTop: 'var(--sp-3)' }}>{meterField('g1_m', 'Gasoil 1')}{meterField('g2_m', 'Gasoil 2')}</div>
+            <div style={{ display: 'flex', gap: 'var(--sp-4)', flexWrap: 'wrap', marginTop: 'var(--sp-3)' }}>{meterField('g3_m', 'Gasoil 3')}{meterField('g4_m', 'Gasoil 4')}</div>
+            {prevMorning && <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', marginTop: 'var(--sp-3)' }}>Repère — index du matin du {frDate(prevMorning.date)} : essence <b>{Math.round(prevMorning.ess).toLocaleString('fr-FR')}</b>, gasoil <b>{Math.round(prevMorning.gas).toLocaleString('fr-FR')}</b>. Le nouvel index doit être supérieur.</p>}
             {meterWarn && (
-              <div className="err" style={{ marginTop: 8 }}>
-                ⚠️ {meterWarn}
-                <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginTop: 8 }}>
-                  <input type="checkbox" checked={forceMeter} onChange={e => { setForceMeter(e.target.checked); if (e.target.checked) { setMeterWarn(''); setErr('') } }} />
-                  Forcer l'envoi (l'index est correct malgré tout)
-                </label>
-              </div>
+              <AlertBanner tone="alarm" title="Index incohérent" style={{ marginTop: 'var(--sp-3)' }}>
+                {meterWarn}
+                <Checkbox label="Forcer l'envoi (l'index est correct malgré tout)" checked={forceMeter} onChange={v => { setForceMeter(v); if (v) { setMeterWarn(''); setErr('') } }} style={{ marginTop: 'var(--sp-3)' }} />
+              </AlertBanner>
             )}
-          </fieldset>
-          <fieldset className="fieldset"><legend>🔥 Bouteilles de gaz en stock</legend>
-            {GAZ.map(([k, lab]) => (
-              <div key={k} style={{ marginBottom: 8 }}><label>{lab}</label>
-                <Stepper value={f['gaz_stock_' + k]} onChange={v => set('gaz_stock_' + k, v)} /></div>
-            ))}
-          </fieldset>
-          <fieldset className="fieldset"><legend>🛢️ Lubrifiants en stock</legend>
-            <div className="lub-grid">
+          </FormSection>
+          <FormSection title="Bouteilles de gaz en stock" style={{ marginTop: 'var(--sp-4)' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-3)' }}>
+              {GAZ.map(([k, lab]) => (
+                <div key={k} style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-4)' }}>
+                  <span style={{ flex: 1, font: '400 13px/1 var(--font-ui)', color: 'var(--text-body)' }}>{lab}</span>
+                  <NumericStepper value={Number(f['gaz_stock_' + k]) || 0} onChange={v => set('gaz_stock_' + k, String(v))} suffix="b." />
+                </div>
+              ))}
+            </div>
+          </FormSection>
+          <FormSection title="Lubrifiants en stock" style={{ marginTop: 'var(--sp-4)' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 'var(--sp-3)' }}>
               {lubTypes.map(t => (
-                <div className="lub-row" key={t}>
-                  <span className="name">{t}</span>
-                  <input type="text" inputMode="numeric" value={lub[t] ?? ''} placeholder="0"
+                <div key={t} style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-3)' }}>
+                  <span style={{ flex: 1, font: '400 12px/1.2 var(--font-ui)', color: 'var(--text-body)' }}>{t}</span>
+                  <Input size="sm" type="text" inputMode="numeric" numeric value={lub[t] ?? ''} placeholder="0" style={{ width: 70 }}
                     onChange={e => setLub(p => ({ ...p, [t]: e.target.value === '' ? undefined : Number(e.target.value) }))} />
                 </div>
               ))}
             </div>
-          </fieldset>
-        </div>
+          </FormSection>
+        </Panel>
       )}
 
       {/* ---- 16h : VENTES + COMPTEURS ---- */}
       {show('apres-midi') && (<>
-        {!isPompiste && <div className="card">
-          <Step n="2" title="⛽ Ventes carburant (de la veille)" />
-          <p className="hint">Ce sont les ventes du jour écoulé. Saisis les litres et sépare Bon / Espèces (l'admin vérifie ensuite avec les compteurs).</p>
-          <fieldset className="fieldset"><legend>Essence — {settings.essence_pv} F/L</legend>
-            <div className="row-3">
-              <div><label>Litres</label><input type="text" inputMode="decimal" value={f.ess_litres} onChange={e => set('ess_litres', e.target.value)} /></div>
-              <div><label>Prix / L</label><input type="text" inputMode="decimal" value={f.ess_pu} onChange={e => set('ess_pu', e.target.value)} /></div>
-              <div><label>Vente à bon</label><input type="text" inputMode="decimal" value={f.ess_bon} onChange={e => set('ess_bon', e.target.value)} /></div>
+        {!isPompiste && <Panel>
+          <StepHead n="2" title="Ventes carburant (de la veille)" />
+          <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)' }}>Ce sont les ventes du jour écoulé. Saisis les litres et sépare Bon / Espèces (l'admin vérifie ensuite avec les compteurs).</p>
+          <FormSection title={`Essence — ${settings.essence_pv} F/L`}>
+            <div style={{ display: 'flex', gap: 'var(--sp-4)', flexWrap: 'wrap' }}>
+              <Field label="Litres" style={{ flex: '1 1 140px' }}><Input type="text" inputMode="decimal" numeric value={f.ess_litres} onChange={e => set('ess_litres', e.target.value)} /></Field>
+              <Field label="Prix / L" style={{ flex: '1 1 140px' }}><Input type="text" inputMode="decimal" numeric value={f.ess_pu} onChange={e => set('ess_pu', e.target.value)} /></Field>
+              <Field label="Vente à bon" style={{ flex: '1 1 140px' }}><Input type="text" inputMode="decimal" numeric value={f.ess_bon} onChange={e => set('ess_bon', e.target.value)} /></Field>
             </div>
-            <label>Vente en espèces</label><input type="text" inputMode="decimal" value={f.ess_espece} onChange={e => set('ess_espece', e.target.value)} />
-          </fieldset>
-          <fieldset className="fieldset"><legend>Gasoil — {settings.gasoil_pv} F/L</legend>
-            <div className="row-3">
-              <div><label>Litres</label><input type="text" inputMode="decimal" value={f.gas_litres} onChange={e => set('gas_litres', e.target.value)} /></div>
-              <div><label>Prix / L</label><input type="text" inputMode="decimal" value={f.gas_pu} onChange={e => set('gas_pu', e.target.value)} /></div>
-              <div><label>Vente à bon</label><input type="text" inputMode="decimal" value={f.gas_bon} onChange={e => set('gas_bon', e.target.value)} /></div>
+            <Field label="Vente en espèces" style={{ marginTop: 'var(--sp-3)' }}><Input type="text" inputMode="decimal" numeric value={f.ess_espece} onChange={e => set('ess_espece', e.target.value)} /></Field>
+          </FormSection>
+          <FormSection title={`Gasoil — ${settings.gasoil_pv} F/L`} style={{ marginTop: 'var(--sp-4)' }}>
+            <div style={{ display: 'flex', gap: 'var(--sp-4)', flexWrap: 'wrap' }}>
+              <Field label="Litres" style={{ flex: '1 1 140px' }}><Input type="text" inputMode="decimal" numeric value={f.gas_litres} onChange={e => set('gas_litres', e.target.value)} /></Field>
+              <Field label="Prix / L" style={{ flex: '1 1 140px' }}><Input type="text" inputMode="decimal" numeric value={f.gas_pu} onChange={e => set('gas_pu', e.target.value)} /></Field>
+              <Field label="Vente à bon" style={{ flex: '1 1 140px' }}><Input type="text" inputMode="decimal" numeric value={f.gas_bon} onChange={e => set('gas_bon', e.target.value)} /></Field>
             </div>
-            <label>Vente en espèces</label><input type="text" inputMode="decimal" value={f.gas_espece} onChange={e => set('gas_espece', e.target.value)} />
-          </fieldset>
-          <div className="ok">Marge carburant estimée : <b>{fcfa(marge)}</b> ({settings.marge_unitaire} F/L)</div>
-        </div>}
+            <Field label="Vente en espèces" style={{ marginTop: 'var(--sp-3)' }}><Input type="text" inputMode="decimal" numeric value={f.gas_espece} onChange={e => set('gas_espece', e.target.value)} /></Field>
+          </FormSection>
+          <AlertBanner tone="ok" title="Marge" style={{ marginTop: 'var(--sp-4)' }}>Marge carburant estimée : <b>{fcfa(marge)}</b> ({settings.marge_unitaire} F/L)</AlertBanner>
+        </Panel>}
 
-        <div className="card">
-          <Step n="3" title="🔢 Relevés 16 h — obligatoire" />
-          <p className="hint">Index de chaque pompe à 16 h, avec sa photo (preuve). Ce relevé est <b>obligatoire</b>.</p>
-          <fieldset className="fieldset"><legend>Essence</legend>
-            <div className="row">{meterField('e1', 'Pompe E1')}{meterField('e2', 'Pompe E2')}</div>
-            <div className="row">{meterField('e3', 'Pompe E3')}{meterField('e4', 'Pompe E4')}</div>
-          </fieldset>
-          <fieldset className="fieldset"><legend>Gasoil</legend>
-            <div className="row">{meterField('g1', 'Pompe G1')}{meterField('g2', 'Pompe G2')}</div>
-            <div className="row">{meterField('g3', 'Pompe G3')}{meterField('g4', 'Pompe G4')}</div>
-          </fieldset>
-        </div>
+        <Panel>
+          <StepHead n="3" title="Relevés 16 h — obligatoire" />
+          <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)' }}>Index de chaque pompe à 16 h, avec sa photo (preuve). Ce relevé est <b>obligatoire</b>.</p>
+          <FormSection title="Essence">
+            <div style={{ display: 'flex', gap: 'var(--sp-4)', flexWrap: 'wrap' }}>{meterField('e1', 'Pompe E1')}{meterField('e2', 'Pompe E2')}</div>
+            <div style={{ display: 'flex', gap: 'var(--sp-4)', flexWrap: 'wrap', marginTop: 'var(--sp-3)' }}>{meterField('e3', 'Pompe E3')}{meterField('e4', 'Pompe E4')}</div>
+          </FormSection>
+          <FormSection title="Gasoil" style={{ marginTop: 'var(--sp-4)' }}>
+            <div style={{ display: 'flex', gap: 'var(--sp-4)', flexWrap: 'wrap' }}>{meterField('g1', 'Pompe G1')}{meterField('g2', 'Pompe G2')}</div>
+            <div style={{ display: 'flex', gap: 'var(--sp-4)', flexWrap: 'wrap', marginTop: 'var(--sp-3)' }}>{meterField('g3', 'Pompe G3')}{meterField('g4', 'Pompe G4')}</div>
+          </FormSection>
+        </Panel>
 
-        {!isPompiste && <div className="card">
-          <Step n="4" title="🔥 Gaz & autres ventes" />
-          <p className="hint">Bouteilles vendues aujourd'hui, et recettes en espèces des autres pôles.</p>
-          <fieldset className="fieldset"><legend>Bouteilles de gaz vendues</legend>
-            {GAZ.map(([k, lab]) => (
-              <div key={k} style={{ marginBottom: 8 }}><label>{lab}</label>
-                <Stepper value={f['gaz_vendu_' + k]} onChange={v => set('gaz_vendu_' + k, v)} /></div>
-            ))}
-          </fieldset>
-          <div className="row-3">
-            <div><label>Espèces gaz</label><input type="text" inputMode="decimal" value={f.gaz_espece} onChange={e => set('gaz_espece', e.target.value)} /></div>
-            <div><label>Espèces supérette</label><input type="text" inputMode="decimal" value={f.superette_espece} onChange={e => set('superette_espece', e.target.value)} /></div>
-            <div><label>Espèces lubrifiant</label><input type="text" inputMode="decimal" value={f.lubrifiant_espece} onChange={e => set('lubrifiant_espece', e.target.value)} /></div>
+        {!isPompiste && <Panel>
+          <StepHead n="4" title="Gaz &amp; autres ventes" />
+          <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)' }}>Bouteilles vendues aujourd'hui, et recettes en espèces des autres pôles.</p>
+          <FormSection title="Bouteilles de gaz vendues">
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-3)' }}>
+              {GAZ.map(([k, lab]) => (
+                <div key={k} style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-4)' }}>
+                  <span style={{ flex: 1, font: '400 13px/1 var(--font-ui)', color: 'var(--text-body)' }}>{lab}</span>
+                  <NumericStepper value={Number(f['gaz_vendu_' + k]) || 0} onChange={v => set('gaz_vendu_' + k, String(v))} suffix="b." />
+                </div>
+              ))}
+            </div>
+          </FormSection>
+          <div style={{ display: 'flex', gap: 'var(--sp-4)', flexWrap: 'wrap', marginTop: 'var(--sp-4)' }}>
+            <Field label="Espèces gaz" style={{ flex: '1 1 160px' }}><Input type="text" inputMode="decimal" numeric value={f.gaz_espece} onChange={e => set('gaz_espece', e.target.value)} /></Field>
+            <Field label="Espèces supérette" style={{ flex: '1 1 160px' }}><Input type="text" inputMode="decimal" numeric value={f.superette_espece} onChange={e => set('superette_espece', e.target.value)} /></Field>
+            <Field label="Espèces lubrifiant" style={{ flex: '1 1 160px' }}><Input type="text" inputMode="decimal" numeric value={f.lubrifiant_espece} onChange={e => set('lubrifiant_espece', e.target.value)} /></Field>
           </div>
-          <label>Total des bons en cours (cumul)</label><input type="text" inputMode="decimal" value={f.total_bon_cumul} onChange={e => set('total_bon_cumul', e.target.value)} />
-        </div>}
+          <Field label="Total des bons en cours (cumul)" style={{ marginTop: 'var(--sp-3)' }}><Input type="text" inputMode="decimal" numeric value={f.total_bon_cumul} onChange={e => set('total_bon_cumul', e.target.value)} /></Field>
+        </Panel>}
       </>)}
 
       {/* ---- RÉCEPTION COMMANDES : affichage PARTAGÉ avec « Commandes », à tout moment ---- */}
@@ -601,98 +598,110 @@ export default function Submit() {
 
       {/* ---- SOIR : ACHATS / DÉPENSES / VERSEMENTS ---- */}
       {show('soir') && !isPompiste && (<>
-        <div className="card">
-          <Step n="6" title="🛒 Achats hors carburant" />
-          <p className="hint">Gaz, lubrifiant, supérette, autre — avec fournisseur. (Le carburant se réceptionne via les commandes ci-dessus.)</p>
-          {deliveries.map((d, i) => (
-            <fieldset className="fieldset" key={i}>
-              <div className="row">
-                <div><label>Type</label>
-                  <select value={d.type || 'gaz'} onChange={e => upd(setDeliveries, i, 'type', e.target.value)}>
-                    <option value="gaz">Gaz</option><option value="lubrifiant">Lubrifiant</option>
-                    <option value="superette">Supérette</option><option value="autre">Autre</option></select></div>
-                <div><label>Quantité</label><input type="text" inputMode="decimal" value={d.quantite || ''} onChange={e => upd(setDeliveries, i, 'quantite', e.target.value)} /></div>
+        <Panel>
+          <StepHead n="6" title="Achats hors carburant" />
+          <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)' }}>Gaz, lubrifiant, supérette, autre — avec fournisseur. (Le carburant se réceptionne via les commandes ci-dessus.)</p>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-3)' }}>
+            {deliveries.map((d, i) => (
+              <div key={i} style={{ padding: 'var(--sp-4)', background: 'var(--surface-raised)', borderRadius: 'var(--radius-1)', border: '1px solid var(--border-hairline)', display: 'flex', flexDirection: 'column', gap: 'var(--sp-3)' }}>
+                <div style={{ display: 'flex', gap: 'var(--sp-4)', flexWrap: 'wrap' }}>
+                  <Field label="Type" style={{ flex: '1 1 160px' }}>
+                    <Select value={d.type || 'gaz'} onChange={e => upd(setDeliveries, i, 'type', e.target.value)} style={{ width: '100%' }}
+                      options={[{ value: 'gaz', label: 'Gaz' }, { value: 'lubrifiant', label: 'Lubrifiant' }, { value: 'superette', label: 'Supérette' }, { value: 'autre', label: 'Autre' }]} />
+                  </Field>
+                  <Field label="Quantité" style={{ flex: '1 1 140px' }}><Input type="text" inputMode="decimal" numeric value={d.quantite || ''} onChange={e => upd(setDeliveries, i, 'quantite', e.target.value)} /></Field>
+                </div>
+                <div style={{ display: 'flex', gap: 'var(--sp-4)', flexWrap: 'wrap' }}>
+                  <Field label="Unité" style={{ flex: '1 1 160px' }}>
+                    <Select value={d.unite || 'litres'} onChange={e => upd(setDeliveries, i, 'unite', e.target.value)} style={{ width: '100%' }}
+                      options={[{ value: 'litres', label: 'litres' }, { value: 'bouteilles', label: 'bouteilles' }, { value: 'cartons', label: 'cartons' }, { value: 'unité', label: 'unité' }]} />
+                  </Field>
+                  <Field label="Coût total" style={{ flex: '1 1 140px' }}><Input type="text" inputMode="decimal" numeric value={d.montant || ''} onChange={e => upd(setDeliveries, i, 'montant', e.target.value)} /></Field>
+                </div>
+                <Field label={`Fournisseur${(d.type === 'essence' || d.type === 'gasoil') ? ' (carburant : fournisseur unique)' : ''}`}>
+                  {suppliers.length > 0
+                    ? <Select value={d.supplier_id || ''} onChange={e => upd(setDeliveries, i, 'supplier_id', e.target.value)} style={{ width: '100%' }}
+                        options={[{ value: '', label: '— choisir —' }, ...suppliers.map(s => ({ value: s.id, label: `${s.nom} (${s.categorie})` }))]} />
+                    : <Input value={d.fournisseur || ''} onChange={e => upd(setDeliveries, i, 'fournisseur', e.target.value)} placeholder="nom du fournisseur" />}
+                </Field>
+                <Button size="sm" tone="danger" onClick={() => rm(setDeliveries, i)} style={{ alignSelf: 'flex-start' }}>Retirer</Button>
               </div>
-              <div className="row">
-                <div><label>Unité</label><select value={d.unite || 'litres'} onChange={e => upd(setDeliveries, i, 'unite', e.target.value)}>
-                  <option>litres</option><option>bouteilles</option><option>cartons</option><option>unité</option></select></div>
-                <div><label>Coût total</label><input type="text" inputMode="decimal" value={d.montant || ''} onChange={e => upd(setDeliveries, i, 'montant', e.target.value)} /></div>
-              </div>
-              <label>Fournisseur {(d.type === 'essence' || d.type === 'gasoil') ? '(carburant : fournisseur unique)' : ''}</label>
-              {suppliers.length > 0
-                ? <select value={d.supplier_id || ''} onChange={e => upd(setDeliveries, i, 'supplier_id', e.target.value)}>
-                    <option value="">— choisir —</option>{suppliers.map(s => <option key={s.id} value={s.id}>{s.nom} ({s.categorie})</option>)}</select>
-                : <input value={d.fournisseur || ''} onChange={e => upd(setDeliveries, i, 'fournisseur', e.target.value)} placeholder="nom du fournisseur" />}
-              <button className="btn sec small" style={{ marginTop: 8 }} onClick={() => rm(setDeliveries, i)}>Retirer</button>
-            </fieldset>
-          ))}
-          <button className="addbtn" onClick={() => setDeliveries(p => [...p, { type: 'gaz', unite: 'bouteilles' }])}>+ Ajouter un achat</button>
-        </div>
+            ))}
+          </div>
+          <Button onClick={() => setDeliveries(p => [...p, { type: 'gaz', unite: 'bouteilles' }])} style={{ marginTop: 'var(--sp-4)' }}>+ Ajouter un achat</Button>
+        </Panel>
 
-        <div className="card">
-          <Step n="7" title="💸 Dépenses en espèces" />
-          <p className="hint">Argent sorti de la caisse (électricité SBEE, achats…). Coche « justificatif » si tu as le reçu.</p>
-          {expenses.map((e, i) => (
-            <fieldset className="fieldset" key={i}>
-              <div className="row">
-                <div><label>Type</label><select value={e.categorie || 'SBEE'} onChange={ev => upd(setExpenses, i, 'categorie', ev.target.value)}>
-                  <option value="SBEE">SBEE</option><option value="SUPERETTE">SUPERETTE</option><option value="CARBURANT">Carburant / déplacement (propriétaire)</option><option value="AUTRE">AUTRE</option></select></div>
-                <div><label>Montant</label><input type="text" inputMode="decimal" value={e.montant || ''} onChange={ev => upd(setExpenses, i, 'montant', ev.target.value)} /></div>
+        <Panel>
+          <StepHead n="7" title="Dépenses en espèces" />
+          <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)' }}>Argent sorti de la caisse (électricité SBEE, achats…). Ajoute le justificatif si tu l'as.</p>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-3)' }}>
+            {expenses.map((e, i) => (
+              <div key={i} style={{ padding: 'var(--sp-4)', background: 'var(--surface-raised)', borderRadius: 'var(--radius-1)', border: '1px solid var(--border-hairline)', display: 'flex', flexDirection: 'column', gap: 'var(--sp-3)' }}>
+                <div style={{ display: 'flex', gap: 'var(--sp-4)', flexWrap: 'wrap' }}>
+                  <Field label="Type" style={{ flex: '1 1 200px' }}>
+                    <Select value={e.categorie || 'SBEE'} onChange={ev => upd(setExpenses, i, 'categorie', ev.target.value)} style={{ width: '100%' }}
+                      options={[{ value: 'SBEE', label: 'SBEE' }, { value: 'SUPERETTE', label: 'SUPERETTE' }, { value: 'CARBURANT', label: 'Carburant / déplacement (propriétaire)' }, { value: 'AUTRE', label: 'AUTRE' }]} />
+                  </Field>
+                  <Field label="Montant" style={{ flex: '1 1 140px' }}><Input type="text" inputMode="decimal" numeric value={e.montant || ''} onChange={ev => upd(setExpenses, i, 'montant', ev.target.value)} /></Field>
+                </div>
+                <Field label="Motif"><Input value={e.motif || ''} onChange={ev => upd(setExpenses, i, 'motif', ev.target.value)} placeholder="ex : recharge électricité" /></Field>
+                {(e.categorie || '').toUpperCase() === 'CARBURANT' ? (
+                  <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', margin: 0 }}>Prélèvement carburant du propriétaire : <b>charge non-cash</b> (aucun paiement en espèces). Pas de reçu requis ; remonte chaque mois au Point financier sous « Carburant / déplacement (auto) » et n'est pas décompté du cash à verser.</p>
+                ) : (<>
+                  <Field label="Photo du justificatif (obligatoire)">
+                    <Input type="file" accept="image/*" capture="environment" onChange={ev => upd(setExpenses, i, '_file', ev.target.files[0])} />
+                  </Field>
+                  {e.photo_path && !e._file && <p style={{ font: '400 12px/1 var(--font-ui)', color: 'var(--text-muted)', margin: 0 }}>Justificatif enregistré ✓</p>}
+                  {e._file && <p style={{ font: '400 12px/1 var(--font-ui)', color: 'var(--text-muted)', margin: 0 }}>✓ {e._file.name}</p>}
+                </>)}
+                <Button size="sm" tone="danger" onClick={() => rm(setExpenses, i)} style={{ alignSelf: 'flex-start' }}>Retirer</Button>
               </div>
-              <label>Motif</label><input value={e.motif || ''} onChange={ev => upd(setExpenses, i, 'motif', ev.target.value)} placeholder="ex : recharge électricité" />
-              {(e.categorie || '').toUpperCase() === 'CARBURANT' ? (
-                <p className="hint" style={{ marginTop: 6 }}>🚗 Prélèvement carburant du propriétaire : <b>charge non-cash</b> (aucun paiement en espèces). Pas de reçu requis ; remonte chaque mois au Point financier sous « Carburant / déplacement (auto) » et n'est pas décompté du cash à verser.</p>
-              ) : (<>
-                <label>📷 Photo du justificatif (obligatoire)</label>
-                <input type="file" accept="image/*" capture="environment" onChange={ev => upd(setExpenses, i, '_file', ev.target.files[0])} />
-                {e.photo_path && !e._file && <p className="muted" style={{ fontSize: 12 }}>Justificatif enregistré ✓</p>}
-                {e._file && <p className="muted" style={{ fontSize: 12 }}>✓ {e._file.name}</p>}
-              </>)}
-              <button className="btn sec small" style={{ marginTop: 8 }} onClick={() => rm(setExpenses, i)}>Retirer</button>
-            </fieldset>
-          ))}
-          <button className="addbtn" onClick={() => setExpenses(p => [...p, { categorie: 'SBEE', montant: '' }])}>+ Ajouter une dépense</button>
-        </div>
+            ))}
+          </div>
+          <Button onClick={() => setExpenses(p => [...p, { categorie: 'SBEE', montant: '' }])} style={{ marginTop: 'var(--sp-4)' }}>+ Ajouter une dépense</Button>
+        </Panel>
 
-        <div className="card">
-          <Step n="8" title="🏦 Versement en banque" />
-          <p className="hint">Prends la photo du bordereau juste après le dépôt. Un versement peut couvrir <b>plusieurs jours de recette</b> : indique la <b>période concernée</b> (du… au…). Le système additionnera les recettes de cette période pour vérifier que ça correspond.</p>
-          {deposits.map((d, i) => (
-            <fieldset className="fieldset" key={i}>
-              <div className="row">
-                <div><label>Source (pôle) *</label><select value={d.pole || 'carburant'} onChange={ev => upd(setDeposits, i, 'pole', ev.target.value)}>
-                  <option value="carburant">Carburant</option><option value="gaz_lubrifiant">Gaz + Lubrifiant</option><option value="gaz">Gaz seul</option><option value="lubrifiant">Lubrifiant seul</option><option value="superette">Supérette</option></select></div>
-                <div><label>Montant versé *</label><input type="text" inputMode="decimal" value={d.montant || ''} onChange={ev => upd(setDeposits, i, 'montant', ev.target.value)} /></div>
+        <Panel>
+          <StepHead n="8" title="Versement en banque" />
+          <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)' }}>Prends la photo du bordereau juste après le dépôt. Un versement peut couvrir <b>plusieurs jours de recette</b> : indique la <b>période concernée</b> (du… au…). Le système additionnera les recettes de cette période pour vérifier que ça correspond.</p>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-3)' }}>
+            {deposits.map((d, i) => (
+              <div key={i} style={{ padding: 'var(--sp-4)', background: 'var(--surface-raised)', borderRadius: 'var(--radius-1)', border: '1px solid var(--border-hairline)', display: 'flex', flexDirection: 'column', gap: 'var(--sp-3)' }}>
+                <div style={{ display: 'flex', gap: 'var(--sp-4)', flexWrap: 'wrap' }}>
+                  <Field label="Source (pôle) *" style={{ flex: '1 1 180px' }}>
+                    <Select value={d.pole || 'carburant'} onChange={ev => upd(setDeposits, i, 'pole', ev.target.value)} style={{ width: '100%' }}
+                      options={[{ value: 'carburant', label: 'Carburant' }, { value: 'gaz_lubrifiant', label: 'Gaz + Lubrifiant' }, { value: 'gaz', label: 'Gaz seul' }, { value: 'lubrifiant', label: 'Lubrifiant seul' }, { value: 'superette', label: 'Supérette' }]} />
+                  </Field>
+                  <Field label="Montant versé *" style={{ flex: '1 1 140px' }}><Input type="text" inputMode="decimal" numeric value={d.montant || ''} onChange={ev => upd(setDeposits, i, 'montant', ev.target.value)} /></Field>
+                </div>
+                <div style={{ display: 'flex', gap: 'var(--sp-4)', flexWrap: 'wrap' }}>
+                  <Field label="Période concernée — du *" style={{ flex: '1 1 160px' }}><Input type="date" max={date} value={d.periode_debut || ''} onChange={ev => upd(setDeposits, i, 'periode_debut', ev.target.value)} /></Field>
+                  <Field label="… au *" style={{ flex: '1 1 160px' }}><Input type="date" max={date} value={d.periode_fin || ''} onChange={ev => upd(setDeposits, i, 'periode_fin', ev.target.value)} /></Field>
+                </div>
+                {d.periode_debut && d.periode_fin && d.periode_debut !== d.periode_fin &&
+                  <p style={{ font: '400 12px/1 var(--font-ui)', color: 'var(--text-muted)', margin: 0 }}>Versement cumulé sur {frDate(d.periode_debut)} → {frDate(d.periode_fin)}</p>}
+                <Field label="Photo du bordereau *">
+                  <Input type="file" accept="image/*" capture="environment" onChange={ev => upd(setDeposits, i, '_file', ev.target.files[0])} />
+                </Field>
+                {d.photo_path && !d._file && <p style={{ font: '400 12px/1 var(--font-ui)', color: 'var(--text-muted)', margin: 0 }}>Photo déjà enregistrée ✓</p>}
+                <Button size="sm" tone="danger" onClick={() => rm(setDeposits, i)} style={{ alignSelf: 'flex-start' }}>Retirer</Button>
               </div>
-              <div className="row">
-                <div><label>📅 Période concernée — du *</label>
-                  <input type="date" max={date} value={d.periode_debut || ''} onChange={ev => upd(setDeposits, i, 'periode_debut', ev.target.value)} /></div>
-                <div><label>… au *</label>
-                  <input type="date" max={date} value={d.periode_fin || ''} onChange={ev => upd(setDeposits, i, 'periode_fin', ev.target.value)} /></div>
-              </div>
-              {d.periode_debut && d.periode_fin && d.periode_debut !== d.periode_fin &&
-                <p className="muted" style={{ fontSize: 12 }}>↩︎ Versement cumulé sur {frDate(d.periode_debut)} → {frDate(d.periode_fin)}</p>}
-              <label>📷 Photo du bordereau *</label>
-              <input type="file" accept="image/*" capture="environment" onChange={ev => upd(setDeposits, i, '_file', ev.target.files[0])} />
-              {d.photo_path && !d._file && <p className="muted" style={{ fontSize: 12 }}>Photo déjà enregistrée ✓</p>}
-              <button className="btn sec small" style={{ marginTop: 8 }} onClick={() => rm(setDeposits, i)}>Retirer</button>
-            </fieldset>
-          ))}
-          <button className="addbtn" onClick={() => setDeposits(p => [...p, { pole: 'carburant', periode_debut: date, periode_fin: date }])}>+ Ajouter un versement</button>
-        </div>
+            ))}
+          </div>
+          <Button onClick={() => setDeposits(p => [...p, { pole: 'carburant', periode_debut: date, periode_fin: date }])} style={{ marginTop: 'var(--sp-4)' }}>+ Ajouter un versement</Button>
+        </Panel>
       </>)}
 
       {/* ---- RÉCAP + ENREGISTRER ---- */}
-      <div className="card" style={{ position: 'sticky', bottom: 0, boxShadow: '0 -2px 12px rgba(0,0,0,.08)' }}>
-        <div className="grid kpis">
-          <Sum label="Recette espèces (jour)" v={cashDeclare} />
-          <Sum label="Dépenses (jour)" v={totDepense} />
-          <Sum label="À verser (jour)" v={aVerser} strong />
-          <Sum label="Versé saisi ce jour" v={totVerse} />
+      <div style={{ position: 'sticky', bottom: 0, background: 'var(--surface-panel)', border: 'var(--border-panel)', borderRadius: 'var(--radius-1)', padding: 'var(--gutter-panel)', boxShadow: '0 -4px 16px rgba(0,0,0,.12)', display: 'flex', flexDirection: 'column', gap: 'var(--sp-4)' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 'var(--sp-4)' }}>
+          <MetricTile label="Recette espèces (jour)" value={fcfa(cashDeclare)} />
+          <MetricTile label="Dépenses (jour)" value={fcfa(totDepense)} />
+          <MetricTile label="À verser (jour)" value={fcfa(aVerser)} status="accent" />
+          <MetricTile label="Versé saisi ce jour" value={fcfa(totVerse)} />
         </div>
-        <p className="hint" style={{ marginTop: 8 }}>ℹ️ Un versement peut couvrir plusieurs jours : l'écart réel (recette − versé) est calculé <b>par pôle et par période</b> côté administration, pas ici.</p>
-        <div style={{ height: 10 }} />
-        <button className="btn big-save" onClick={save} disabled={busy || locked}>{busy ? 'Enregistrement…' : locked ? '🔒 Verrouillé' : `✅ Envoyer (${momentLabel(moment)})`}</button>
+        <p style={{ font: '400 11px/1.4 var(--font-ui)', color: 'var(--text-muted)', margin: 0 }}>Un versement peut couvrir plusieurs jours : l'écart réel (recette − versé) est calculé <b>par pôle et par période</b> côté administration, pas ici.</p>
+        <Button tone="primary" block onClick={save} disabled={busy || locked}>{busy ? 'Enregistrement…' : locked ? 'Verrouillé' : `Envoyer (${momentLabel(moment)})`}</Button>
       </div>
     </div>
   )
@@ -705,20 +714,29 @@ function defaultMoment() { const h = new Date().getHours(); return h < 12 ? 'mat
 function daysAgoIso(n) { const d = new Date(); d.setDate(d.getDate() - n); return d.toISOString().slice(0, 10) }
 function momentLabel(m) { return m === 'matin' ? 'Matin' : m === 'apres-midi' ? '16 h' : m === 'soir' ? 'Soir' : m }
 
-function Tile({ emo, t, d, active, onClick }) {
-  return (<div className={'moment-tile' + (active ? ' active' : '')} onClick={onClick}>
-    <div className="emo">{emo}</div><div className="t">{t}</div><div className="d">{d}</div></div>)
+function MomentTile({ icon, t, d, active, onClick }) {
+  return (
+    <div onClick={onClick} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 'var(--sp-2)', padding: 'var(--sp-4)', textAlign: 'center', cursor: 'pointer',
+      background: active ? 'var(--accent-quiet)' : 'var(--surface-raised)', border: '1px solid ' + (active ? 'var(--accent)' : 'var(--border-default)'), borderRadius: 'var(--radius-1)', transition: 'var(--t-control)' }}>
+      <Icon name={icon} size={18} color={active ? 'var(--accent)' : 'var(--text-muted)'} />
+      <div style={{ font: 'var(--fw-semibold) 12px/1.2 var(--font-ui)', color: active ? 'var(--accent)' : 'var(--text-primary)' }}>{t}</div>
+      <div style={{ font: '400 11px/1.2 var(--font-ui)', color: 'var(--text-muted)' }}>{d}</div>
+    </div>
+  )
 }
-function Step({ n, title }) { return (<div className="step-head"><div className="step-num">{n}</div><h2>{title}</h2></div>) }
-function Stepper({ value, onChange }) {
-  const dec = () => onChange(String(Math.max(0, (Number(value) || 0) - 1)))
-  const inc = () => onChange(String((Number(value) || 0) + 1))
-  return (<div className="stepper">
-    <button type="button" onClick={dec}>−</button>
-    <input type="text" inputMode="numeric" value={value} placeholder="0" onChange={e => onChange(e.target.value)} />
-    <button type="button" onClick={inc}>+</button></div>)
+function StepHead({ n, title }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-4)', marginBottom: 'var(--sp-3)' }}>
+      <span style={{ width: 24, height: 24, borderRadius: '50%', background: 'var(--accent-quiet)', color: 'var(--accent)', display: 'flex', alignItems: 'center', justifyContent: 'center', flex: '0 0 auto', font: 'var(--fw-semibold) 12px/1 var(--font-data)' }}>{n}</span>
+      <h2 style={{ font: 'var(--fw-semibold) 14px/1.2 var(--font-ui)', color: 'var(--text-primary)', margin: 0 }}>{title}</h2>
+    </div>
+  )
 }
-function Sum({ label, v, strong, danger }) {
-  return (<div className="kpi"><div className="label">{label}</div>
-    <div className="value" style={{ fontSize: 18, color: danger ? 'var(--danger)' : strong ? 'var(--primary)' : 'inherit' }}>{fcfa(v)}</div></div>)
+function FormSection({ title, children, style }) {
+  return (
+    <div style={{ padding: 'var(--sp-4)', background: 'var(--surface-raised)', borderRadius: 'var(--radius-1)', border: '1px solid var(--border-hairline)', ...style }}>
+      <div style={{ font: 'var(--fw-semibold) 11px/1 var(--font-ui)', textTransform: 'uppercase', letterSpacing: 'var(--ls-label)', color: 'var(--text-muted)', marginBottom: 'var(--sp-3)' }}>{title}</div>
+      {children}
+    </div>
+  )
 }

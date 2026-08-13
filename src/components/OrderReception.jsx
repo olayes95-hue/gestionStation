@@ -3,12 +3,21 @@ import { supabase, BORDEREAUX_BUCKET } from '../lib/supabase'
 import { useAuth } from '../lib/auth.jsx'
 import { numFR, today } from '../lib/format'
 import { compressImage } from '../lib/image'
+import { ORDER_STATUS_TONES } from '../lib/tones'
+import { Panel } from '../ds/octane/components/core/Panel.jsx'
+import { Button } from '../ds/octane/components/core/Button.jsx'
+import { Badge } from '../ds/octane/components/core/Badge.jsx'
+import { Tag } from '../ds/octane/components/core/Tag.jsx'
+import { Field } from '../ds/octane/components/forms/Field.jsx'
+import { Input } from '../ds/octane/components/forms/Input.jsx'
+import { Checkbox } from '../ds/octane/components/forms/Checkbox.jsx'
+import { AlertBanner } from '../ds/octane/components/feedback/AlertBanner.jsx'
+import { EvidenceUpload } from '../ds/octane/components/evidence/EvidenceUpload.jsx'
 
 // Affichage UNIQUE des commandes à réceptionner (statut lancée / partielle),
 // partagé par « Saisie du jour » et « Commandes » → strictement identique.
 const N = (v) => (v ? (numFR(v) ?? 0) : 0)
-const CAT_LABELS = { carburant: '⛽ Carburant', gaz: '🔥 Gaz', lubrifiant: '🛢️ Lubrifiant', superette: '🛒 Supérette' }
-const STATUTS = { lancee: { label: 'Lancée', color: '#8e44ad' }, partielle: { label: 'Partielle', color: '#d68910' } }
+const CAT_LABELS = { carburant: 'Carburant', gaz: 'Gaz', lubrifiant: 'Lubrifiant', superette: 'Supérette' }
 
 export default function OrderReception({ stationId, date, settings = {}, onDone }) {
   const { session } = useAuth()
@@ -80,60 +89,59 @@ export default function OrderReception({ stationId, date, settings = {}, onDone 
       }
       if (photo_path) await supabase.from('attachments').insert({ station_id: stationId, report_date: day, categorie: 'reception', note: `${o.produit || o.categorie} — reçu ${recu} / ${N(o.quantite_commandee)}`, photo_path, created_by: session.user.id })
       setRecv(p => ({ ...p, [o.id]: undefined }))
-      flash(complet ? '✅ Commande soldée — stock mis à jour' : `Réception partielle ✓ (${total.toLocaleString('fr-FR')}/${N(o.quantite_commandee).toLocaleString('fr-FR')})`)
+      flash(complet ? 'Commande soldée — stock mis à jour' : `Réception partielle (${total.toLocaleString('fr-FR')}/${N(o.quantite_commandee).toLocaleString('fr-FR')})`)
       await load(); onDone && onDone()
     } catch (e) { setErr(e.message || String(e)) }
   }
 
   if (!stationId || !orders.length) return null
   return (
-    <div className="card">
-      <h2>🚚 Commandes à réceptionner ({orders.length})</h2>
-      {err && <div className="err">{err}</div>}
-      {msg && <div className="ok">{msg}</div>}
-      {orders.map(o => {
-        const cat = o.categorie || 'carburant'
-        const st = STATUTS[o.statut] || { label: o.statut, color: '#666' }
-        const t = totals[o.id] || {}; const deja = N(t.quantite_recue_total)
-        const reste = Math.max(N(o.quantite_commandee) - deja, 0)
-        const r = recv[o.id]
-        return (
-          <fieldset className="fieldset" key={o.id}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-              <b>{CAT_LABELS[cat] || cat} — {cat === 'superette' ? (o.lignes || []).length + ' article(s)' : `${o.produit} ${N(o.quantite_commandee) ? N(o.quantite_commandee).toLocaleString('fr-FR') : ''}`}</b>
-              <span className="badge" style={{ background: st.color }}>{st.label}</span>
-            </div>
-            {cat === 'superette' && o.lignes && <div style={{ fontSize: 13, marginTop: 4 }}>{o.lignes.map(l => `${l.article} ×${l.qte}`).join(' · ')}</div>}
-            {deja > 0 && <div style={{ marginTop: 4 }}><span className="pill">Reçu {deja.toLocaleString('fr-FR')} / {N(o.quantite_commandee).toLocaleString('fr-FR')} · reste {reste.toLocaleString('fr-FR')}</span></div>}
-            {!r
-              ? <div><button className="btn small" style={{ marginTop: 8 }} onClick={() => setRecv(p => ({ ...p, [o.id]: { cuve_avant: '', cuve_apres: '', date: date || today(), quantite_recue: reste ? String(reste) : '' } }))}>📥 Réceptionner{deja > 0 ? ' (suite)' : ''}</button></div>
-              : <div style={{ marginTop: 8 }}>
-                  <label>Quantité reçue cette fois *</label>
-                  <input type="text" inputMode="decimal" value={r.quantite_recue || ''} onChange={e => setRecv(p => ({ ...p, [o.id]: { ...r, quantite_recue: e.target.value } }))} />
-                  {cat === 'carburant' && <div className="row" style={{ marginTop: 8 }}>
-                    <div><label>Cuve AVANT (L)</label><input type="text" inputMode="decimal" value={r.cuve_avant} onChange={e => setRecv(p => ({ ...p, [o.id]: { ...r, cuve_avant: e.target.value } }))} /></div>
-                    <div><label>Cuve APRÈS (L)</label><input type="text" inputMode="decimal" value={r.cuve_apres} onChange={e => setRecv(p => ({ ...p, [o.id]: { ...r, cuve_apres: e.target.value } }))} /></div>
+    <Panel title="Commandes à réceptionner" meta={`${orders.length}`}>
+      {err && <AlertBanner tone="alarm" title="Erreur" style={{ marginBottom: 'var(--sp-4)' }}>{err}</AlertBanner>}
+      {msg && <AlertBanner tone="ok" title="Succès" style={{ marginBottom: 'var(--sp-4)' }}>{msg}</AlertBanner>}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-4)' }}>
+        {orders.map(o => {
+          const cat = o.categorie || 'carburant'
+          const st = ORDER_STATUS_TONES[o.statut] || { label: o.statut, tone: 'idle' }
+          const t = totals[o.id] || {}; const deja = N(t.quantite_recue_total)
+          const reste = Math.max(N(o.quantite_commandee) - deja, 0)
+          const r = recv[o.id]
+          return (
+            <div key={o.id} style={{ padding: 'var(--sp-4)', background: 'var(--surface-raised)', borderRadius: 'var(--radius-1)', border: '1px solid var(--border-hairline)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 'var(--sp-3)', flexWrap: 'wrap' }}>
+                <b style={{ font: 'var(--fw-semibold) 13px/1.2 var(--font-ui)', color: 'var(--text-primary)' }}>
+                  {CAT_LABELS[cat] || cat} — {cat === 'superette' ? (o.lignes || []).length + ' article(s)' : `${o.produit} ${N(o.quantite_commandee) ? N(o.quantite_commandee).toLocaleString('fr-FR') : ''}`}
+                </b>
+                <Badge tone={st.tone}>{st.label}</Badge>
+              </div>
+              {cat === 'superette' && o.lignes && <div style={{ font: '400 13px/1.4 var(--font-ui)', color: 'var(--text-body)', marginTop: 'var(--sp-2)' }}>{o.lignes.map(l => `${l.article} ×${l.qte}`).join(' · ')}</div>}
+              {deja > 0 && <div style={{ marginTop: 'var(--sp-3)' }}><Tag>Reçu {deja.toLocaleString('fr-FR')} / {N(o.quantite_commandee).toLocaleString('fr-FR')} · reste {reste.toLocaleString('fr-FR')}</Tag></div>}
+              {!r
+                ? <Button size="sm" style={{ marginTop: 'var(--sp-3)' }} onClick={() => setRecv(p => ({ ...p, [o.id]: { cuve_avant: '', cuve_apres: '', date: date || today(), quantite_recue: reste ? String(reste) : '' } }))}>Réceptionner{deja > 0 ? ' (suite)' : ''}</Button>
+                : <div style={{ marginTop: 'var(--sp-3)', display: 'flex', flexDirection: 'column', gap: 'var(--sp-3)' }}>
+                    <Field label="Quantité reçue cette fois *">
+                      <Input type="text" inputMode="decimal" numeric value={r.quantite_recue || ''} onChange={e => setRecv(p => ({ ...p, [o.id]: { ...r, quantite_recue: e.target.value } }))} />
+                    </Field>
+                    {cat === 'carburant' && <div style={{ display: 'flex', gap: 'var(--sp-3)' }}>
+                      <Field label="Cuve AVANT (L)"><Input type="text" inputMode="decimal" numeric value={r.cuve_avant} onChange={e => setRecv(p => ({ ...p, [o.id]: { ...r, cuve_avant: e.target.value } }))} /></Field>
+                      <Field label="Cuve APRÈS (L)"><Input type="text" inputMode="decimal" numeric value={r.cuve_apres} onChange={e => setRecv(p => ({ ...p, [o.id]: { ...r, cuve_apres: e.target.value } }))} /></Field>
+                    </div>}
+                    <Field label="Date de réception">
+                      <Input type="date" value={r.date || today()} max={today()} onChange={e => setRecv(p => ({ ...p, [o.id]: { ...r, date: e.target.value } }))} />
+                    </Field>
+                    {r.warnEcart && (
+                      <AlertBanner tone="warn" title="Écart détecté">
+                        {r.warnEcart}
+                        <Checkbox label="Forcer (c'est correct malgré tout)" checked={!!r.forceEcart} onChange={v => setRecv(p => ({ ...p, [o.id]: { ...r, forceEcart: v, warnEcart: v ? '' : r.warnEcart } }))} style={{ marginTop: 'var(--sp-3)' }} />
+                      </AlertBanner>
+                    )}
+                    <EvidenceUpload label={r._file ? r._file.name : 'Photo (bon de livraison) — facultatif'} multiple={false} onFiles={files => setRecv(p => ({ ...p, [o.id]: { ...r, _file: files[0] } }))} />
+                    <Button size="sm" tone="primary" onClick={() => receptionner(o)} style={{ alignSelf: 'flex-start' }}>Valider la réception</Button>
                   </div>}
-                  <label style={{ marginTop: 8, display: 'block' }}>Date de réception</label>
-                  <input type="date" value={r.date || today()} max={today()} onChange={e => setRecv(p => ({ ...p, [o.id]: { ...r, date: e.target.value } }))} />
-                  {r.warnEcart && (
-                    <div className="err" style={{ marginTop: 8 }}>
-                      ⚠️ {r.warnEcart}
-                      <label style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 8 }}>
-                        <input type="checkbox" checked={!!r.forceEcart} onChange={e => setRecv(p => ({ ...p, [o.id]: { ...r, forceEcart: e.target.checked, warnEcart: e.target.checked ? '' : r.warnEcart } }))} />
-                        Forcer (c'est correct malgré tout)
-                      </label>
-                    </div>
-                  )}
-                  <label style={{ display: 'flex', alignItems: 'center', gap: 6, margin: '8px 0 0', fontSize: 12.5, color: 'var(--primary)', cursor: 'pointer' }}>
-                    📷 {r._file ? '✓ photo (bon de livraison)' : 'Photo (bon de livraison) — facultatif'}
-                    <input type="file" accept="image/*" capture="environment" style={{ display: 'none' }} onChange={e => setRecv(p => ({ ...p, [o.id]: { ...r, _file: e.target.files[0] } }))} />
-                  </label>
-                  <div><button className="btn small" style={{ marginTop: 8 }} onClick={() => receptionner(o)}>Valider la réception</button></div>
-                </div>}
-          </fieldset>
-        )
-      })}
-    </div>
+            </div>
+          )
+        })}
+      </div>
+    </Panel>
   )
 }
