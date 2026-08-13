@@ -24,8 +24,10 @@ export default function AlertsPage() {
   const [alerts, setAlerts] = useState([])
   const [dismissed, setDismissed] = useState(new Set())
   const [type, setType] = useState('all')
-  const [year, setYear] = useState('all')
-  const [month, setMonth] = useState('all')
+  // Par défaut, mois en cours (pas le dernier mois avec des alertes, qui peut être ancien).
+  const today = new Date().toISOString().slice(0, 10)
+  const [year, setYear] = useState(today.slice(0, 4))
+  const [month, setMonth] = useState(today.slice(5, 7))
   const [showDismissed, setShowDismissed] = useState(false)
   const [loading, setLoading] = useState(true)
 
@@ -51,15 +53,8 @@ export default function AlertsPage() {
     setDismissed(p => { const n = new Set(p); n.delete(key(a)); return n })
   }
 
-  const years = useMemo(() => [...new Set(alerts.map(a => a.report_date.slice(0, 4)))].sort(), [alerts])
+  const years = useMemo(() => [...new Set([...alerts.map(a => a.report_date.slice(0, 4)), today.slice(0, 4)])].sort(), [alerts])
   const types = useMemo(() => [...new Set(alerts.map(a => a.type))], [alerts])
-  const [inited, setInited] = useState(false)
-  useEffect(() => {
-    if (!inited && alerts.length) {
-      const d = alerts.map(a => a.report_date).sort().at(-1)
-      setYear(d.slice(0, 4)); setMonth(d.slice(5, 7)); setInited(true)
-    }
-  }, [alerts, inited])
 
   const active = alerts.filter(a => !dismissed.has(key(a)))
   const nbActive = active.length

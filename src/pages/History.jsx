@@ -34,30 +34,48 @@ export default function History() {
   const nav = useNavigate()
   const [rows, setRows] = useState([])
   const [recon, setRecon] = useState({})   // recon[date][pole_groupe] (v_pole_recon_jour)
-  const [photoDates, setPhotoDates] = useState(new Set())
+  const [attCompteurByDate, setAttCompteurByDate] = useState({})   // {date: nb photos compteur}
+  const [expByDate, setExpByDate] = useState({})   // {date: [{montant,non_cash,photo_path}]}
+  const [depByDate, setDepByDate] = useState({})   // {date: [{montant,photo_path}]}
   const [loading, setLoading] = useState(true)
-  const [year, setYear] = useState('all')
-  const [month, setMonth] = useState('all')
-  const [quickFilter, setQuickFilter] = useState('tous')   // tous | ecarts | sans-photo (filtre les LIGNES)
+  // Par défaut, mois en cours — pas le dernier mois avec des données (qui pouvait être ancien
+  // si la station n'a rien saisi récemment, masquant justement les jours en attente/incomplets).
+  const today = new Date().toISOString().slice(0, 10)
+  const [year, setYear] = useState(today.slice(0, 4))
+  const [month, setMonth] = useState(today.slice(5, 7))
+  const [quickFilter, setQuickFilter] = useState('tous')   // tous | ecarts | attente | photos (filtre les LIGNES)
   const [poleFilter, setPoleFilter] = useState('tous')      // tous | carburant | gaz_lub | superette (filtre les COLONNES)
   const [detailDate, setDetailDate] = useState(null)
   const [detailExtra, setDetailExtra] = useState({ at: [], dep: [], exp: [], urls: {} })   // chargé à la demande, pour le seul jour ouvert
+  const nombreMachines = Math.min(10, Math.max(1, N(current?.nombre_machines) || 4))
 
   useEffect(() => { if (!stationId) return; (async () => {
     setLoading(true)
     // Borne d'historique (~20 mois) : évite de recalculer v_pole_recon_jour sur TOUT l'historique
-    // (3 lignes/jour × sous-requêtes imbriquées). Les 4 requêtes partent en parallèle (avant : en série).
+    // (3 lignes/jour × sous-requêtes imbriquées). Les 5 requêtes partent en parallèle (avant : en série).
     const CUTOFF = new Date(Date.now() - 600 * 864e5).toISOString().slice(0, 10)
-    const [m, cr, at, dp] = await Promise.all([
+    const [m, cr, at, exp, dep] = await Promise.all([
       supabase.from('v_report_metrics').select('*').eq('station_id', stationId).gte('report_date', CUTOFF).order('report_date', { ascending: false }).limit(600),
       supabase.from('v_pole_recon_jour').select('*').eq('station_id', stationId).gte('report_date', CUTOFF),
-      supabase.from('attachments').select('report_date').eq('station_id', stationId).gte('report_date', CUTOFF),
-      supabase.from('deposits').select('report_date').eq('station_id', stationId).not('photo_path', 'is', null).gte('report_date', CUTOFF),
+      supabase.from('attachments').select('report_date,categorie').eq('station_id', stationId).gte('report_date', CUTOFF),
+      supabase.from('expenses').select('report_date,montant,non_cash,photo_path').eq('station_id', stationId).gte('report_date', CUTOFF),
+      supabase.from('deposits').select('report_date,montant,photo_path').eq('station_id', stationId).gte('report_date', CUTOFF),
     ])
     setRows(m.data || [])
     const cmap = {}; for (const c of (cr.data || [])) { (cmap[c.report_date] = cmap[c.report_date] || {})[c.pole_groupe] = c }
     setRecon(cmap)
-    setPhotoDates(new Set([...(at.data || []), ...(dp.data || [])].map(x => x.report_date)))
+    // Un jour "avec photos" ne veut rien dire en soi (il suffit d'UNE photo, même hors sujet, pour
+    // que ce soit vrai) — ce qui compte, c'est que CHAQUE preuve exigée soit là : une photo par
+    // compteur rempli, un justificatif par dépense cash, un bordereau par versement.
+    const attMap = {}
+    for (const a of (at.data || [])) { if (a.categorie === 'compteur') attMap[a.report_date] = (attMap[a.report_date] || 0) + 1 }
+    setAttCompteurByDate(attMap)
+    const expMap = {}
+    for (const e of (exp.data || [])) { (expMap[e.report_date] = expMap[e.report_date] || []).push(e) }
+    setExpByDate(expMap)
+    const depMap = {}
+    for (const d of (dep.data || [])) { (depMap[d.report_date] = depMap[d.report_date] || []).push(d) }
+    setDepByDate(depMap)
     setLoading(false)
   })() }, [stationId])
 
@@ -85,15 +103,8 @@ export default function History() {
     })()
   }, [detailDate, stationId])
 
-  const years = useMemo(() => [...new Set(rows.map(r => r.report_date.slice(0, 4)))].sort(), [rows])
+  const years = useMemo(() => [...new Set([...rows.map(r => r.report_date.slice(0, 4)), today.slice(0, 4)])].sort(), [rows])
   const yearOptions = [{ value: 'all', label: 'Toutes années' }, ...years.map(y => ({ value: y, label: y }))]
-  const [inited, setInited] = useState(false)
-  useEffect(() => {
-    if (!inited && rows.length) {
-      const d = rows.map(r => r.report_date).sort().at(-1)
-      setYear(d.slice(0, 4)); setMonth(d.slice(5, 7)); setInited(true)
-    }
-  }, [rows, inited])
   const frows = useMemo(() => rows.filter(r =>
     (year === 'all' || r.report_date.slice(0, 4) === year) &&
     (month === 'all' || r.report_date.slice(5, 7) === month)), [rows, year, month])
@@ -111,13 +122,29 @@ export default function History() {
     if (states.includes('attente')) return 'attente'
     return 'ok'
   }
+  // Complet = TOUTES les preuves exigées sont là (une photo par compteur rempli, un justificatif
+  // par dépense cash, un bordereau par versement) — pas juste "au moins une photo ce jour-là".
+  const photosOk = (r) => {
+    const date = r.report_date
+    let expectedMeters = 0
+    for (let i = 1; i <= nombreMachines; i++) {
+      if (r['e' + i + '_m'] != null) expectedMeters++
+      if (r['g' + i + '_m'] != null) expectedMeters++
+      if (r['e' + i] != null) expectedMeters++
+      if (r['g' + i] != null) expectedMeters++
+    }
+    if ((attCompteurByDate[date] || 0) < expectedMeters) return false
+    if ((expByDate[date] || []).some(e => N(e.montant) > 0 && !e.non_cash && !e.photo_path)) return false
+    if ((depByDate[date] || []).some(d => N(d.montant) > 0 && !d.photo_path)) return false
+    return true
+  }
   const nbEcarts = frows.filter(r => dayStatus(r) === 'ecart').length
   const nbAttente = frows.filter(r => dayStatus(r) === 'attente').length
-  const nbSansPhoto = frows.filter(r => !photoDates.has(r.report_date)).length
+  const nbPhotosManquantes = frows.filter(r => !photosOk(r)).length
   const shownRows = frows.filter(r =>
     quickFilter === 'ecarts' ? dayStatus(r) === 'ecart' :
     quickFilter === 'attente' ? dayStatus(r) === 'attente' :
-    quickFilter === 'sans-photo' ? !photoDates.has(r.report_date) : true)
+    quickFilter === 'photos' ? !photosOk(r) : true)
 
   function exportCsv() {
     const columns = [
@@ -135,7 +162,7 @@ export default function History() {
         ca_carb: Math.round(N(r.ca_carburant)), esp_carb: caVal(carb, carb?.espece), ver_carb: verseVal(carb), ec_carb: ecartVal(carb, carb?.espece),
         ca_gl: caVal(gl, caGL), ver_gl: verseVal(gl), ec_gl: ecartVal(gl, caGL),
         ca_sup: caVal(sup, r.superette_espece), ver_sup: verseVal(sup), ec_sup: ecartVal(sup, r.superette_espece),
-        bon: Math.round(N(r.ventes_bon)), photos: photoDates.has(r.report_date) ? 'Oui' : 'Non',
+        bon: Math.round(N(r.ventes_bon)), photos: photosOk(r) ? 'Complet' : 'Incomplet',
       }
     })
     const label = (year === 'all' ? 'tout' : year) + (month !== 'all' ? '-' + month : '')
@@ -167,7 +194,7 @@ export default function History() {
       { key: 'ec_sup', header: 'Écart Sup.', numeric: true, align: 'right', render: r => ecartCell(recon[r.report_date]?.superette, r.superette_espece) },
     ] : []),
     ...(showCarb ? [{ key: 'bon', header: 'Bon', numeric: true, align: 'right', render: r => fcfa(r.ventes_bon) }] : []),
-    { key: 'photos', header: 'Photos', render: r => photoDates.has(r.report_date) ? <Badge tone="ok">Oui</Badge> : <Badge tone="alarm">Non</Badge> },
+    { key: 'photos', header: 'Photos', render: r => photosOk(r) ? <Badge tone="ok">Complet</Badge> : <Badge tone="alarm">Incomplet</Badge> },
   ]
 
   const footer = { date: `TOTAL (${shownRows.length} j)` }
@@ -187,7 +214,6 @@ export default function History() {
   }
 
   const detailRow = frows.find(r => r.report_date === detailDate) || null
-  const nombreMachines = Math.min(10, Math.max(1, N(current?.nombre_machines) || 4))
   const machineNums = Array.from({ length: nombreMachines }, (_, i) => i + 1)
   const photos = [
     ...detailExtra.at,
@@ -214,7 +240,7 @@ export default function History() {
           <div onClick={() => setQuickFilter('tous')} style={{ cursor: 'pointer' }}><Kpi label="Jours saisis" value={frows.length} status={quickFilter === 'tous' ? 'info' : undefined} /></div>
           <div onClick={() => setQuickFilter('ecarts')} style={{ cursor: 'pointer' }}><Kpi label="Jours avec écart" value={nbEcarts} status={nbEcarts > 0 ? 'alarm' : 'ok'} /></div>
           <div onClick={() => setQuickFilter('attente')} style={{ cursor: 'pointer' }}><Kpi label="Jours en attente" value={nbAttente} status={nbAttente > 0 ? 'warn' : 'ok'} /></div>
-          <div onClick={() => setQuickFilter('sans-photo')} style={{ cursor: 'pointer' }}><Kpi label="Jours sans photo" value={nbSansPhoto} status={nbSansPhoto > 0 ? 'warn' : 'ok'} /></div>
+          <div onClick={() => setQuickFilter('photos')} style={{ cursor: 'pointer' }}><Kpi label="Photos manquantes" value={nbPhotosManquantes} status={nbPhotosManquantes > 0 ? 'warn' : 'ok'} /></div>
         </div>
         {quickFilter !== 'tous' && <Button size="sm" onClick={() => setQuickFilter('tous')} style={{ alignSelf: 'flex-start' }}>Réinitialiser le filtre rapide</Button>}
         <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', margin: 0 }}>

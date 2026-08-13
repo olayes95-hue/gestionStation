@@ -40,10 +40,11 @@ export default function Dashboard() {
   const [forecast, setForecast] = useState(null)
   const [reorder, setReorder] = useState([])
   const [loading, setLoading] = useState(true)
-  const [year, setYear] = useState('all')
-  const [month, setMonth] = useState('all')
+  // Par défaut, mois en cours (pas le dernier mois avec des données, qui peut être ancien).
+  const today = new Date().toISOString().slice(0, 10)
+  const [year, setYear] = useState(today.slice(0, 4))
+  const [month, setMonth] = useState(today.slice(5, 7))
   const [refreshedAt, setRefreshedAt] = useState('')
-  const [inited, setInited] = useState(false)
   const [openRecon, setOpenRecon] = useState(false)
   const [polePeriod, setPolePeriod] = useState({ dr: [], dep: [], exp: [], sup: [], lub: [] })   // brut, pour manque-à-verser et détail par pôle/catégorie sur la période sélectionnée
   const [charges, setCharges] = useState([])   // table "charges" du Point financier (Finance.jsx) — loyer, salaires, impôts...
@@ -146,8 +147,7 @@ export default function Dashboard() {
   }, [stationId])
 
 
-  const years = useMemo(() => [...new Set(months.map(m => m.mois.slice(0, 4)))].sort(), [months])
-  useEffect(() => { if (!inited && months.length) { const m = months.map(x => x.mois).sort().at(-1); setYear(m.slice(0, 4)); setMonth(m.slice(5, 7)); setInited(true) } }, [months, inited])
+  const years = useMemo(() => [...new Set([...months.map(m => m.mois.slice(0, 4)), today.slice(0, 4)])].sort(), [months])
 
   const fm = months.filter(m => (year === 'all' || m.mois.slice(0, 4) === year) && (month === 'all' || m.mois.slice(5, 7) === month))
   const sum = (k) => fm.reduce((s, m) => s + N(m[k]), 0)
