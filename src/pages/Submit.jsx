@@ -82,6 +82,7 @@ export default function Submit() {
   const [openVersements, setOpenVersements] = useState(null)
   const [openPhotosJour, setOpenPhotosJour] = useState(false)  // galerie "Photos du jour" repliée par défaut
   const [openReception, setOpenReception] = useState(false)    // "Commandes à réceptionner" repliée par défaut
+  const [reportExists, setReportExists] = useState(false)      // un point journalier existe déjà pour `date` (correction vs 1re saisie)
   const matinMetersRef = useRef(null)
   const apresmidiMetersRef = useRef(null)
   const expensesRef = useRef(null)
@@ -149,6 +150,7 @@ export default function Submit() {
       supabase.from('submissions').select('moment').eq('report_date', d).eq('station_id', stationId),
     ])
     setSubmittedMoments(new Set((sub.data || []).map(x => x.moment)))
+    setReportExists(!!r.data)
     if (r.data) {
       const c = { ...EMPTY }
       Object.keys(EMPTY).forEach(k => c[k] = r.data[k] ?? '')
@@ -197,6 +199,7 @@ export default function Submit() {
   )
 
   async function receptionOrder(o) {
+    if (locked) { setErr(lockedMsg); return }
     const r = recvOrder[o.id] || {}
     const recu = numFR(r.quantite_recue)
     if (!recu || recu <= 0) { setErr('Renseigne les litres effectivement reçus (> 0).'); return }
@@ -256,7 +259,13 @@ export default function Submit() {
   const ecart = aVerser - totVerse
   const marge = (N(f.ess_litres) + N(f.gas_litres)) * N(settings.marge_unitaire)
   const show = (m) => showAll || moment === m
-  const locked = !isAdmin && date < daysAgoIso(30)   // gérant/pompiste/vendeuse : passé verrouillé (>1 mois)
+  // gérant/pompiste/vendeuse : verrouillage aligné sur les règles RLS réelles côté base
+  // (migration v11) — correction d'un jour déjà envoyé : 2 jours ; toute première saisie
+  // (jour jamais envoyé, rattrapage) : 7 jours. Au-delà, seule la direction peut intervenir.
+  const locked = !isAdmin && date < daysAgoIso(reportExists ? 2 : 7)
+  const lockedMsg = reportExists
+    ? 'Journée verrouillée : un jour déjà envoyé ne se corrige qu\'aujourd\'hui ou hier. Au-delà, demande à la direction.'
+    : 'Journée verrouillée : une journée jamais envoyée ne peut être remplie que dans les 7 jours. Au-delà, demande à la direction.'
   const nombreMachines = Math.min(MAX_MACHINES, Math.max(1, Number(current?.nombre_machines) || 4))
   const achatsOpen = openAchats ?? (deliveries.length > 0)
   const depensesOpen = openDepenses ?? (expenses.length > 0)
@@ -284,7 +293,7 @@ export default function Submit() {
 
   async function save() {
     if (!stationId) { fail('Aucune station sélectionnée.'); return }
-    if (locked) { fail('Journée verrouillée : seul l\'administrateur peut modifier un jour de plus d\'un mois.'); return }
+    if (locked) { fail(lockedMsg); return }
     // 16h obligatoire : tous les relevés de la station doivent être remplis pour l'envoi de 16h
     const meters16h = [...machineNums(nombreMachines).map(n => `e${n}`), ...machineNums(nombreMachines).map(n => `g${n}`)]
     if (moment === 'apres-midi' && meters16h.some(k => f[k] === '' || f[k] === null || f[k] === undefined)) {
@@ -461,7 +470,7 @@ export default function Submit() {
 
   async function saveVendeuse() {
     if (!stationId) { setErr('Aucune station sélectionnée.'); return }
-    if (locked) { setErr('Journée verrouillée (plus d\'un mois).'); return }
+    if (locked) { setErr(lockedMsg); return }
     const lines = sales.filter(s => N(s.quantite) > 0)
     setBusy(true); setErr(''); setMsg('')
     try {
@@ -490,7 +499,7 @@ export default function Submit() {
       <Panel title="Date" bodyStyle={{ display: 'none' }} actions={<Input size="sm" type="date" value={date} onChange={e => setDate(e.target.value)} max={today()} />} />
       {err && <AlertBanner tone="alarm" title="Erreur">{err}</AlertBanner>}
       {msg && <AlertBanner tone="ok" title="Succès">{msg}</AlertBanner>}
-      {locked && <AlertBanner tone="alarm" title="Verrouillé">Journée verrouillée (plus d'un mois). Seul l'administrateur peut la corriger.</AlertBanner>}
+      {locked && <AlertBanner tone="alarm" title="Verrouillé">{lockedMsg}</AlertBanner>}
       <Panel title="Produits vendus — supérette">
         <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', marginTop: 0 }}>
           Choisis un produit dans la liste, mets la <b>quantité</b> et le <b>prix de vente</b>. Si un produit n'existe pas encore, ajoute-le : l'administrateur le validera ensuite.
@@ -569,7 +578,7 @@ export default function Submit() {
 
       {err && errTarget === 'top' && <AlertBanner tone="alarm" title="Erreur">{err}</AlertBanner>}
       {msg && <AlertBanner tone="ok" title="Succès">{msg}</AlertBanner>}
-      {locked && <AlertBanner tone="alarm" title="Verrouillé">Journée verrouillée (plus d'un mois). Lecture seule — seul l'administrateur peut la corriger.</AlertBanner>}
+      {locked && <AlertBanner tone="alarm" title="Verrouillé">{lockedMsg} Lecture seule.</AlertBanner>}
       {isPompiste && <AlertBanner tone="info" title="Mode pompiste">Tu saisis les compteurs, le stock et les photos. Les ventes et versements sont gérés par le gérant.</AlertBanner>}
 
       {/* ---- PHOTOS DU JOUR (vue seule, pour vérification admin) — accordéon replié par défaut ---- */}
