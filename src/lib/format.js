@@ -25,3 +25,18 @@ export const frDate = (iso) => {
   return `${d}/${m}/${y}`
 }
 
+// Reformate un nombre saisi "à la française" en insérant des espaces séparateurs de
+// milliers, pour la lisibilité — pas pour le calcul (numFR reste la fonction qui compte).
+// Ex : "5580591" -> "5 580 591" · "12,5" -> "12,5" · idempotent (re-formater ne change rien).
+export const formatThousands = (v) => {
+  if (v === '' || v === null || v === undefined) return v
+  const s = String(v).replace(/\s/g, '')
+  const neg = s.startsWith('-') ? '-' : ''
+  const body = neg ? s.slice(1) : s
+  const parts = body.replace(/\./g, '').split(',')
+  const intDigits = (parts[0] || '').replace(/\D/g, '')
+  if (!intDigits) return v
+  const grouped = intDigits.replace(/\B(?=(\d{3})+(?!\d))/g, ' ')
+  return neg + grouped + (parts.length > 1 ? ',' + parts.slice(1).join('') : '')
+}
+

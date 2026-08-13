@@ -5,6 +5,7 @@ import {
   today,
   numFR,
   frDate,
+  formatThousands,
 } from '../src/lib/format.js'
 
 // toLocaleString('fr-FR') utilise un espace insécable (U+00A0/U+202F) comme
@@ -127,5 +128,40 @@ describe('frDate', () => {
   it('convertit ISO -> JJ/MM/AAAA', () => {
     expect(frDate('2026-07-13')).toBe('13/07/2026')
     expect(frDate('2026-01-05')).toBe('05/01/2026')
+  })
+})
+
+describe('formatThousands', () => {
+  it('laisse passer les valeurs vides telles quelles', () => {
+    expect(formatThousands('')).toBe('')
+    expect(formatThousands(null)).toBe(null)
+    expect(formatThousands(undefined)).toBe(undefined)
+  })
+
+  it('insère des espaces séparateurs de milliers', () => {
+    expect(formatThousands('5580591')).toBe('5 580 591')
+    expect(formatThousands('1000')).toBe('1 000')
+    expect(formatThousands('999')).toBe('999')
+  })
+
+  it('conserve la partie décimale après la virgule', () => {
+    expect(formatThousands('12345,5')).toBe('12 345,5')
+    expect(formatThousands('12,5')).toBe('12,5')
+  })
+
+  it('est idempotent (re-formater un résultat déjà formaté ne change rien)', () => {
+    expect(formatThousands(formatThousands('5580591'))).toBe('5 580 591')
+  })
+
+  it('gère les nombres négatifs', () => {
+    expect(formatThousands('-4442194')).toBe('-4 442 194')
+  })
+
+  it('ignore les points déjà présents comme séparateur (convention numFR)', () => {
+    expect(formatThousands('4.277.213')).toBe('4 277 213')
+  })
+
+  it('renvoie la valeur telle quelle si aucun chiffre exploitable', () => {
+    expect(formatThousands('-')).toBe('-')
   })
 })

@@ -3,7 +3,7 @@ import { useSearchParams } from 'react-router-dom'
 import { supabase, BORDEREAUX_BUCKET } from '../lib/supabase'
 import { useAuth } from '../lib/auth.jsx'
 import { useStation } from '../lib/station.jsx'
-import { fcfa, today, numFR, frDate } from '../lib/format'
+import { fcfa, today, numFR, frDate, formatThousands } from '../lib/format'
 import { compressImage } from '../lib/image'
 import OrderReception from '../components/OrderReception.jsx'
 import { Panel } from '../ds/octane/components/core/Panel.jsx'
@@ -33,6 +33,10 @@ const NUMFIELDS = [
   'gaz_vendu_3','gaz_vendu_6','gaz_vendu_12','gaz_vendu_38',
 ]
 const METERS_16H = ['e1','e2','e3','e4','g1','g2','g3','g4']
+// Champs pilotés par NumericStepper (compteurs de bouteilles) : jamais formatés avec des
+// espaces, NumericStepper attend une valeur numérique brute (Number(f[k])), pas une chaîne.
+const STEPPER_FIELDS = ['gaz_stock_3','gaz_stock_6','gaz_stock_12','gaz_stock_38','gaz_vendu_3','gaz_vendu_6','gaz_vendu_12','gaz_vendu_38']
+const THOUSANDS_FIELDS = NUMFIELDS.filter(k => !STEPPER_FIELDS.includes(k))
 const EMPTY = Object.fromEntries([...NUMFIELDS.map(k => [k, '']), ['note', '']])
 
 export default function Submit() {
@@ -136,7 +140,12 @@ export default function Submit() {
       supabase.from('submissions').select('moment').eq('report_date', d).eq('station_id', stationId),
     ])
     setSubmittedMoments(new Set((sub.data || []).map(x => x.moment)))
-    if (r.data) { const c = { ...EMPTY }; Object.keys(EMPTY).forEach(k => c[k] = r.data[k] ?? ''); setF(c); setLub(r.data.lubrifiant_stock || {}) }
+    if (r.data) {
+      const c = { ...EMPTY }
+      Object.keys(EMPTY).forEach(k => c[k] = r.data[k] ?? '')
+      THOUSANDS_FIELDS.forEach(k => { if (c[k] !== '') c[k] = formatThousands(String(c[k])) })
+      setF(c); setLub(r.data.lubrifiant_stock || {})
+    }
     else { setF({ ...EMPTY, ess_pu: settings.essence_pv, gas_pu: settings.gasoil_pv }); setLub({}) }
     setExpenses(ex.data || [])
     setDeposits(dep.data || [])
@@ -152,7 +161,7 @@ export default function Submit() {
   // champ compteur avec photo-preuve par pompe
   const meterField = (k, label) => (
     <Field label={label} key={k}>
-      <Input type="text" inputMode="decimal" numeric value={f[k]} onChange={e => set(k, e.target.value)} />
+      <Input type="text" inputMode="decimal" numeric {...numProps(k)} />
       <Button type="button" size="sm" icon="camera" block
         style={{ marginTop: 'var(--sp-2)', ...(meterPhotos[k]?.file ? { color: 'var(--state-ok)', borderColor: 'var(--state-ok)' } : {}) }}
         onClick={() => document.getElementById(`meter-photo-${k}`)?.click()}>
@@ -227,6 +236,8 @@ export default function Submit() {
   }
 
   const set = (k, v) => setF(p => ({ ...p, [k]: v }))
+  // valeur brute pendant la frappe, reformatée avec séparateurs de milliers à la sortie du champ
+  const numProps = (k) => ({ value: f[k], onChange: e => set(k, e.target.value), onBlur: () => set(k, formatThousands(f[k])) })
   const cashDeclare = N(f.ess_espece)+N(f.gas_espece)+N(f.gaz_espece)+N(f.superette_espece)+N(f.lubrifiant_espece)
   const totDepense = expenses.reduce((s, e) => s + N(e.montant), 0)
   const totVerse = deposits.reduce((s, d) => s + N(d.montant), 0)
@@ -559,8 +570,8 @@ export default function Submit() {
           <StepHead n="1" title="Stock du matin" />
           <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)' }}>Combien reste-t-il en cuve et en boutiques ce matin ?</p>
           <div style={{ display: 'flex', gap: 'var(--sp-4)', flexWrap: 'wrap' }}>
-            <Field label="Essence en cuve (litres)" style={{ flex: '1 1 180px' }}><Input type="text" inputMode="decimal" numeric value={f.ess_stock} onChange={e => set('ess_stock', e.target.value)} /></Field>
-            <Field label="Gasoil en cuve (litres)" style={{ flex: '1 1 180px' }}><Input type="text" inputMode="decimal" numeric value={f.gas_stock} onChange={e => set('gas_stock', e.target.value)} /></Field>
+            <Field label="Essence en cuve (litres)" style={{ flex: '1 1 180px' }}><Input type="text" inputMode="decimal" numeric {...numProps('ess_stock')} /></Field>
+            <Field label="Gasoil en cuve (litres)" style={{ flex: '1 1 180px' }}><Input type="text" inputMode="decimal" numeric {...numProps('gas_stock')} /></Field>
           </div>
           <FormSection title="Relevés compteurs à l'ouverture" style={{ marginTop: 'var(--sp-4)' }} innerRef={matinMetersRef}>
             <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', marginTop: 0 }}>Index de chaque pompe ce matin, avec sa photo (preuve). Sert à vérifier les ventes de la veille.</p>
@@ -607,19 +618,19 @@ export default function Submit() {
           <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)' }}>Ce sont les ventes du jour écoulé. Saisis les litres et sépare Bon / Espèces (l'admin vérifie ensuite avec les compteurs).</p>
           <FormSection title={`Essence — ${settings.essence_pv} F/L`}>
             <div style={{ display: 'flex', gap: 'var(--sp-4)', flexWrap: 'wrap' }}>
-              <Field label="Litres" style={{ flex: '1 1 140px' }}><Input type="text" inputMode="decimal" numeric value={f.ess_litres} onChange={e => set('ess_litres', e.target.value)} /></Field>
-              <Field label="Prix / L" style={{ flex: '1 1 140px' }}><Input type="text" inputMode="decimal" numeric value={f.ess_pu} onChange={e => set('ess_pu', e.target.value)} /></Field>
-              <Field label="Vente à bon" style={{ flex: '1 1 140px' }}><Input type="text" inputMode="decimal" numeric value={f.ess_bon} onChange={e => set('ess_bon', e.target.value)} /></Field>
+              <Field label="Litres" style={{ flex: '1 1 140px' }}><Input type="text" inputMode="decimal" numeric {...numProps('ess_litres')} /></Field>
+              <Field label="Prix / L" style={{ flex: '1 1 140px' }}><Input type="text" inputMode="decimal" numeric {...numProps('ess_pu')} /></Field>
+              <Field label="Vente à bon" style={{ flex: '1 1 140px' }}><Input type="text" inputMode="decimal" numeric {...numProps('ess_bon')} /></Field>
             </div>
-            <Field label="Vente en espèces" style={{ marginTop: 'var(--sp-3)' }}><Input type="text" inputMode="decimal" numeric value={f.ess_espece} onChange={e => set('ess_espece', e.target.value)} /></Field>
+            <Field label="Vente en espèces" style={{ marginTop: 'var(--sp-3)' }}><Input type="text" inputMode="decimal" numeric {...numProps('ess_espece')} /></Field>
           </FormSection>
           <FormSection title={`Gasoil — ${settings.gasoil_pv} F/L`} style={{ marginTop: 'var(--sp-4)' }}>
             <div style={{ display: 'flex', gap: 'var(--sp-4)', flexWrap: 'wrap' }}>
-              <Field label="Litres" style={{ flex: '1 1 140px' }}><Input type="text" inputMode="decimal" numeric value={f.gas_litres} onChange={e => set('gas_litres', e.target.value)} /></Field>
-              <Field label="Prix / L" style={{ flex: '1 1 140px' }}><Input type="text" inputMode="decimal" numeric value={f.gas_pu} onChange={e => set('gas_pu', e.target.value)} /></Field>
-              <Field label="Vente à bon" style={{ flex: '1 1 140px' }}><Input type="text" inputMode="decimal" numeric value={f.gas_bon} onChange={e => set('gas_bon', e.target.value)} /></Field>
+              <Field label="Litres" style={{ flex: '1 1 140px' }}><Input type="text" inputMode="decimal" numeric {...numProps('gas_litres')} /></Field>
+              <Field label="Prix / L" style={{ flex: '1 1 140px' }}><Input type="text" inputMode="decimal" numeric {...numProps('gas_pu')} /></Field>
+              <Field label="Vente à bon" style={{ flex: '1 1 140px' }}><Input type="text" inputMode="decimal" numeric {...numProps('gas_bon')} /></Field>
             </div>
-            <Field label="Vente en espèces" style={{ marginTop: 'var(--sp-3)' }}><Input type="text" inputMode="decimal" numeric value={f.gas_espece} onChange={e => set('gas_espece', e.target.value)} /></Field>
+            <Field label="Vente en espèces" style={{ marginTop: 'var(--sp-3)' }}><Input type="text" inputMode="decimal" numeric {...numProps('gas_espece')} /></Field>
           </FormSection>
           <AlertBanner tone="ok" title="Marge" style={{ marginTop: 'var(--sp-4)' }}>Marge carburant estimée : <b>{fcfa(marge)}</b> ({settings.marge_unitaire} F/L)</AlertBanner>
         </Panel>}
@@ -647,11 +658,11 @@ export default function Submit() {
             </div>
           </FormSection>
           <div style={{ display: 'flex', gap: 'var(--sp-4)', flexWrap: 'wrap', marginTop: 'var(--sp-4)' }}>
-            <Field label="Espèces gaz" style={{ flex: '1 1 160px' }}><Input type="text" inputMode="decimal" numeric value={f.gaz_espece} onChange={e => set('gaz_espece', e.target.value)} /></Field>
-            <Field label="Espèces supérette" style={{ flex: '1 1 160px' }}><Input type="text" inputMode="decimal" numeric value={f.superette_espece} onChange={e => set('superette_espece', e.target.value)} /></Field>
-            <Field label="Espèces lubrifiant" style={{ flex: '1 1 160px' }}><Input type="text" inputMode="decimal" numeric value={f.lubrifiant_espece} onChange={e => set('lubrifiant_espece', e.target.value)} /></Field>
+            <Field label="Espèces gaz" style={{ flex: '1 1 160px' }}><Input type="text" inputMode="decimal" numeric {...numProps('gaz_espece')} /></Field>
+            <Field label="Espèces supérette" style={{ flex: '1 1 160px' }}><Input type="text" inputMode="decimal" numeric {...numProps('superette_espece')} /></Field>
+            <Field label="Espèces lubrifiant" style={{ flex: '1 1 160px' }}><Input type="text" inputMode="decimal" numeric {...numProps('lubrifiant_espece')} /></Field>
           </div>
-          <Field label="Total des bons en cours (cumul)" style={{ marginTop: 'var(--sp-3)' }}><Input type="text" inputMode="decimal" numeric value={f.total_bon_cumul} onChange={e => set('total_bon_cumul', e.target.value)} /></Field>
+          <Field label="Total des bons en cours (cumul)" style={{ marginTop: 'var(--sp-3)' }}><Input type="text" inputMode="decimal" numeric {...numProps('total_bon_cumul')} /></Field>
         </Panel>}
       </>)}
 
