@@ -433,6 +433,24 @@ export default function Dashboard() {
             </div>
           </Panel>
         </div>
+        {alerts.length > 0 && (
+          <div style={{ flex: '1 1 320px' }}>
+            <Panel title="Alertes — mois en cours" meta={`${alerts.length}`} flush style={{ height: '100%' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-3)', padding: 'var(--gutter-panel)' }}>
+                {alerts.slice(0, 5).map((a, i) => {
+                  const meta = ALERT_TONES[a.type] || { label: a.type, tone: 'info' }
+                  return (
+                    <AlertBanner key={i} tone={meta.tone} title={meta.label} timestamp={frDate(a.report_date)}
+                      action={a.report_date && <Button size="sm" onClick={() => nav(`/saisie?date=${a.report_date}`)}>Traiter</Button>}>
+                      {a.detail}
+                    </AlertBanner>
+                  )
+                })}
+                {alerts.length > 5 && <p style={{ font: '400 12px/1 var(--font-ui)', color: 'var(--text-muted)', margin: 0 }}>+ {alerts.length - 5} autre(s) alerte(s) — voir Alertes.</p>}
+              </div>
+            </Panel>
+          </div>
+        )}
       </div>
 
       <Panel title="Réconciliation versements (par mois)" meta={`${fm.length} mois`} flush
@@ -443,23 +461,6 @@ export default function Dashboard() {
           ? <DataTable columns={reconColumns} rows={fm.map(m => ({ ...m, id: m.mois }))} />
           : <PanelEmpty icon="chart-column" label="Aucune donnée sur la période" />}
       </Panel>
-
-      {alerts.length > 0 && (
-        <Panel title="Alertes — mois en cours" meta={`${alerts.length}`} flush>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-3)', padding: 'var(--gutter-panel)' }}>
-            {alerts.slice(0, 5).map((a, i) => {
-              const meta = ALERT_TONES[a.type] || { label: a.type, tone: 'info' }
-              return (
-                <AlertBanner key={i} tone={meta.tone} title={meta.label} timestamp={frDate(a.report_date)}
-                  action={a.report_date && <Button size="sm" onClick={() => nav(`/saisie?date=${a.report_date}`)}>Traiter</Button>}>
-                  {a.detail}
-                </AlertBanner>
-              )
-            })}
-            {alerts.length > 5 && <p style={{ font: '400 12px/1 var(--font-ui)', color: 'var(--text-muted)', margin: 0 }}>+ {alerts.length - 5} autre(s) alerte(s) — voir Alertes.</p>}
-          </div>
-        </Panel>
-      )}
     </div>
   )
 }
