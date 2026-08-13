@@ -1,4 +1,6 @@
+import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/auth.jsx'
 import { Panel } from '../ds/octane/components/core/Panel.jsx'
 import { Icon } from '../ds/octane/components/core/Icon.jsx'
@@ -33,6 +35,12 @@ function Faq({ q, children }) {
 export default function Aide() {
   const nav = useNavigate()
   const { isPompiste } = useAuth()
+  const [jours, setJours] = useState(2)
+  useEffect(() => {
+    supabase.from('settings').select('jours_correction_gerant').eq('id', 1).maybeSingle()
+      .then(({ data }) => { if (data?.jours_correction_gerant) setJours(data.jours_correction_gerant) })
+  }, [])
+  const joursTxt = jours === 1 ? "aujourd'hui" : `les ${jours} derniers jours`
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-5)' }}>
@@ -84,14 +92,14 @@ export default function Aide() {
               <li><b>Chaque réception</b> carburant (bon / jauge)</li>
             </ul></li>
           <li>Relevés <b>16 h</b> : l'index de chaque pompe est obligatoire.</li>
-          <li>Tu corriges <b>aujourd'hui et hier</b> ; au-delà, c'est la direction.</li>
+          <li>Tu crées ou corriges une journée dans <b>{joursTxt}</b> ; au-delà, c'est la direction.</li>
           <li>Rien envoyé à <b>8 h</b> ou <b>17 h</b> ? Une alerte part à toi et à la direction.</li>
         </ul>
       </Panel>
 
       <Panel title="Questions fréquentes">
-        <Faq q="Je me suis trompé sur un chiffre ?">Rouvre la même date, corrige et ré-envoie (possible aujourd'hui et hier).</Faq>
-        <Faq q="« Journée verrouillée »">La journée a plus de 2 jours : demande à la direction de la corriger.</Faq>
+        <Faq q="Je me suis trompé sur un chiffre ?">Rouvre la même date, corrige et ré-envoie (possible dans {joursTxt}).</Faq>
+        <Faq q="« Journée verrouillée »">La journée est en dehors de la fenêtre autorisée ({joursTxt}) : demande à la direction de la corriger.</Faq>
         <Faq q="« Relevés 16 h obligatoires »">Remplis l'index de chaque pompe avant d'envoyer le point de 16 h.</Faq>
         <Faq q="Réceptionner une livraison de carburant ?">À tout moment : sur Saisie du jour, bouton « J'ai reçu une commande » en haut de page → Réceptionner → cuve avant puis après. Le stock se met à jour seul.</Faq>
         <Faq q="Mot de passe oublié ?">Préviens la direction, elle le réinitialise.</Faq>

@@ -50,6 +50,7 @@ export default function Journal() {
   const [pendingCount, setPendingCount] = useState(0)
   const [pumpRows, setPumpRows] = useState([])
   const [pompeInactiveApres, setPompeInactiveApres] = useState(5)
+  const [stock, setStock] = useState(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => { if (!stationId) return; (async () => {
@@ -57,7 +58,7 @@ export default function Journal() {
     const day = today()
     const monthStart = day.slice(0, 7) + '-01'
     const monthEnd = day.slice(0, 7) + '-31'
-    const [sub, fc, dr, dep, exp, pert, al, po, st, pr] = await Promise.all([
+    const [sub, fc, dr, dep, exp, pert, al, po, st, pr, ls] = await Promise.all([
       supabase.from('submissions').select('moment').eq('station_id', stationId).eq('report_date', day),
       supabase.from('v_stock_forecast').select('*').eq('station_id', stationId).maybeSingle(),
       supabase.from('daily_reports').select('ess_espece,gas_espece,gaz_espece,superette_espece,lubrifiant_espece').eq('station_id', stationId).gte('report_date', monthStart).lte('report_date', monthEnd),
@@ -70,9 +71,11 @@ export default function Journal() {
       supabase.from('fuel_orders').select('id', { count: 'exact', head: true }).eq('station_id', stationId).in('statut', ['lancee', 'partielle']),
       supabase.from('settings').select('pompe_inactive_apres').eq('id', 1).maybeSingle(),
       supabase.from('daily_reports').select(['report_date', ...machineNums(MAX_MACHINES).flatMap(n => [`e${n}`, `g${n}`])].join(',')).eq('station_id', stationId).order('report_date', { ascending: false }).limit(60),
+      supabase.from('v_latest_stock').select('bons_restant,bons_utilises_depuis').eq('station_id', stationId).maybeSingle(),
     ])
     setMoments(new Set((sub.data || []).map(x => x.moment)))
     setForecast(fc.data || null)
+    setStock(ls.data || null)
 
     // Même décomposition que « Cash non tracé » du Tableau de bord admin (recettes − dépenses − versé),
     // éclatée par pôle pour que la somme des 3 lignes (moins les charges générales non affectables
@@ -138,6 +141,9 @@ export default function Journal() {
         <Kpi label="Manque à verser (mois)" value={fcfa(manqueTotal)} status={manqueTotal > 0 ? 'alarm' : 'ok'} />
         <Kpi label="Pertes carburant (mois)" value={pertes?.perte_na_montant ? fcfa(pertes.perte_na_montant) : fcfa(0)} status={N(pertes?.perte_na_montant) > 0 ? 'alarm' : 'ok'} sub={pertes?.perte_na_litres ? `${Math.round(N(pertes.perte_na_litres)).toLocaleString('fr-FR')} L hors seuil` : ''} />
         <Kpi label="Pompes actives" value={`${nbActives}/${pumps.length * 2}`} status={nbInactives > 0 ? 'alarm' : 'ok'} sub={nbInactives > 0 ? `${nbInactives} hors service` : ''} />
+        <Kpi label="Bons en cours" value={stock?.bons_restant != null ? fcfa(stock.bons_restant) : '—'}
+          sub={N(stock?.bons_utilises_depuis) > 0 ? `dont ${fcfa(stock.bons_utilises_depuis)} engagés en commandes` : ''}
+          status={stock?.bons_restant != null && stock.bons_restant < 0 ? 'alarm' : undefined} />
       </div>
 
       <div style={{ display: 'flex', gap: 'var(--sp-6)', flexWrap: 'wrap' }}>

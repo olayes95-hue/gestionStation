@@ -82,7 +82,6 @@ export default function Submit() {
   const [openVersements, setOpenVersements] = useState(null)
   const [openPhotosJour, setOpenPhotosJour] = useState(false)  // galerie "Photos du jour" repliée par défaut
   const [openReception, setOpenReception] = useState(false)    // "Commandes à réceptionner" repliée par défaut
-  const [reportExists, setReportExists] = useState(false)      // un point journalier existe déjà pour `date` (correction vs 1re saisie)
   const matinMetersRef = useRef(null)
   const apresmidiMetersRef = useRef(null)
   const expensesRef = useRef(null)
@@ -150,7 +149,6 @@ export default function Submit() {
       supabase.from('submissions').select('moment').eq('report_date', d).eq('station_id', stationId),
     ])
     setSubmittedMoments(new Set((sub.data || []).map(x => x.moment)))
-    setReportExists(!!r.data)
     if (r.data) {
       const c = { ...EMPTY }
       Object.keys(EMPTY).forEach(k => c[k] = r.data[k] ?? '')
@@ -259,13 +257,11 @@ export default function Submit() {
   const ecart = aVerser - totVerse
   const marge = (N(f.ess_litres) + N(f.gas_litres)) * N(settings.marge_unitaire)
   const show = (m) => showAll || moment === m
-  // gérant/pompiste/vendeuse : verrouillage aligné sur les règles RLS réelles côté base
-  // (migration v11) — correction d'un jour déjà envoyé : 2 jours ; toute première saisie
-  // (jour jamais envoyé, rattrapage) : 7 jours. Au-delà, seule la direction peut intervenir.
-  const locked = !isAdmin && date < daysAgoIso(reportExists ? 2 : 7)
-  const lockedMsg = reportExists
-    ? 'Journée verrouillée : un jour déjà envoyé ne se corrige qu\'aujourd\'hui ou hier. Au-delà, demande à la direction.'
-    : 'Journée verrouillée : une journée jamais envoyée ne peut être remplie que dans les 7 jours. Au-delà, demande à la direction.'
+  // gérant/pompiste/vendeuse : verrouillage aligné sur la règle RLS réelle côté base
+  // (migration v47, configurable par l'admin dans Stations & équipe — settings.jours_correction_gerant).
+  const joursCorrection = Number(settings.jours_correction_gerant) || 2
+  const locked = !isAdmin && date < daysAgoIso(joursCorrection)
+  const lockedMsg = `Journée verrouillée : tu ne peux créer ou corriger qu'un jour des ${joursCorrection} derniers jours. Au-delà, demande à la direction.`
   const nombreMachines = Math.min(MAX_MACHINES, Math.max(1, Number(current?.nombre_machines) || 4))
   const achatsOpen = openAchats ?? (deliveries.length > 0)
   const depensesOpen = openDepenses ?? (expenses.length > 0)
