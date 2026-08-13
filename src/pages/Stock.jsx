@@ -141,48 +141,7 @@ export default function Stock() {
       {msg && <AlertBanner tone="ok" title="Succès">{msg}</AlertBanner>}
       {err && <AlertBanner tone="alarm" title="Erreur">{err}</AlertBanner>}
 
-      {/* ===== STOCK BAS — résumé immédiat, gérant/pompiste/admin ===== */}
-      {!isVendeuse && (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 'var(--sp-4)' }}>
-          <Kpi label="Produits sous seuil" value={lowStockItems.length} status={lowStockItems.length > 0 ? 'alarm' : 'ok'} />
-        </div>
-      )}
-      {!isVendeuse && lowStockItems.length > 0 && (
-        <AlertBanner tone="alarm" title="Stock bas">
-          {lowStockItems.map(s => `${s.produit} (${N(s.stock)}/${N(s.pr.seuil)})`).join(' · ')}
-        </AlertBanner>
-      )}
-
-      {/* ===== VALORISATION — admin ===== */}
-      {isAdmin && (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 'var(--sp-4)' }}>
-          {valeur.map(v => <Kpi key={v.categorie} label={`Valeur stock ${v.categorie}`} value={fcfa(v.valeur)} />)}
-          <Kpi label="VALEUR TOTALE" value={fcfa(valTotal)} status="accent" />
-        </div>
-      )}
-
-      {/* ===== STOCK ACTUEL (gaz/lub) — gérant/pompiste/admin ===== */}
-      {!isVendeuse && (
-        <Panel title="Stock restant" actions={isAdmin && ['gaz', 'lubrifiant'].map(c => (
-          <Button key={c} size="sm" tone={showCats.includes(c) ? 'primary' : 'outline'} onClick={() => toggleCat(c)} style={{ textTransform: 'capitalize' }}>{c}</Button>
-        ))}>
-          <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', marginTop: 0 }}>
-            Ce qu'il reste, d'après le <b>dernier comptage déclaré dans la Saisie du jour</b>. Ici tu n'ajoutes que les <b>entrées</b> (livraisons) — les sorties/ventes sont calculées toutes seules.
-          </p>
-          <div style={{ display: 'flex', gap: 'var(--sp-4)', flexWrap: 'wrap' }}>
-            {(isAdmin ? ['gaz', 'lubrifiant'].filter(c => showCats.includes(c)) : ['gaz', 'lubrifiant']).map(cat => (
-              <div key={cat} style={{ flex: '1 1 260px' }}>
-                <div style={{ font: 'var(--fw-semibold) 10px/1 var(--font-ui)', textTransform: 'uppercase', letterSpacing: 'var(--ls-micro)', color: 'var(--text-muted)', marginBottom: 'var(--sp-2)' }}>{cat}</div>
-                {(stockByCat[cat] || []).length
-                  ? <DataTable columns={productColumns(cat)} rows={(stockByCat[cat] || []).map(s => ({ ...s, id: s.produit }))} />
-                  : <p style={{ font: '400 12px/1 var(--font-ui)', color: 'var(--text-muted)', margin: 0 }}>Aucun comptage encore.</p>}
-              </div>
-            ))}
-          </div>
-        </Panel>
-      )}
-
-      {/* ===== ACTIONS GUIDÉES — tout le monde ===== */}
+      {/* ===== ACTIONS GUIDÉES — tout le monde, en premier ===== */}
       <Panel title={isVendeuse ? 'Supérette' : 'Que veux-tu faire ?'}>
         {!action ? (
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--sp-4)' }}>
@@ -234,6 +193,47 @@ export default function Stock() {
           </form>
         )}
       </Panel>
+
+      {/* ===== STOCK BAS — résumé immédiat, gérant/pompiste/admin ===== */}
+      {!isVendeuse && (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 'var(--sp-4)' }}>
+          <Kpi label="Produits sous seuil" value={lowStockItems.length} status={lowStockItems.length > 0 ? 'alarm' : 'ok'} />
+        </div>
+      )}
+      {!isVendeuse && lowStockItems.length > 0 && (
+        <AlertBanner tone="alarm" title="Stock bas">
+          {lowStockItems.map(s => `${s.produit} (${N(s.stock)}/${N(s.pr.seuil)})`).join(' · ')}
+        </AlertBanner>
+      )}
+
+      {/* ===== VALORISATION — admin ===== */}
+      {isAdmin && (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 'var(--sp-4)' }}>
+          {valeur.map(v => <Kpi key={v.categorie} label={`Valeur stock ${v.categorie}`} value={fcfa(v.valeur)} />)}
+          <Kpi label="VALEUR TOTALE" value={fcfa(valTotal)} status="accent" />
+        </div>
+      )}
+
+      {/* ===== STOCK ACTUEL (gaz/lub) — gérant/pompiste/admin ===== */}
+      {!isVendeuse && (
+        <Panel title="Stock restant" actions={isAdmin && ['gaz', 'lubrifiant'].map(c => (
+          <Button key={c} size="sm" tone={showCats.includes(c) ? 'primary' : 'outline'} onClick={() => toggleCat(c)} style={{ textTransform: 'capitalize' }}>{c}</Button>
+        ))}>
+          <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', marginTop: 0 }}>
+            Ce qu'il reste, d'après le <b>dernier comptage déclaré dans la Saisie du jour</b>. Ici tu n'ajoutes que les <b>entrées</b> (livraisons) — les sorties/ventes sont calculées toutes seules.
+          </p>
+          <div style={{ display: 'flex', gap: 'var(--sp-4)', flexWrap: 'wrap' }}>
+            {(isAdmin ? ['gaz', 'lubrifiant'].filter(c => showCats.includes(c)) : ['gaz', 'lubrifiant']).map(cat => (
+              <div key={cat} style={{ flex: '1 1 260px' }}>
+                <div style={{ font: 'var(--fw-semibold) 10px/1 var(--font-ui)', textTransform: 'uppercase', letterSpacing: 'var(--ls-micro)', color: 'var(--text-muted)', marginBottom: 'var(--sp-2)' }}>{cat}</div>
+                {(stockByCat[cat] || []).length
+                  ? <DataTable columns={productColumns(cat)} rows={(stockByCat[cat] || []).map(s => ({ ...s, id: s.produit }))} />
+                  : <p style={{ font: '400 12px/1 var(--font-ui)', color: 'var(--text-muted)', margin: 0 }}>Aucun comptage encore.</p>}
+              </div>
+            ))}
+          </div>
+        </Panel>
+      )}
 
       {/* ===== SORTIES DÉDUITES — admin seulement (analyse, repliée par défaut) ===== */}
       {isAdmin && (() => {
