@@ -9,6 +9,7 @@ import OrderReception from '../components/OrderReception.jsx'
 import { Panel } from '../ds/octane/components/core/Panel.jsx'
 import { Button } from '../ds/octane/components/core/Button.jsx'
 import { Icon } from '../ds/octane/components/core/Icon.jsx'
+import { Tag } from '../ds/octane/components/core/Tag.jsx'
 import { Field } from '../ds/octane/components/forms/Field.jsx'
 import { Input } from '../ds/octane/components/forms/Input.jsx'
 import { Select } from '../ds/octane/components/forms/Select.jsx'
@@ -66,6 +67,9 @@ export default function Submit() {
   const [msg, setMsg] = useState(''); const [err, setErr] = useState('')
   const [errTarget, setErrTarget] = useState('top')
   const [submittedMoments, setSubmittedMoments] = useState(new Set())
+  const [openAchats, setOpenAchats] = useState(null)     // null = auto (ouvert si déjà des lignes)
+  const [openDepenses, setOpenDepenses] = useState(null)
+  const [openVersements, setOpenVersements] = useState(null)
   const matinMetersRef = useRef(null)
   const apresmidiMetersRef = useRef(null)
   const expensesRef = useRef(null)
@@ -73,6 +77,8 @@ export default function Submit() {
 
   function fail(message, target = 'top', ref) {
     setErr(message); setErrTarget(target)
+    if (target === 'expenses') setOpenDepenses(true)
+    if (target === 'deposits') setOpenVersements(true)
     const el = ref?.current
     if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' })
     else window.scrollTo({ top: 0, behavior: 'smooth' })
@@ -155,6 +161,20 @@ export default function Submit() {
     </Field>
   )
 
+  // regroupe une pompe essence + gasoil de la même machine (E1+G1 sur la machine 1, etc.)
+  const meterMachine = (n, eKey, eLabel, gKey, gLabel) => (
+    <div key={n} style={{ padding: 'var(--sp-4)', background: 'var(--surface-sunken)', borderRadius: 'var(--radius-1)', border: '1px solid var(--border-hairline)', display: 'flex', flexDirection: 'column', gap: 'var(--sp-3)' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-2)' }}>
+        <Icon name="fuel" size={12} color="var(--text-muted)" />
+        <span style={{ font: 'var(--fw-semibold) 10px/1 var(--font-ui)', textTransform: 'uppercase', letterSpacing: 'var(--ls-micro)', color: 'var(--text-muted)' }}>Machine {n}</span>
+      </div>
+      <div style={{ display: 'flex', gap: 'var(--sp-3)' }}>
+        {meterField(eKey, eLabel)}
+        {meterField(gKey, gLabel)}
+      </div>
+    </div>
+  )
+
   async function receptionOrder(o) {
     const r = recvOrder[o.id] || {}
     const recu = numFR(r.quantite_recue)
@@ -214,6 +234,29 @@ export default function Submit() {
   const marge = (N(f.ess_litres) + N(f.gas_litres)) * N(settings.marge_unitaire)
   const show = (m) => showAll || moment === m
   const locked = !isAdmin && date < daysAgoIso(30)   // gérant/pompiste/vendeuse : passé verrouillé (>1 mois)
+  const achatsOpen = openAchats ?? (deliveries.length > 0)
+  const depensesOpen = openDepenses ?? (expenses.length > 0)
+  const versementsOpen = openVersements ?? (deposits.length > 0)
+
+  // Récap du footer adapté au moment actif : les KPI cash (à verser/versé) n'ont de sens
+  // qu'une fois le Soir en cours de saisie ; Matin/16h ont leur propre repère pertinent.
+  function footerKpis() {
+    if (moment === 'matin' && !showAll) return (<>
+      <MetricTile label="Essence en cuve" value={f.ess_stock !== '' ? Math.round(N(f.ess_stock)).toLocaleString('fr-FR') : '—'} unit={f.ess_stock !== '' ? 'L' : ''} />
+      <MetricTile label="Gasoil en cuve" value={f.gas_stock !== '' ? Math.round(N(f.gas_stock)).toLocaleString('fr-FR') : '—'} unit={f.gas_stock !== '' ? 'L' : ''} />
+      <MetricTile label="Bouteilles de gaz" value={GAZ.reduce((s, [k]) => s + N(f['gaz_stock_' + k]), 0)} unit="b." />
+    </>)
+    if (moment === 'apres-midi' && !showAll) return (<>
+      <MetricTile label="Litres vendus" value={(N(f.ess_litres) + N(f.gas_litres)).toLocaleString('fr-FR')} unit="L" />
+      <MetricTile label="Marge carburant estimée" value={fcfa(marge)} status="ok" />
+    </>)
+    return (<>
+      <MetricTile label="Recette espèces (jour)" value={fcfa(cashDeclare)} />
+      <MetricTile label="Dépenses (jour)" value={fcfa(totDepense)} />
+      <MetricTile label="À verser (jour)" value={fcfa(aVerser)} status="accent" />
+      <MetricTile label="Versé saisi ce jour" value={fcfa(totVerse)} />
+    </>)
+  }
 
   async function save() {
     if (!stationId) { fail('Aucune station sélectionnée.'); return }
@@ -518,10 +561,9 @@ export default function Submit() {
           <FormSection title="Relevés compteurs à l'ouverture" style={{ marginTop: 'var(--sp-4)' }} innerRef={matinMetersRef}>
             <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', marginTop: 0 }}>Index de chaque pompe ce matin, avec sa photo (preuve). Sert à vérifier les ventes de la veille.</p>
             {err && errTarget === 'meters-matin' && !meterWarn && <AlertBanner tone="alarm" title="Erreur" style={{ marginBottom: 'var(--sp-3)' }}>{err}</AlertBanner>}
-            <div style={{ display: 'flex', gap: 'var(--sp-4)', flexWrap: 'wrap' }}>{meterField('e1_m', 'Essence 1')}{meterField('e2_m', 'Essence 2')}</div>
-            <div style={{ display: 'flex', gap: 'var(--sp-4)', flexWrap: 'wrap', marginTop: 'var(--sp-3)' }}>{meterField('e3_m', 'Essence 3')}{meterField('e4_m', 'Essence 4')}</div>
-            <div style={{ display: 'flex', gap: 'var(--sp-4)', flexWrap: 'wrap', marginTop: 'var(--sp-3)' }}>{meterField('g1_m', 'Gasoil 1')}{meterField('g2_m', 'Gasoil 2')}</div>
-            <div style={{ display: 'flex', gap: 'var(--sp-4)', flexWrap: 'wrap', marginTop: 'var(--sp-3)' }}>{meterField('g3_m', 'Gasoil 3')}{meterField('g4_m', 'Gasoil 4')}</div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 'var(--sp-3)' }}>
+              {[1, 2, 3, 4].map(n => meterMachine(n, `e${n}_m`, `Essence ${n}`, `g${n}_m`, `Gasoil ${n}`))}
+            </div>
             {prevMorning && <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', marginTop: 'var(--sp-3)' }}>Repère — index du matin du {frDate(prevMorning.date)} : essence <b>{Math.round(prevMorning.ess).toLocaleString('fr-FR')}</b>, gasoil <b>{Math.round(prevMorning.gas).toLocaleString('fr-FR')}</b>. Le nouvel index doit être supérieur.</p>}
             {meterWarn && (
               <AlertBanner tone="alarm" title="Index incohérent" style={{ marginTop: 'var(--sp-3)' }}>
@@ -582,14 +624,9 @@ export default function Submit() {
           <StepHead n="3" title="Relevés 16 h — obligatoire" />
           <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)' }}>Index de chaque pompe à 16 h, avec sa photo (preuve). Ce relevé est <b>obligatoire</b>.</p>
           {err && errTarget === 'meters-16h' && <AlertBanner tone="alarm" title="Erreur" style={{ marginBottom: 'var(--sp-4)' }}>{err}</AlertBanner>}
-          <FormSection title="Essence">
-            <div style={{ display: 'flex', gap: 'var(--sp-4)', flexWrap: 'wrap' }}>{meterField('e1', 'Pompe E1')}{meterField('e2', 'Pompe E2')}</div>
-            <div style={{ display: 'flex', gap: 'var(--sp-4)', flexWrap: 'wrap', marginTop: 'var(--sp-3)' }}>{meterField('e3', 'Pompe E3')}{meterField('e4', 'Pompe E4')}</div>
-          </FormSection>
-          <FormSection title="Gasoil" style={{ marginTop: 'var(--sp-4)' }}>
-            <div style={{ display: 'flex', gap: 'var(--sp-4)', flexWrap: 'wrap' }}>{meterField('g1', 'Pompe G1')}{meterField('g2', 'Pompe G2')}</div>
-            <div style={{ display: 'flex', gap: 'var(--sp-4)', flexWrap: 'wrap', marginTop: 'var(--sp-3)' }}>{meterField('g3', 'Pompe G3')}{meterField('g4', 'Pompe G4')}</div>
-          </FormSection>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 'var(--sp-3)' }}>
+            {[1, 2, 3, 4].map(n => meterMachine(n, `e${n}`, `Pompe E${n}`, `g${n}`, `Pompe G${n}`))}
+          </div>
         </Panel>
 
         {!isPompiste && <Panel>
@@ -620,110 +657,113 @@ export default function Submit() {
       {/* ---- SOIR : ACHATS / DÉPENSES / VERSEMENTS ---- */}
       {show('soir') && !isPompiste && (<>
         <Panel>
-          <StepHead n="6" title="Achats hors carburant" />
-          <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)' }}>Gaz, lubrifiant, supérette, autre — avec fournisseur. (Le carburant se réceptionne via les commandes ci-dessus.)</p>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-3)' }}>
-            {deliveries.map((d, i) => (
-              <div key={i} style={{ padding: 'var(--sp-4)', background: 'var(--surface-raised)', borderRadius: 'var(--radius-1)', border: '1px solid var(--border-hairline)', display: 'flex', flexDirection: 'column', gap: 'var(--sp-3)' }}>
-                <div style={{ display: 'flex', gap: 'var(--sp-4)', flexWrap: 'wrap' }}>
-                  <Field label="Type" style={{ flex: '1 1 160px' }}>
-                    <Select value={d.type || 'gaz'} onChange={e => upd(setDeliveries, i, 'type', e.target.value)} style={{ width: '100%' }}
-                      options={[{ value: 'gaz', label: 'Gaz' }, { value: 'lubrifiant', label: 'Lubrifiant' }, { value: 'superette', label: 'Supérette' }, { value: 'autre', label: 'Autre' }]} />
+          <CollapsibleHead n="6" title="Achats hors carburant" open={achatsOpen} onToggle={() => setOpenAchats(!achatsOpen)} count={deliveries.length} total={totLivr} />
+          {achatsOpen && <>
+            <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)' }}>Gaz, lubrifiant, supérette, autre — avec fournisseur. (Le carburant se réceptionne via les commandes ci-dessus.)</p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-3)' }}>
+              {deliveries.map((d, i) => (
+                <div key={i} style={{ padding: 'var(--sp-4)', background: 'var(--surface-raised)', borderRadius: 'var(--radius-1)', border: '1px solid var(--border-hairline)', display: 'flex', flexDirection: 'column', gap: 'var(--sp-3)' }}>
+                  <div style={{ display: 'flex', gap: 'var(--sp-4)', flexWrap: 'wrap' }}>
+                    <Field label="Type" style={{ flex: '1 1 160px' }}>
+                      <Select value={d.type || 'gaz'} onChange={e => upd(setDeliveries, i, 'type', e.target.value)} style={{ width: '100%' }}
+                        options={[{ value: 'gaz', label: 'Gaz' }, { value: 'lubrifiant', label: 'Lubrifiant' }, { value: 'superette', label: 'Supérette' }, { value: 'autre', label: 'Autre' }]} />
+                    </Field>
+                    <Field label="Quantité" style={{ flex: '1 1 140px' }}><Input type="text" inputMode="decimal" numeric value={d.quantite || ''} onChange={e => upd(setDeliveries, i, 'quantite', e.target.value)} /></Field>
+                  </div>
+                  <div style={{ display: 'flex', gap: 'var(--sp-4)', flexWrap: 'wrap' }}>
+                    <Field label="Unité" style={{ flex: '1 1 160px' }}>
+                      <Select value={d.unite || 'litres'} onChange={e => upd(setDeliveries, i, 'unite', e.target.value)} style={{ width: '100%' }}
+                        options={[{ value: 'litres', label: 'litres' }, { value: 'bouteilles', label: 'bouteilles' }, { value: 'cartons', label: 'cartons' }, { value: 'unité', label: 'unité' }]} />
+                    </Field>
+                    <Field label="Coût total" style={{ flex: '1 1 140px' }}><Input type="text" inputMode="decimal" numeric value={d.montant || ''} onChange={e => upd(setDeliveries, i, 'montant', e.target.value)} /></Field>
+                  </div>
+                  <Field label={`Fournisseur${(d.type === 'essence' || d.type === 'gasoil') ? ' (carburant : fournisseur unique)' : ''}`}>
+                    {suppliers.length > 0
+                      ? <Select value={d.supplier_id || ''} onChange={e => upd(setDeliveries, i, 'supplier_id', e.target.value)} style={{ width: '100%' }}
+                          options={[{ value: '', label: '— choisir —' }, ...suppliers.map(s => ({ value: s.id, label: `${s.nom} (${s.categorie})` }))]} />
+                      : <Input value={d.fournisseur || ''} onChange={e => upd(setDeliveries, i, 'fournisseur', e.target.value)} placeholder="nom du fournisseur" />}
                   </Field>
-                  <Field label="Quantité" style={{ flex: '1 1 140px' }}><Input type="text" inputMode="decimal" numeric value={d.quantite || ''} onChange={e => upd(setDeliveries, i, 'quantite', e.target.value)} /></Field>
+                  <Button size="sm" tone="danger" onClick={() => rm(setDeliveries, i)} style={{ alignSelf: 'flex-start' }}>Retirer</Button>
                 </div>
-                <div style={{ display: 'flex', gap: 'var(--sp-4)', flexWrap: 'wrap' }}>
-                  <Field label="Unité" style={{ flex: '1 1 160px' }}>
-                    <Select value={d.unite || 'litres'} onChange={e => upd(setDeliveries, i, 'unite', e.target.value)} style={{ width: '100%' }}
-                      options={[{ value: 'litres', label: 'litres' }, { value: 'bouteilles', label: 'bouteilles' }, { value: 'cartons', label: 'cartons' }, { value: 'unité', label: 'unité' }]} />
-                  </Field>
-                  <Field label="Coût total" style={{ flex: '1 1 140px' }}><Input type="text" inputMode="decimal" numeric value={d.montant || ''} onChange={e => upd(setDeliveries, i, 'montant', e.target.value)} /></Field>
-                </div>
-                <Field label={`Fournisseur${(d.type === 'essence' || d.type === 'gasoil') ? ' (carburant : fournisseur unique)' : ''}`}>
-                  {suppliers.length > 0
-                    ? <Select value={d.supplier_id || ''} onChange={e => upd(setDeliveries, i, 'supplier_id', e.target.value)} style={{ width: '100%' }}
-                        options={[{ value: '', label: '— choisir —' }, ...suppliers.map(s => ({ value: s.id, label: `${s.nom} (${s.categorie})` }))]} />
-                    : <Input value={d.fournisseur || ''} onChange={e => upd(setDeliveries, i, 'fournisseur', e.target.value)} placeholder="nom du fournisseur" />}
-                </Field>
-                <Button size="sm" tone="danger" onClick={() => rm(setDeliveries, i)} style={{ alignSelf: 'flex-start' }}>Retirer</Button>
-              </div>
-            ))}
-          </div>
-          <Button onClick={() => setDeliveries(p => [...p, { type: 'gaz', unite: 'bouteilles' }])} style={{ marginTop: 'var(--sp-4)' }}>+ Ajouter un achat</Button>
+              ))}
+            </div>
+            <Button onClick={() => setDeliveries(p => [...p, { type: 'gaz', unite: 'bouteilles' }])} style={{ marginTop: 'var(--sp-4)' }}>+ Ajouter un achat</Button>
+          </>}
         </Panel>
 
         <Panel sectionRef={expensesRef}>
-          <StepHead n="7" title="Dépenses en espèces" />
-          <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)' }}>Argent sorti de la caisse (électricité SBEE, achats…). Ajoute le justificatif si tu l'as.</p>
-          {err && errTarget === 'expenses' && <AlertBanner tone="alarm" title="Erreur" style={{ marginBottom: 'var(--sp-4)' }}>{err}</AlertBanner>}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-3)' }}>
-            {expenses.map((e, i) => (
-              <div key={i} style={{ padding: 'var(--sp-4)', background: 'var(--surface-raised)', borderRadius: 'var(--radius-1)', border: '1px solid var(--border-hairline)', display: 'flex', flexDirection: 'column', gap: 'var(--sp-3)' }}>
-                <div style={{ display: 'flex', gap: 'var(--sp-4)', flexWrap: 'wrap' }}>
-                  <Field label="Type" style={{ flex: '1 1 200px' }}>
-                    <Select value={e.categorie || 'SBEE'} onChange={ev => upd(setExpenses, i, 'categorie', ev.target.value)} style={{ width: '100%' }}
-                      options={[{ value: 'SBEE', label: 'SBEE' }, { value: 'SUPERETTE', label: 'SUPERETTE' }, { value: 'CARBURANT', label: 'Carburant / déplacement (propriétaire)' }, { value: 'AUTRE', label: 'AUTRE' }]} />
-                  </Field>
-                  <Field label="Montant" style={{ flex: '1 1 140px' }}><Input type="text" inputMode="decimal" numeric value={e.montant || ''} onChange={ev => upd(setExpenses, i, 'montant', ev.target.value)} /></Field>
+          <CollapsibleHead n="7" title="Dépenses en espèces" open={depensesOpen} onToggle={() => setOpenDepenses(!depensesOpen)} count={expenses.length} total={totDepense} />
+          {depensesOpen && <>
+            <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)' }}>Argent sorti de la caisse (électricité SBEE, achats…). Ajoute le justificatif si tu l'as.</p>
+            {err && errTarget === 'expenses' && <AlertBanner tone="alarm" title="Erreur" style={{ marginBottom: 'var(--sp-4)' }}>{err}</AlertBanner>}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-3)' }}>
+              {expenses.map((e, i) => (
+                <div key={i} style={{ padding: 'var(--sp-4)', background: 'var(--surface-raised)', borderRadius: 'var(--radius-1)', border: '1px solid var(--border-hairline)', display: 'flex', flexDirection: 'column', gap: 'var(--sp-3)' }}>
+                  <div style={{ display: 'flex', gap: 'var(--sp-4)', flexWrap: 'wrap' }}>
+                    <Field label="Type" style={{ flex: '1 1 200px' }}>
+                      <Select value={e.categorie || 'SBEE'} onChange={ev => upd(setExpenses, i, 'categorie', ev.target.value)} style={{ width: '100%' }}
+                        options={[{ value: 'SBEE', label: 'SBEE' }, { value: 'SUPERETTE', label: 'SUPERETTE' }, { value: 'CARBURANT', label: 'Carburant / déplacement (propriétaire)' }, { value: 'AUTRE', label: 'AUTRE' }]} />
+                    </Field>
+                    <Field label="Montant" style={{ flex: '1 1 140px' }}><Input type="text" inputMode="decimal" numeric value={e.montant || ''} onChange={ev => upd(setExpenses, i, 'montant', ev.target.value)} /></Field>
+                  </div>
+                  <Field label="Motif"><Input value={e.motif || ''} onChange={ev => upd(setExpenses, i, 'motif', ev.target.value)} placeholder="ex : recharge électricité" /></Field>
+                  {(e.categorie || '').toUpperCase() === 'CARBURANT' ? (
+                    <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', margin: 0 }}>Prélèvement carburant du propriétaire : <b>charge non-cash</b> (aucun paiement en espèces). Pas de reçu requis ; remonte chaque mois au Point financier sous « Carburant / déplacement (auto) » et n'est pas décompté du cash à verser.</p>
+                  ) : (<>
+                    <Field label="Photo du justificatif (obligatoire)">
+                      <Input type="file" accept="image/*" capture="environment" onChange={ev => upd(setExpenses, i, '_file', ev.target.files[0])} />
+                    </Field>
+                    {e.photo_path && !e._file && <p style={{ font: '400 12px/1 var(--font-ui)', color: 'var(--text-muted)', margin: 0 }}>Justificatif enregistré ✓</p>}
+                    {e._file && <p style={{ font: '400 12px/1 var(--font-ui)', color: 'var(--text-muted)', margin: 0 }}>✓ {e._file.name}</p>}
+                  </>)}
+                  <Button size="sm" tone="danger" onClick={() => rm(setExpenses, i)} style={{ alignSelf: 'flex-start' }}>Retirer</Button>
                 </div>
-                <Field label="Motif"><Input value={e.motif || ''} onChange={ev => upd(setExpenses, i, 'motif', ev.target.value)} placeholder="ex : recharge électricité" /></Field>
-                {(e.categorie || '').toUpperCase() === 'CARBURANT' ? (
-                  <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', margin: 0 }}>Prélèvement carburant du propriétaire : <b>charge non-cash</b> (aucun paiement en espèces). Pas de reçu requis ; remonte chaque mois au Point financier sous « Carburant / déplacement (auto) » et n'est pas décompté du cash à verser.</p>
-                ) : (<>
-                  <Field label="Photo du justificatif (obligatoire)">
-                    <Input type="file" accept="image/*" capture="environment" onChange={ev => upd(setExpenses, i, '_file', ev.target.files[0])} />
-                  </Field>
-                  {e.photo_path && !e._file && <p style={{ font: '400 12px/1 var(--font-ui)', color: 'var(--text-muted)', margin: 0 }}>Justificatif enregistré ✓</p>}
-                  {e._file && <p style={{ font: '400 12px/1 var(--font-ui)', color: 'var(--text-muted)', margin: 0 }}>✓ {e._file.name}</p>}
-                </>)}
-                <Button size="sm" tone="danger" onClick={() => rm(setExpenses, i)} style={{ alignSelf: 'flex-start' }}>Retirer</Button>
-              </div>
-            ))}
-          </div>
-          <Button onClick={() => setExpenses(p => [...p, { categorie: 'SBEE', montant: '' }])} style={{ marginTop: 'var(--sp-4)' }}>+ Ajouter une dépense</Button>
+              ))}
+            </div>
+            <Button onClick={() => setExpenses(p => [...p, { categorie: 'SBEE', montant: '' }])} style={{ marginTop: 'var(--sp-4)' }}>+ Ajouter une dépense</Button>
+          </>}
         </Panel>
 
         <Panel sectionRef={depositsRef}>
-          <StepHead n="8" title="Versement en banque" />
-          <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)' }}>Prends la photo du bordereau juste après le dépôt. Un versement peut couvrir <b>plusieurs jours de recette</b> : indique la <b>période concernée</b> (du… au…). Le système additionnera les recettes de cette période pour vérifier que ça correspond.</p>
-          {err && errTarget === 'deposits' && <AlertBanner tone="alarm" title="Erreur" style={{ marginBottom: 'var(--sp-4)' }}>{err}</AlertBanner>}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-3)' }}>
-            {deposits.map((d, i) => (
-              <div key={i} style={{ padding: 'var(--sp-4)', background: 'var(--surface-raised)', borderRadius: 'var(--radius-1)', border: '1px solid var(--border-hairline)', display: 'flex', flexDirection: 'column', gap: 'var(--sp-3)' }}>
-                <div style={{ display: 'flex', gap: 'var(--sp-4)', flexWrap: 'wrap' }}>
-                  <Field label="Source (pôle) *" style={{ flex: '1 1 180px' }}>
-                    <Select value={d.pole || 'carburant'} onChange={ev => upd(setDeposits, i, 'pole', ev.target.value)} style={{ width: '100%' }}
-                      options={[{ value: 'carburant', label: 'Carburant' }, { value: 'gaz_lubrifiant', label: 'Gaz + Lubrifiant' }, { value: 'gaz', label: 'Gaz seul' }, { value: 'lubrifiant', label: 'Lubrifiant seul' }, { value: 'superette', label: 'Supérette' }]} />
+          <CollapsibleHead n="8" title="Versement en banque" open={versementsOpen} onToggle={() => setOpenVersements(!versementsOpen)} count={deposits.length} total={totVerse} />
+          {versementsOpen && <>
+            <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)' }}>Prends la photo du bordereau juste après le dépôt. Un versement peut couvrir <b>plusieurs jours de recette</b> : indique la <b>période concernée</b> (du… au…). Le système additionnera les recettes de cette période pour vérifier que ça correspond.</p>
+            {err && errTarget === 'deposits' && <AlertBanner tone="alarm" title="Erreur" style={{ marginBottom: 'var(--sp-4)' }}>{err}</AlertBanner>}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-3)' }}>
+              {deposits.map((d, i) => (
+                <div key={i} style={{ padding: 'var(--sp-4)', background: 'var(--surface-raised)', borderRadius: 'var(--radius-1)', border: '1px solid var(--border-hairline)', display: 'flex', flexDirection: 'column', gap: 'var(--sp-3)' }}>
+                  <div style={{ display: 'flex', gap: 'var(--sp-4)', flexWrap: 'wrap' }}>
+                    <Field label="Source (pôle) *" style={{ flex: '1 1 180px' }}>
+                      <Select value={d.pole || 'carburant'} onChange={ev => upd(setDeposits, i, 'pole', ev.target.value)} style={{ width: '100%' }}
+                        options={[{ value: 'carburant', label: 'Carburant' }, { value: 'gaz_lubrifiant', label: 'Gaz + Lubrifiant' }, { value: 'gaz', label: 'Gaz seul' }, { value: 'lubrifiant', label: 'Lubrifiant seul' }, { value: 'superette', label: 'Supérette' }]} />
+                    </Field>
+                    <Field label="Montant versé *" style={{ flex: '1 1 140px' }}><Input type="text" inputMode="decimal" numeric value={d.montant || ''} onChange={ev => upd(setDeposits, i, 'montant', ev.target.value)} /></Field>
+                  </div>
+                  <div style={{ display: 'flex', gap: 'var(--sp-4)', flexWrap: 'wrap' }}>
+                    <Field label="Période concernée — du *" style={{ flex: '1 1 160px' }}><Input type="date" max={date} value={d.periode_debut || ''} onChange={ev => upd(setDeposits, i, 'periode_debut', ev.target.value)} /></Field>
+                    <Field label="… au *" style={{ flex: '1 1 160px' }}><Input type="date" max={date} value={d.periode_fin || ''} onChange={ev => upd(setDeposits, i, 'periode_fin', ev.target.value)} /></Field>
+                  </div>
+                  {d.periode_debut && d.periode_fin && d.periode_debut !== d.periode_fin &&
+                    <p style={{ font: '400 12px/1 var(--font-ui)', color: 'var(--text-muted)', margin: 0 }}>Versement cumulé sur {frDate(d.periode_debut)} → {frDate(d.periode_fin)}</p>}
+                  <Field label="Photo du bordereau *">
+                    <Input type="file" accept="image/*" capture="environment" onChange={ev => upd(setDeposits, i, '_file', ev.target.files[0])} />
                   </Field>
-                  <Field label="Montant versé *" style={{ flex: '1 1 140px' }}><Input type="text" inputMode="decimal" numeric value={d.montant || ''} onChange={ev => upd(setDeposits, i, 'montant', ev.target.value)} /></Field>
+                  {d.photo_path && !d._file && <p style={{ font: '400 12px/1 var(--font-ui)', color: 'var(--text-muted)', margin: 0 }}>Photo déjà enregistrée ✓</p>}
+                  <Button size="sm" tone="danger" onClick={() => rm(setDeposits, i)} style={{ alignSelf: 'flex-start' }}>Retirer</Button>
                 </div>
-                <div style={{ display: 'flex', gap: 'var(--sp-4)', flexWrap: 'wrap' }}>
-                  <Field label="Période concernée — du *" style={{ flex: '1 1 160px' }}><Input type="date" max={date} value={d.periode_debut || ''} onChange={ev => upd(setDeposits, i, 'periode_debut', ev.target.value)} /></Field>
-                  <Field label="… au *" style={{ flex: '1 1 160px' }}><Input type="date" max={date} value={d.periode_fin || ''} onChange={ev => upd(setDeposits, i, 'periode_fin', ev.target.value)} /></Field>
-                </div>
-                {d.periode_debut && d.periode_fin && d.periode_debut !== d.periode_fin &&
-                  <p style={{ font: '400 12px/1 var(--font-ui)', color: 'var(--text-muted)', margin: 0 }}>Versement cumulé sur {frDate(d.periode_debut)} → {frDate(d.periode_fin)}</p>}
-                <Field label="Photo du bordereau *">
-                  <Input type="file" accept="image/*" capture="environment" onChange={ev => upd(setDeposits, i, '_file', ev.target.files[0])} />
-                </Field>
-                {d.photo_path && !d._file && <p style={{ font: '400 12px/1 var(--font-ui)', color: 'var(--text-muted)', margin: 0 }}>Photo déjà enregistrée ✓</p>}
-                <Button size="sm" tone="danger" onClick={() => rm(setDeposits, i)} style={{ alignSelf: 'flex-start' }}>Retirer</Button>
-              </div>
-            ))}
-          </div>
-          <Button onClick={() => setDeposits(p => [...p, { pole: 'carburant', periode_debut: date, periode_fin: date }])} style={{ marginTop: 'var(--sp-4)' }}>+ Ajouter un versement</Button>
+              ))}
+            </div>
+            <Button onClick={() => setDeposits(p => [...p, { pole: 'carburant', periode_debut: date, periode_fin: date }])} style={{ marginTop: 'var(--sp-4)' }}>+ Ajouter un versement</Button>
+          </>}
         </Panel>
       </>)}
 
       {/* ---- RÉCAP + ENREGISTRER ---- */}
       <div style={{ position: 'sticky', bottom: 0, background: 'var(--surface-panel)', border: 'var(--border-panel)', borderRadius: 'var(--radius-1)', padding: 'var(--gutter-panel)', boxShadow: '0 -4px 16px rgba(0,0,0,.12)', display: 'flex', flexDirection: 'column', gap: 'var(--sp-4)' }}>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 'var(--sp-4)' }}>
-          <MetricTile label="Recette espèces (jour)" value={fcfa(cashDeclare)} />
-          <MetricTile label="Dépenses (jour)" value={fcfa(totDepense)} />
-          <MetricTile label="À verser (jour)" value={fcfa(aVerser)} status="accent" />
-          <MetricTile label="Versé saisi ce jour" value={fcfa(totVerse)} />
+          {footerKpis()}
         </div>
-        <p style={{ font: '400 11px/1.4 var(--font-ui)', color: 'var(--text-muted)', margin: 0 }}>Un versement peut couvrir plusieurs jours : l'écart réel (recette − versé) est calculé <b>par pôle et par période</b> côté administration, pas ici.</p>
+        {(moment === 'soir' || showAll) && <p style={{ font: '400 11px/1.4 var(--font-ui)', color: 'var(--text-muted)', margin: 0 }}>Un versement peut couvrir plusieurs jours : l'écart réel (recette − versé) est calculé <b>par pôle et par période</b> côté administration, pas ici.</p>}
         <Button tone="primary" block onClick={save} disabled={busy || locked}>{busy ? 'Enregistrement…' : locked ? 'Verrouillé' : `Envoyer (${momentLabel(moment)})`}</Button>
       </div>
     </div>
@@ -755,6 +795,21 @@ function StepHead({ n, title }) {
     <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-4)', marginBottom: 'var(--sp-3)' }}>
       <span style={{ width: 24, height: 24, borderRadius: '50%', background: 'var(--accent-quiet)', color: 'var(--accent)', display: 'flex', alignItems: 'center', justifyContent: 'center', flex: '0 0 auto', font: 'var(--fw-semibold) 12px/1 var(--font-data)' }}>{n}</span>
       <h2 style={{ font: 'var(--fw-semibold) 14px/1.2 var(--font-ui)', color: 'var(--text-primary)', margin: 0 }}>{title}</h2>
+    </div>
+  )
+}
+// en-tête cliquable pour replier/déplier une section — compact (compteur + total) quand fermée
+function CollapsibleHead({ n, title, open, onToggle, count, total }) {
+  return (
+    <div onClick={onToggle} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', marginBottom: open ? 'var(--sp-3)' : 0 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-4)' }}>
+        <span style={{ width: 24, height: 24, borderRadius: '50%', background: 'var(--accent-quiet)', color: 'var(--accent)', display: 'flex', alignItems: 'center', justifyContent: 'center', flex: '0 0 auto', font: 'var(--fw-semibold) 12px/1 var(--font-data)' }}>{n}</span>
+        <h2 style={{ font: 'var(--fw-semibold) 14px/1.2 var(--font-ui)', color: 'var(--text-primary)', margin: 0 }}>{title}</h2>
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-3)' }}>
+        {count > 0 && <Tag>{count} · {fcfa(total)}</Tag>}
+        <Icon name="chevron-down" size={14} color="var(--text-muted)" style={{ transform: open ? 'rotate(180deg)' : 'none' }} />
+      </div>
     </div>
   )
 }
