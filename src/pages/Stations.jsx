@@ -44,6 +44,7 @@ export default function Stations() {
       nom: s.nom, compte_bancaire: s.compte_bancaire,
       seuil_essence: num(s.seuil_essence), seuil_gasoil: num(s.seuil_gasoil),
       seuil_gaz: num(s.seuil_gaz), seuil_lubrifiant: num(s.seuil_lubrifiant),
+      capacite_essence: num(s.capacite_essence) ?? 20000, capacite_gasoil: num(s.capacite_gasoil) ?? 20000,
     }).eq('id', s.id)
     error ? fail(error) : flash('Station enregistrée')
   }
@@ -122,6 +123,10 @@ export default function Stations() {
               <div style={{ display: 'flex', gap: 'var(--sp-4)', flexWrap: 'wrap' }}>
                 <Field label="Seuil gaz (bouteilles/type)" style={{ flex: '1 1 140px' }}><Input type="number" numeric value={s.seuil_gaz ?? ''} onChange={e => upS(s.id, 'seuil_gaz', e.target.value)} /></Field>
                 <Field label="Seuil lubrifiant (unités)" style={{ flex: '1 1 140px' }}><Input type="number" numeric value={s.seuil_lubrifiant ?? ''} onChange={e => upS(s.id, 'seuil_lubrifiant', e.target.value)} /></Field>
+              </div>
+              <div style={{ display: 'flex', gap: 'var(--sp-4)', flexWrap: 'wrap' }}>
+                <Field label="Capacité cuve essence (L)" style={{ flex: '1 1 140px' }}><Input type="number" numeric value={s.capacite_essence ?? 20000} onChange={e => upS(s.id, 'capacite_essence', e.target.value)} /></Field>
+                <Field label="Capacité cuve gasoil (L)" style={{ flex: '1 1 140px' }}><Input type="number" numeric value={s.capacite_gasoil ?? 20000} onChange={e => upS(s.id, 'capacite_gasoil', e.target.value)} /></Field>
               </div>
               <Button tone="primary" onClick={() => saveStation(s)} style={{ alignSelf: 'flex-start' }}>Enregistrer</Button>
             </div>

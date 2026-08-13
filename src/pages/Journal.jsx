@@ -9,12 +9,23 @@ import { Button } from '../ds/octane/components/core/Button.jsx'
 import { Badge } from '../ds/octane/components/core/Badge.jsx'
 import { Icon } from '../ds/octane/components/core/Icon.jsx'
 import { AlertBanner } from '../ds/octane/components/feedback/AlertBanner.jsx'
+import { GaugeBar } from '../ds/octane/components/data/GaugeBar.jsx'
 import { Kpi } from '../lib/Kpi.jsx'
 
 const N = (v) => (v ? Number(v) : 0)
 const AUTONOMIE_TONE = (d) => d == null ? undefined : d < 3 ? 'alarm' : d < 6 ? 'warn' : 'ok'
-const POLE_LABELS = { carburant: 'Carburant', gaz_lub: 'Gaz + Lubrifiant', superette: 'Supérette' }
-const PUMPS = [['e1', 'E1 — Essence'], ['e2', 'E2 — Essence'], ['e3', 'E3 — Essence'], ['e4', 'E4 — Essence'], ['g1', 'G1 — Gasoil'], ['g2', 'G2 — Gasoil'], ['g3', 'G3 — Gasoil'], ['g4', 'G4 — Gasoil']]
+const MACHINES = [
+  { n: 1, e: 'e1', g: 'g1' },
+  { n: 2, e: 'e2', g: 'g2' },
+  { n: 3, e: 'e3', g: 'g3' },
+  { n: 4, e: 'e4', g: 'g4' },
+]
+
+const CHECKLIST = [
+  { key: 'matin', label: 'Matin (8h) — stock & ouverture', hint: "Relève le stock en cuve et les compteurs d'ouverture, avec photo." },
+  { key: 'apres-midi', label: '16 h — ventes & compteurs', hint: 'Enregistre les ventes de la veille et les 8 relevés compteurs (obligatoire).' },
+  { key: 'soir', label: 'Soir — clôture & versement', hint: 'Enregistre les dépenses justifiées et le versement en banque, avec photo.' },
+]
 
 // Une pompe est jugée hors service si ses N derniers relevés 16h renseignés (rows déjà triées
 // report_date desc) sont tous identiques — l'index d'une pompe utilisée ne peut que monter.
@@ -30,18 +41,13 @@ export function pumpStatus(rows, key, n) {
   return vals.every(v => v === vals[0]) ? 'inactive' : 'active'
 }
 
-const CHECKLIST = [
-  { key: 'matin', label: 'Matin (8h) — stock & ouverture', hint: "Relève le stock en cuve et les compteurs d'ouverture, avec photo." },
-  { key: 'apres-midi', label: '16 h — ventes & compteurs', hint: 'Enregistre les ventes de la veille et les 8 relevés compteurs (obligatoire).' },
-  { key: 'soir', label: 'Soir — clôture & versement', hint: 'Enregistre les dépenses justifiées et le versement en banque, avec photo.' },
-]
-
 export default function Journal() {
-  const { stationId } = useStation()
+  const { stationId, current } = useStation()
   const nav = useNavigate()
   const [moments, setMoments] = useState(new Set())
   const [forecast, setForecast] = useState(null)
-  const [poleTotals, setPoleTotals] = useState({ carburant: 0, gaz_lub: 0, superette: 0 })
+  const [manque, setManque] = useState({ carburant: 0, gaz_lub: 0, superette: 0 })
+  const [depGeneral, setDepGeneral] = useState(0)
   const [pertes, setPertes] = useState(null)
   const [alerts, setAlerts] = useState([])
   const [pendingCount, setPendingCount] = useState(0)
@@ -54,23 +60,55 @@ export default function Journal() {
     const day = today()
     const monthStart = day.slice(0, 7) + '-01'
     const monthEnd = day.slice(0, 7) + '-31'
-    const [sub, fc, recon, pert, al, po, st, pr] = await Promise.all([
+    const [sub, fc, dr, dep, exp, pert, al, po, st, pr] = await Promise.all([
       supabase.from('submissions').select('moment').eq('station_id', stationId).eq('report_date', day),
       supabase.from('v_stock_forecast').select('*').eq('station_id', stationId).maybeSingle(),
-      supabase.from('v_pole_recon_jour').select('pole_groupe,ecart,nb_cloture').eq('station_id', stationId).gte('report_date', monthStart).lte('report_date', monthEnd),
+      supabase.from('daily_reports').select('ess_espece,gas_espece,gaz_espece,superette_espece,lubrifiant_espece').eq('station_id', stationId).gte('report_date', monthStart).lte('report_date', monthEnd),
+      supabase.from('deposits').select('pole,montant,periode_fin,report_date')
+        .eq('station_id', stationId)
+        .or(`and(periode_fin.gte.${monthStart},periode_fin.lte.${monthEnd}),and(periode_fin.is.null,report_date.gte.${monthStart},report_date.lte.${monthEnd})`),
+      supabase.from('expenses').select('categorie,montant,non_cash').eq('station_id', stationId).gte('report_date', monthStart).lte('report_date', monthEnd),
       supabase.from('v_pertes_mensuelles').select('*').eq('station_id', stationId).eq('mois', day.slice(0, 7)).maybeSingle(),
-      supabase.from('v_alerts').select('*').eq('station_id', stationId),
+      supabase.from('v_alerts').select('*').eq('station_id', stationId).gte('report_date', monthStart).lte('report_date', monthEnd),
       supabase.from('fuel_orders').select('id', { count: 'exact', head: true }).eq('station_id', stationId).in('statut', ['lancee', 'partielle']),
       supabase.from('settings').select('pompe_inactive_apres').eq('id', 1).maybeSingle(),
       supabase.from('daily_reports').select('report_date,e1,e2,e3,e4,g1,g2,g3,g4').eq('station_id', stationId).order('report_date', { ascending: false }).limit(60),
     ])
     setMoments(new Set((sub.data || []).map(x => x.moment)))
     setForecast(fc.data || null)
-    const totals = { carburant: 0, gaz_lub: 0, superette: 0 }
-    for (const row of (recon.data || [])) {
-      if (N(row.nb_cloture) > 0 && totals[row.pole_groupe] !== undefined) totals[row.pole_groupe] += Math.max(0, N(row.ecart))
+
+    // Même décomposition que « Cash non tracé » du Tableau de bord admin (recettes − dépenses − versé),
+    // éclatée par pôle pour que la somme des 3 lignes (moins les charges générales non affectables
+    // à un pôle) redonne exactement le même total.
+    let carbEsp = 0, gazEsp = 0, lubEsp = 0, supEsp = 0
+    for (const r of (dr.data || [])) {
+      carbEsp += N(r.ess_espece) + N(r.gas_espece)
+      gazEsp += N(r.gaz_espece)
+      lubEsp += N(r.lubrifiant_espece)
+      supEsp += N(r.superette_espece)
     }
-    setPoleTotals(totals)
+    const gazLubEsp = gazEsp + lubEsp
+
+    const verseByPole = { carburant: 0, gaz_lub: 0, superette: 0 }
+    for (const d of (dep.data || [])) {
+      const p = d.pole === 'carburant' ? 'carburant' : d.pole === 'superette' ? 'superette' : 'gaz_lub'
+      verseByPole[p] += N(d.montant)
+    }
+
+    let depSuperette = 0, depGen = 0
+    for (const e of (exp.data || [])) {
+      if (e.non_cash) continue // prélèvement carburant propriétaire : non-cash, jamais décompté
+      if (e.categorie === 'SUPERETTE') depSuperette += N(e.montant)
+      else if (e.categorie !== 'CARBURANT') depGen += N(e.montant) // SBEE, AUTRE : charges générales non affectées à un pôle
+    }
+
+    setManque({
+      carburant: carbEsp - verseByPole.carburant,
+      gaz_lub: gazLubEsp - verseByPole.gaz_lub,
+      superette: supEsp - depSuperette - verseByPole.superette,
+    })
+    setDepGeneral(depGen)
+
     setPertes(pert.data || null)
     setAlerts((al.data || []).sort((a, b) => (a.gravite === 'haute' ? -1 : 1) - (b.gravite === 'haute' ? -1 : 1)))
     setPendingCount(po.count || 0)
@@ -81,11 +119,17 @@ export default function Journal() {
 
   if (loading) return <Panel><p style={{ font: '400 12px/1 var(--font-ui)', color: 'var(--text-muted)', margin: 0 }}>Chargement…</p></Panel>
 
-  const manqueTotal = poleTotals.carburant + poleTotals.gaz_lub + poleTotals.superette
+  const manqueTotal = manque.carburant + manque.gaz_lub + manque.superette - depGeneral
   const topAlerts = alerts.slice(0, 5)
-  const pumps = PUMPS.map(([key, label]) => ({ key, label, status: pumpStatus(pumpRows, key, pompeInactiveApres) }))
-  const nbActives = pumps.filter(p => p.status === 'active').length
-  const nbInactives = pumps.filter(p => p.status === 'inactive').length
+  const pumps = MACHINES.map(m => ({
+    ...m,
+    eStatus: pumpStatus(pumpRows, m.e, pompeInactiveApres),
+    gStatus: pumpStatus(pumpRows, m.g, pompeInactiveApres),
+  }))
+  const nbActives = pumps.reduce((s, p) => s + (p.eStatus === 'active' ? 1 : 0) + (p.gStatus === 'active' ? 1 : 0), 0)
+  const nbInactives = pumps.reduce((s, p) => s + (p.eStatus === 'inactive' ? 1 : 0) + (p.gStatus === 'inactive' ? 1 : 0), 0)
+  const capaciteEssence = N(current?.capacite_essence) || 20000
+  const capaciteGasoil = N(current?.capacite_gasoil) || 20000
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-6)' }}>
@@ -100,7 +144,7 @@ export default function Journal() {
                   <div style={{ font: 'var(--fw-semibold) 13px/1.2 var(--font-ui)', color: 'var(--text-primary)' }}>{c.label}</div>
                   {!done && <div style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', marginTop: 'var(--sp-2)' }}>{c.hint}</div>}
                 </div>
-                <Badge tone={done ? 'ok' : 'warn'}>{done ? 'Envoyé' : 'À faire'}</Badge>
+                {done ? <Badge tone="ok">Envoyé</Badge> : <Button size="sm" tone="primary" onClick={() => nav(`/saisie?moment=${c.key}`)}>Faire</Button>}
               </div>
             )
           })}
@@ -108,7 +152,7 @@ export default function Journal() {
             <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-4)', padding: 'var(--sp-4)', background: 'var(--surface-raised)', borderRadius: 'var(--radius-1)', borderLeft: 'var(--bw-accent) solid var(--state-info)' }}>
               <Icon name="truck" size={16} color="var(--state-info)" />
               <div style={{ flex: 1, font: '400 13px/1.3 var(--font-ui)', color: 'var(--text-body)' }}>{pendingCount} commande{pendingCount > 1 ? 's' : ''} en attente de réception</div>
-              <Button size="sm" onClick={() => nav('/saisie')}>Réceptionner</Button>
+              <Button size="sm" tone="primary" onClick={() => nav('/saisie')}>Réceptionner</Button>
             </div>
           )}
         </div>
@@ -119,17 +163,32 @@ export default function Journal() {
         <Kpi label="Autonomie gasoil" value={forecast?.jours_gasoil != null ? forecast.jours_gasoil : '—'} unit={forecast?.jours_gasoil != null ? 'j' : ''} status={AUTONOMIE_TONE(forecast?.jours_gasoil)} sub={forecast?.gas_stock != null ? `${Math.round(forecast.gas_stock)} L en cuve` : ''} />
         <Kpi label="Manque à verser (mois)" value={fcfa(manqueTotal)} status={manqueTotal > 0 ? 'alarm' : 'ok'} />
         <Kpi label="Pertes carburant (mois)" value={pertes?.perte_na_montant ? fcfa(pertes.perte_na_montant) : fcfa(0)} status={N(pertes?.perte_na_montant) > 0 ? 'alarm' : 'ok'} sub={pertes?.perte_na_litres ? `${Math.round(N(pertes.perte_na_litres)).toLocaleString('fr-FR')} L hors seuil` : ''} />
-        <Kpi label="Pompes actives" value={`${nbActives}/${pumps.length}`} status={nbInactives > 0 ? 'alarm' : 'ok'} sub={nbInactives > 0 ? `${nbInactives} hors service` : ''} />
+        <Kpi label="Pompes actives" value={`${nbActives}/8`} status={nbInactives > 0 ? 'alarm' : 'ok'} sub={nbInactives > 0 ? `${nbInactives} hors service` : ''} />
       </div>
 
+      <Panel title="État des cuves">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-5)' }}>
+          <GaugeBar value={N(forecast?.ess_stock)} max={capaciteEssence} label="Essence" valueLabel={`${Math.round(N(forecast?.ess_stock)).toLocaleString('fr-FR')} / ${capaciteEssence.toLocaleString('fr-FR')} L`} />
+          <GaugeBar value={N(forecast?.gas_stock)} max={capaciteGasoil} label="Gasoil" valueLabel={`${Math.round(N(forecast?.gas_stock)).toLocaleString('fr-FR')} / ${capaciteGasoil.toLocaleString('fr-FR')} L`} />
+        </div>
+      </Panel>
+
       <Panel title="Pompes" meta={`sur les ${pompeInactiveApres} derniers relevés`}>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 'var(--sp-3)' }}>
-          {pumps.map(p => (
-            <div key={p.key} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: 'var(--sp-3) var(--sp-4)', background: 'var(--surface-raised)', borderRadius: 'var(--radius-1)' }}>
-              <span style={{ font: '400 12px/1.2 var(--font-ui)', color: 'var(--text-body)' }}>{p.label}</span>
-              <Badge tone={p.status === 'active' ? 'ok' : p.status === 'inactive' ? 'alarm' : 'idle'}>
-                {p.status === 'active' ? 'Active' : p.status === 'inactive' ? 'Hors service' : '—'}
-              </Badge>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 'var(--sp-4)' }}>
+          {pumps.map(m => (
+            <div key={m.n} style={{ padding: 'var(--sp-4)', background: 'var(--surface-raised)', borderRadius: 'var(--radius-1)', border: '1px solid var(--border-hairline)', display: 'flex', flexDirection: 'column', gap: 'var(--sp-3)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-2)' }}>
+                <Icon name="fuel" size={13} color="var(--text-muted)" />
+                <span style={{ font: 'var(--fw-semibold) 11px/1 var(--font-ui)', textTransform: 'uppercase', letterSpacing: 'var(--ls-label)', color: 'var(--text-muted)' }}>Machine {m.n}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ font: '400 12px/1 var(--font-ui)', color: 'var(--text-body)' }}>Essence (E{m.n})</span>
+                <Badge tone={m.eStatus === 'active' ? 'ok' : m.eStatus === 'inactive' ? 'alarm' : 'idle'}>{m.eStatus === 'active' ? 'Active' : m.eStatus === 'inactive' ? 'Hors service' : '—'}</Badge>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ font: '400 12px/1 var(--font-ui)', color: 'var(--text-body)' }}>Gasoil (G{m.n})</span>
+                <Badge tone={m.gStatus === 'active' ? 'ok' : m.gStatus === 'inactive' ? 'alarm' : 'idle'}>{m.gStatus === 'active' ? 'Active' : m.gStatus === 'inactive' ? 'Hors service' : '—'}</Badge>
+              </div>
             </div>
           ))}
         </div>
@@ -137,16 +196,18 @@ export default function Journal() {
 
       <Panel title="Manque à verser par pôle" meta="ce mois">
         <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-3)' }}>
-          {Object.entries(POLE_LABELS).map(([key, label]) => (
-            <div key={key} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: 'var(--sp-3) var(--sp-4)', background: 'var(--surface-raised)', borderRadius: 'var(--radius-1)' }}>
-              <span style={{ font: '400 13px/1.3 var(--font-ui)', color: 'var(--text-body)' }}>{label}</span>
-              <span style={{ font: '500 13px/1 var(--font-data)', color: poleTotals[key] > 0 ? 'var(--state-alarm)' : 'var(--state-ok)' }}>{fcfa(poleTotals[key])}</span>
-            </div>
-          ))}
+          <PoleLine label="Carburant" value={manque.carburant} />
+          <PoleLine label="Gaz + Lubrifiant" value={manque.gaz_lub} />
+          <PoleLine label="Supérette" value={manque.superette} />
+          <PoleLine label="Charges générales (SBEE, autre)" value={-depGeneral} muted />
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: 'var(--sp-3) var(--sp-4)', borderTop: '1px solid var(--border-default)', marginTop: 'var(--sp-2)' }}>
+            <span style={{ font: 'var(--fw-semibold) 13px/1.3 var(--font-ui)', color: 'var(--text-primary)' }}>= Cash non tracé (mois)</span>
+            <span style={{ font: '600 13px/1 var(--font-data)', color: manqueTotal > 0 ? 'var(--state-alarm)' : 'var(--state-ok)' }}>{fcfa(manqueTotal)}</span>
+          </div>
         </div>
       </Panel>
 
-      <Panel title="Alertes actives" meta={`${alerts.length}`} flush>
+      <Panel title="Alertes du mois" meta={`${alerts.length}`} flush>
         {topAlerts.length
           ? <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-3)', padding: 'var(--gutter-panel)' }}>
               {topAlerts.map((a, i) => {
@@ -159,8 +220,17 @@ export default function Journal() {
                 <p style={{ font: '400 12px/1 var(--font-ui)', color: 'var(--text-muted)', margin: 0 }}>+ {alerts.length - topAlerts.length} autre(s) alerte(s).</p>
               )}
             </div>
-          : <PanelEmpty icon="check" label="Aucune alerte active" />}
+          : <PanelEmpty icon="check" label="Aucune alerte ce mois" />}
       </Panel>
+    </div>
+  )
+}
+
+function PoleLine({ label, value, muted }) {
+  return (
+    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: 'var(--sp-3) var(--sp-4)', background: 'var(--surface-raised)', borderRadius: 'var(--radius-1)' }}>
+      <span style={{ font: '400 13px/1.3 var(--font-ui)', color: muted ? 'var(--text-muted)' : 'var(--text-body)' }}>{label}</span>
+      <span style={{ font: '500 13px/1 var(--font-data)', color: muted ? 'var(--text-muted)' : value > 0 ? 'var(--state-alarm)' : 'var(--state-ok)' }}>{value < 0 ? '− ' + fcfa(Math.abs(value)) : fcfa(value)}</span>
     </div>
   )
 }

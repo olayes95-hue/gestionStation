@@ -38,7 +38,7 @@ export default function Submit() {
   const { stationId, current } = useStation()
   const [params] = useSearchParams()
   const [date, setDate] = useState(params.get('date') || today())
-  const [moment, setMoment] = useState(defaultMoment())
+  const [moment, setMoment] = useState(['matin', 'apres-midi', 'soir'].includes(params.get('moment')) ? params.get('moment') : defaultMoment())
   const [showAll, setShowAll] = useState(!!params.get('date'))
   const [f, setF] = useState(EMPTY)
   const [lub, setLub] = useState({})
