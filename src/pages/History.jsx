@@ -112,9 +112,11 @@ export default function History() {
     return 'ok'
   }
   const nbEcarts = frows.filter(r => dayStatus(r) === 'ecart').length
+  const nbAttente = frows.filter(r => dayStatus(r) === 'attente').length
   const nbSansPhoto = frows.filter(r => !photoDates.has(r.report_date)).length
   const shownRows = frows.filter(r =>
     quickFilter === 'ecarts' ? dayStatus(r) === 'ecart' :
+    quickFilter === 'attente' ? dayStatus(r) === 'attente' :
     quickFilter === 'sans-photo' ? !photoDates.has(r.report_date) : true)
 
   function exportCsv() {
@@ -211,6 +213,7 @@ export default function History() {
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 'var(--sp-4)' }}>
           <div onClick={() => setQuickFilter('tous')} style={{ cursor: 'pointer' }}><Kpi label="Jours saisis" value={frows.length} status={quickFilter === 'tous' ? 'info' : undefined} /></div>
           <div onClick={() => setQuickFilter('ecarts')} style={{ cursor: 'pointer' }}><Kpi label="Jours avec écart" value={nbEcarts} status={nbEcarts > 0 ? 'alarm' : 'ok'} /></div>
+          <div onClick={() => setQuickFilter('attente')} style={{ cursor: 'pointer' }}><Kpi label="Jours en attente" value={nbAttente} status={nbAttente > 0 ? 'warn' : 'ok'} /></div>
           <div onClick={() => setQuickFilter('sans-photo')} style={{ cursor: 'pointer' }}><Kpi label="Jours sans photo" value={nbSansPhoto} status={nbSansPhoto > 0 ? 'warn' : 'ok'} /></div>
         </div>
         {quickFilter !== 'tous' && <Button size="sm" onClick={() => setQuickFilter('tous')} style={{ alignSelf: 'flex-start' }}>Réinitialiser le filtre rapide</Button>}
