@@ -38,7 +38,9 @@ export default function Orders() {
   const [recvTotals, setRecvTotals] = useState({})
   const [livreReel, setLivreReel] = useState({})   // {order_id: somme des (cuve_après−cuve_avant) PAR réception}
   const [fStatut, setFStatut] = useState('tous'); const [fCat, setFCat] = useState('tous'); const [fProduit, setFProduit] = useState('tous')
-  const [year, setYear] = useState('all'); const [month, setMonth] = useState('all')
+  // Filtre par défaut : mois en cours (plus lisible qu'un historique complet non filtré).
+  const now = new Date()
+  const [year, setYear] = useState(String(now.getFullYear())); const [month, setMonth] = useState(String(now.getMonth() + 1).padStart(2, '0'))
   const [dateFrom, setDateFrom] = useState(''); const [dateTo, setDateTo] = useState('')
   const [err, setErr] = useState(''); const [msg, setMsg] = useState('')
   const [bonsRestant, setBonsRestant] = useState(0)
@@ -202,7 +204,7 @@ export default function Orders() {
     ? Math.round((new Date(o.report_date) - new Date(o.date_lancement)) / 86400000) : null
   const count = (s) => orders.filter(o => o.statut === s).length
   const produits = [...new Set(orders.map(o => o.produit).filter(Boolean))].sort()
-  const orderYears = [...new Set(orders.map(o => dateOf(o).slice(0, 4)).filter(Boolean))].sort()
+  const orderYears = [...new Set([...orders.map(o => dateOf(o).slice(0, 4)).filter(Boolean), String(now.getFullYear())])].sort()
 
   const inPeriod = (d) => {
     if (!d) return true
@@ -227,12 +229,11 @@ export default function Orders() {
   const nbAReceptionner = count('lancee') + count('partielle')
 
   const columns = [
-    { key: 'dates', header: 'Dates', render: o => (
-      <div style={{ fontSize: 12, whiteSpace: 'nowrap' }}>
-        Prop. {frDate(dateOf(o))}
-        {o.date_lancement && <><br />Lanc. {frDate(o.date_lancement)}</>}
-        {o.statut === 'recue' && o.report_date && <><br />Reçue {frDate(o.report_date)}</>}
-      </div>
+    { key: 'date_proposee', header: 'Proposée', render: o => <span style={{ whiteSpace: 'nowrap' }}>{frDate(dateOf(o))}</span> },
+    { key: 'date_etape', header: 'Lancée / Reçue', render: o => (
+      <span style={{ whiteSpace: 'nowrap' }}>
+        {o.statut === 'recue' && o.report_date ? frDate(o.report_date) : o.date_lancement ? frDate(o.date_lancement) : '—'}
+      </span>
     ) },
     { key: 'categorie', header: 'Catégorie', render: o => (CATS.find(c => c[0] === (o.categorie || 'carburant')) || [, o.categorie])[1] },
     { key: 'produit', header: 'Produit / détail', render: o => (o.categorie || 'carburant') === 'superette'
