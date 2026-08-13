@@ -6,6 +6,7 @@ import { compressImage } from '../lib/image'
 import { ORDER_STATUS_TONES } from '../lib/tones'
 import { Panel } from '../ds/octane/components/core/Panel.jsx'
 import { Button } from '../ds/octane/components/core/Button.jsx'
+import { IconButton } from '../ds/octane/components/core/IconButton.jsx'
 import { Badge } from '../ds/octane/components/core/Badge.jsx'
 import { Tag } from '../ds/octane/components/core/Tag.jsx'
 import { Field } from '../ds/octane/components/forms/Field.jsx'
@@ -19,7 +20,7 @@ import { EvidenceUpload } from '../ds/octane/components/evidence/EvidenceUpload.
 const N = (v) => (v ? (numFR(v) ?? 0) : 0)
 const CAT_LABELS = { carburant: 'Carburant', gaz: 'Gaz', lubrifiant: 'Lubrifiant', superette: 'Supérette' }
 
-export default function OrderReception({ stationId, date, settings = {}, onDone }) {
+export default function OrderReception({ stationId, date, settings = {}, onDone, open = true, onToggle }) {
   const { session } = useAuth()
   const [orders, setOrders] = useState([])
   const [totals, setTotals] = useState({})
@@ -96,7 +97,10 @@ export default function OrderReception({ stationId, date, settings = {}, onDone 
 
   if (!stationId || !orders.length) return null
   return (
-    <Panel title="Commandes à réceptionner" meta={`${orders.length}`}>
+    <Panel title="Commandes à réceptionner" meta={`${orders.length}`}
+      actions={onToggle && <IconButton icon="chevron-down" size="sm" title={open ? 'Masquer' : 'Afficher'}
+        onClick={onToggle} style={{ transform: open ? 'rotate(180deg)' : 'none' }} />}
+      bodyStyle={open ? undefined : { display: 'none' }}>
       {err && <AlertBanner tone="alarm" title="Erreur" style={{ marginBottom: 'var(--sp-4)' }}>{err}</AlertBanner>}
       {msg && <AlertBanner tone="ok" title="Succès" style={{ marginBottom: 'var(--sp-4)' }}>{msg}</AlertBanner>}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-4)' }}>

@@ -76,10 +76,12 @@ export default function Submit() {
   const [openDepenses, setOpenDepenses] = useState(null)
   const [openVersements, setOpenVersements] = useState(null)
   const [openPhotosJour, setOpenPhotosJour] = useState(false)  // galerie "Photos du jour" repliée par défaut
+  const [openReception, setOpenReception] = useState(false)    // "Commandes à réceptionner" repliée par défaut
   const matinMetersRef = useRef(null)
   const apresmidiMetersRef = useRef(null)
   const expensesRef = useRef(null)
   const depositsRef = useRef(null)
+  const orderReceptionRef = useRef(null)
 
   function fail(message, target = 'top', ref) {
     setErr(message); setErrTarget(target)
@@ -156,6 +158,7 @@ export default function Submit() {
     const tmap = {}; for (const x of (rt.data || [])) tmap[x.order_id] = x; setRecvTotals(tmap)
     setRecvOrder({})
     setMeterPhotos({})
+    setOpenReception(false)
   }
 
   // champ compteur avec photo-preuve par pompe
@@ -542,6 +545,12 @@ export default function Submit() {
           <MomentTile icon="clock" t="16 h" d="Ventes &amp; compteurs" active={moment === 'apres-midi'} done={submittedMoments.has('apres-midi')} onClick={() => setMoment('apres-midi')} />
           <MomentTile icon="moon" t="Soir" d="Clôture &amp; versement" active={moment === 'soir'} done={submittedMoments.has('soir')} onClick={() => setMoment('soir')} />
         </div>
+        {!isPompiste && !isVendeuse && (
+          <Button icon="truck" style={{ marginTop: 'var(--sp-4)' }} onClick={() => {
+            setOpenReception(true)
+            orderReceptionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+          }}>J'ai reçu une commande</Button>
+        )}
         <Checkbox label="Tout afficher (avancé)" checked={showAll} onChange={v => setShowAll(v)} style={{ marginTop: 'var(--sp-4)' }} />
       </Panel>
 
@@ -667,7 +676,12 @@ export default function Submit() {
       </>)}
 
       {/* ---- RÉCEPTION COMMANDES : affichage PARTAGÉ avec « Commandes », à tout moment ---- */}
-      {!isPompiste && !isVendeuse && <OrderReception stationId={stationId} date={date} settings={settings} onDone={() => load(date)} />}
+      {!isPompiste && !isVendeuse && (
+        <div ref={orderReceptionRef}>
+          <OrderReception stationId={stationId} date={date} settings={settings} onDone={() => load(date)}
+            open={openReception} onToggle={() => setOpenReception(v => !v)} />
+        </div>
+      )}
 
       {/* ---- SOIR : ACHATS / DÉPENSES / VERSEMENTS ---- */}
       {show('soir') && !isPompiste && (<>
