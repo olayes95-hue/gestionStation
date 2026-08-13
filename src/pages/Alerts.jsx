@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/auth.jsx'
 import { useStation } from '../lib/station.jsx'
@@ -10,6 +11,7 @@ import { Badge } from '../ds/octane/components/core/Badge.jsx'
 import { Tag } from '../ds/octane/components/core/Tag.jsx'
 import { Select } from '../ds/octane/components/forms/Select.jsx'
 import { Checkbox } from '../ds/octane/components/forms/Checkbox.jsx'
+import { Kpi } from '../lib/Kpi.jsx'
 
 const MONTHS = ['01','02','03','04','05','06','07','08','09','10','11','12']
 const ML = { '01':'Janv','02':'Févr','03':'Mars','04':'Avril','05':'Mai','06':'Juin','07':'Juil','08':'Août','09':'Sept','10':'Oct','11':'Nov','12':'Déc' }
@@ -18,6 +20,7 @@ const key = (a) => `${a.report_date}|${a.type}`
 export default function AlertsPage() {
   const { session } = useAuth()
   const { stationId } = useStation()
+  const nav = useNavigate()
   const [alerts, setAlerts] = useState([])
   const [dismissed, setDismissed] = useState(new Set())
   const [type, setType] = useState('all')
@@ -58,12 +61,24 @@ export default function AlertsPage() {
     }
   }, [alerts, inited])
 
+  const active = alerts.filter(a => !dismissed.has(key(a)))
+  const nbActive = active.length
+
+  // Résumé cliquable par type — sert aussi de filtre rapide (clique une tuile = filtre dessus).
+  const countByType = useMemo(() => {
+    const m = {}
+    for (const a of active) m[a.type] = (m[a.type] || 0) + 1
+    return m
+  }, [active])
+  const topTypes = useMemo(() => Object.entries(countByType).sort((a, b) => b[1] - a[1]).slice(0, 6), [countByType])
+
   const shown = alerts.filter(a =>
     (type === 'all' || a.type === type) &&
     (year === 'all' || a.report_date.slice(0, 4) === year) &&
     (month === 'all' || a.report_date.slice(5, 7) === month) &&
     (showDismissed ? dismissed.has(key(a)) : !dismissed.has(key(a))))
-  const nbActive = alerts.filter(a => !dismissed.has(key(a))).length
+    // Gravité haute en tête, à date égale de filtre — les urgentes ne se perdent pas dans la liste.
+    .sort((a, b) => (a.gravite === 'haute' ? -1 : 1) - (b.gravite === 'haute' ? -1 : 1))
 
   const yearOptions = [{ value: 'all', label: 'Toutes années' }, ...years.map(y => ({ value: y, label: y }))]
   const monthOptions = [{ value: 'all', label: 'Tous mois' }, ...MONTHS.map(m => ({ value: m, label: ML[m] }))]
@@ -81,6 +96,18 @@ export default function AlertsPage() {
         <Checkbox label="Voir les traitées" checked={showDismissed} onChange={v => setShowDismissed(v)} />
       </>}
     >
+      {topTypes.length > 0 && (
+        <div style={{ padding: 'var(--gutter-panel)', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 'var(--sp-4)' }}>
+          {topTypes.map(([t, n]) => {
+            const meta = ALERT_TONES[t] || { label: t, tone: 'info' }
+            return (
+              <div key={t} onClick={() => { setType(t); setShowDismissed(false) }} style={{ cursor: 'pointer' }}>
+                <Kpi label={meta.label} value={n} status={type === t ? 'info' : meta.tone} />
+              </div>
+            )
+          })}
+        </div>
+      )}
       {loading
         ? <div style={{ padding: 'var(--sp-6)', font: '400 12px/1 var(--font-ui)', color: 'var(--text-muted)' }}>Chargement…</div>
         : !shown.length
@@ -88,18 +115,25 @@ export default function AlertsPage() {
           : <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-4)', padding: 'var(--gutter-panel)' }}>
               {shown.map((a, i) => {
                 const meta = ALERT_TONES[a.type] || { label: a.type, tone: 'info' }
+                const urgent = a.gravite === 'haute'
                 return (
-                  <div key={i} style={{ display: 'flex', gap: 'var(--sp-4)', alignItems: 'flex-start', padding: 'var(--sp-4)', background: 'var(--surface-raised)', borderLeft: 'var(--bw-accent) solid var(--state-' + meta.tone + ')', borderRadius: 'var(--radius-1)' }}>
+                  <div key={i} style={{ display: 'flex', gap: 'var(--sp-4)', alignItems: 'flex-start', padding: 'var(--sp-4)', background: 'var(--surface-raised)', borderLeft: `${urgent ? '3px' : 'var(--bw-accent)'} solid var(--state-${meta.tone})`, borderRadius: 'var(--radius-1)' }}>
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 'var(--sp-3)', alignItems: 'center' }}>
-                        <Badge tone={meta.tone}>{meta.label}</Badge>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 'var(--sp-3)', alignItems: 'center', flexWrap: 'wrap' }}>
+                        <div style={{ display: 'flex', gap: 'var(--sp-2)', alignItems: 'center' }}>
+                          {urgent && <Badge tone="alarm">Urgent</Badge>}
+                          <Badge tone={meta.tone}>{meta.label}</Badge>
+                        </div>
                         <Tag>{frDate(a.report_date)}</Tag>
                       </div>
                       <div style={{ marginTop: 'var(--sp-3)', font: '400 13px/1.4 var(--font-ui)', color: 'var(--text-body)' }}>{a.detail}</div>
                     </div>
-                    {showDismissed
-                      ? <Button size="sm" onClick={() => restore(a)}>Rétablir</Button>
-                      : <Button size="sm" onClick={() => dismiss(a)}>Traité</Button>}
+                    <div style={{ display: 'flex', gap: 'var(--sp-2)', flexShrink: 0 }}>
+                      {a.report_date && <Button size="sm" onClick={() => nav(`/saisie?date=${a.report_date}`)}>Traiter</Button>}
+                      {showDismissed
+                        ? <Button size="sm" onClick={() => restore(a)}>Rétablir</Button>
+                        : <Button size="sm" tone="primary" onClick={() => dismiss(a)}>Marquer traité</Button>}
+                    </div>
                   </div>
                 )
               })}
