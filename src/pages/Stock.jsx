@@ -6,6 +6,7 @@ import { fcfa, frDate, numFR, today } from '../lib/format'
 import { STOCK_MOVEMENT_TONES } from '../lib/tones'
 import { Panel, PanelEmpty } from '../ds/octane/components/core/Panel.jsx'
 import { Button } from '../ds/octane/components/core/Button.jsx'
+import { IconButton } from '../ds/octane/components/core/IconButton.jsx'
 import { Badge } from '../ds/octane/components/core/Badge.jsx'
 import { Tag } from '../ds/octane/components/core/Tag.jsx'
 import { Icon } from '../ds/octane/components/core/Icon.jsx'
@@ -32,7 +33,10 @@ export default function Stock() {
   const [action, setAction] = useState(null)   // null | 'entree' | 'ajustement'
   const [nm, setNm] = useState(blank('entree'))
   const [fYear, setFYear] = useState('all'); const [fMonth, setFMonth] = useState('all')
-  const [showCats, setShowCats] = useState(['gaz', 'lubrifiant', 'superette'])  // pôles affichés (admin)
+  const [fProduit, setFProduit] = useState('')
+  const [showCats, setShowCats] = useState(['gaz', 'lubrifiant'])  // pôles affichés dans "Stock restant" (admin)
+  const [openSorties, setOpenSorties] = useState(false)
+  const [openJournal, setOpenJournal] = useState(false)
   const [msg, setMsg] = useState(''); const [err, setErr] = useState('')
   const toggleCat = (c) => setShowCats(p => p.includes(c) ? p.filter(x => x !== c) : [...p, c])
 
@@ -70,12 +74,20 @@ export default function Stock() {
   const stockByCat = useMemo(() => { const o = {}; stock.forEach(s => { (o[s.categorie] = o[s.categorie] || []).push(s) }); return o }, [stock])
   const cats = isVendeuse ? [['superette', 'Supérette']] : CATS
 
+  // Produits sous seuil, toutes catégories comptées confondues (gaz + lubrifiant) — la
+  // supérette est suivie en valeur, pas en quantité par produit, donc pas de seuil ici.
+  const lowStockItems = useMemo(() => stock
+    .map(s => ({ ...s, pr: products.find(p => p.categorie === s.categorie && p.nom === s.produit) }))
+    .filter(s => s.pr && N(s.stock) < N(s.pr.seuil)), [stock, products])
+
   const productColumns = (cat) => [
     { key: 'produit', header: 'Produit' },
     { key: 'stock', header: 'Reste', numeric: true, align: 'right', render: s => {
       const pr = products.find(p => p.categorie === cat && p.nom === s.produit)
       const low = pr && N(s.stock) < N(pr.seuil)
-      return <span style={{ color: low ? 'var(--state-alarm)' : 'inherit', fontWeight: 600 }}>{N(s.stock)}{low ? ' ⚠' : ''}</span>
+      return <span style={{ display: 'inline-flex', alignItems: 'center', gap: 'var(--sp-2)', justifyContent: 'flex-end' }}>
+        <span style={{ fontWeight: 600 }}>{N(s.stock)}</span>{low && <Badge tone="alarm">Bas</Badge>}
+      </span>
     } },
     { key: 'seuil', header: 'Seuil', numeric: true, align: 'right', muted: true, render: s => { const pr = products.find(p => p.categorie === cat && p.nom === s.produit); return pr ? N(pr.seuil) : '—' } },
   ]
@@ -112,6 +124,18 @@ export default function Stock() {
       {msg && <AlertBanner tone="ok" title="Succès">{msg}</AlertBanner>}
       {err && <AlertBanner tone="alarm" title="Erreur">{err}</AlertBanner>}
 
+      {/* ===== STOCK BAS — résumé immédiat, gérant/pompiste/admin ===== */}
+      {!isVendeuse && (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 'var(--sp-4)' }}>
+          <Kpi label="Produits sous seuil" value={lowStockItems.length} status={lowStockItems.length > 0 ? 'alarm' : 'ok'} />
+        </div>
+      )}
+      {!isVendeuse && lowStockItems.length > 0 && (
+        <AlertBanner tone="alarm" title="Stock bas">
+          {lowStockItems.map(s => `${s.produit} (${N(s.stock)}/${N(s.pr.seuil)})`).join(' · ')}
+        </AlertBanner>
+      )}
+
       {/* ===== VALORISATION — admin ===== */}
       {isAdmin && (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 'var(--sp-4)' }}>
@@ -122,26 +146,22 @@ export default function Stock() {
 
       {/* ===== STOCK ACTUEL (gaz/lub) — gérant/pompiste/admin ===== */}
       {!isVendeuse && (
-        <Panel title="Stock restant" actions={isAdmin && ['gaz', 'lubrifiant', 'superette'].map(c => (
+        <Panel title="Stock restant" actions={isAdmin && ['gaz', 'lubrifiant'].map(c => (
           <Button key={c} size="sm" tone={showCats.includes(c) ? 'primary' : 'outline'} onClick={() => toggleCat(c)} style={{ textTransform: 'capitalize' }}>{c}</Button>
         ))}>
           <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', marginTop: 0 }}>
             Ce qu'il reste, d'après le <b>dernier comptage déclaré dans la Saisie du jour</b>. Ici tu n'ajoutes que les <b>entrées</b> (livraisons) — les sorties/ventes sont calculées toutes seules.
           </p>
-          {isAdmin && showCats.includes('superette') && (
-            <div style={{ marginBottom: 'var(--sp-4)' }}>
-              <div style={{ font: 'var(--fw-semibold) 10px/1 var(--font-ui)', textTransform: 'uppercase', letterSpacing: 'var(--ls-micro)', color: 'var(--text-muted)', marginBottom: 'var(--sp-2)' }}>supérette (valeur)</div>
-              <Tag>{fcfa((valeur.find(v => v.categorie === 'superette') || {}).valeur)}</Tag>
-            </div>
-          )}
-          {(isAdmin ? ['gaz', 'lubrifiant'].filter(c => showCats.includes(c)) : ['gaz', 'lubrifiant']).map(cat => (
-            <div key={cat} style={{ marginBottom: 'var(--sp-4)' }}>
-              <div style={{ font: 'var(--fw-semibold) 10px/1 var(--font-ui)', textTransform: 'uppercase', letterSpacing: 'var(--ls-micro)', color: 'var(--text-muted)', marginBottom: 'var(--sp-2)' }}>{cat}</div>
-              {(stockByCat[cat] || []).length
-                ? <DataTable columns={productColumns(cat)} rows={(stockByCat[cat] || []).map(s => ({ ...s, id: s.produit }))} />
-                : <p style={{ font: '400 12px/1 var(--font-ui)', color: 'var(--text-muted)', margin: 0 }}>Aucun comptage encore.</p>}
-            </div>
-          ))}
+          <div style={{ display: 'flex', gap: 'var(--sp-4)', flexWrap: 'wrap' }}>
+            {(isAdmin ? ['gaz', 'lubrifiant'].filter(c => showCats.includes(c)) : ['gaz', 'lubrifiant']).map(cat => (
+              <div key={cat} style={{ flex: '1 1 260px' }}>
+                <div style={{ font: 'var(--fw-semibold) 10px/1 var(--font-ui)', textTransform: 'uppercase', letterSpacing: 'var(--ls-micro)', color: 'var(--text-muted)', marginBottom: 'var(--sp-2)' }}>{cat}</div>
+                {(stockByCat[cat] || []).length
+                  ? <DataTable columns={productColumns(cat)} rows={(stockByCat[cat] || []).map(s => ({ ...s, id: s.produit }))} />
+                  : <p style={{ font: '400 12px/1 var(--font-ui)', color: 'var(--text-muted)', margin: 0 }}>Aucun comptage encore.</p>}
+              </div>
+            ))}
+          </div>
         </Panel>
       )}
 
@@ -198,13 +218,16 @@ export default function Stock() {
         )}
       </Panel>
 
-      {/* ===== SORTIES DÉDUITES — admin seulement (analyse) ===== */}
+      {/* ===== SORTIES DÉDUITES — admin seulement (analyse, repliée par défaut) ===== */}
       {isAdmin && (() => {
         const js = sorties.filter(s =>
           (fYear === 'all' || (s.report_date || '').slice(0, 4) === fYear)
           && (fMonth === 'all' || (s.report_date || '').slice(5, 7) === fMonth))
         return (
-          <Panel title="Sorties déduites (consommation)" meta="calculé automatiquement" flush>
+          <Panel title="Sorties déduites (consommation)" meta="calculé automatiquement" flush
+            bodyStyle={openSorties ? undefined : { display: 'none' }}
+            actions={<IconButton icon="chevron-down" size="sm" title={openSorties ? 'Masquer' : 'Afficher'}
+              onClick={() => setOpenSorties(v => !v)} style={{ transform: openSorties ? 'rotate(180deg)' : 'none' }} />}>
             <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', margin: 'var(--sp-4) var(--gutter-panel) 0' }}>
               Sortie = stock déclaré la veille + entrées du jour − stock déclaré du jour. Négatif = entrée oubliée (à vérifier).
             </p>
@@ -215,22 +238,30 @@ export default function Stock() {
         )
       })()}
 
-      {/* ===== JOURNAL ===== */}
+      {/* ===== JOURNAL — admin seulement (repliée par défaut) ===== */}
       {isAdmin ? (() => {
         const base = mvts
         const years = [...new Set(base.map(m => (m.date_mouvement || '').slice(0, 4)).filter(Boolean))].sort()
         const jm = base.filter(m =>
           (fYear === 'all' || (m.date_mouvement || '').slice(0, 4) === fYear)
-          && (fMonth === 'all' || (m.date_mouvement || '').slice(5, 7) === fMonth))
+          && (fMonth === 'all' || (m.date_mouvement || '').slice(5, 7) === fMonth)
+          && (!fProduit || (m.produit || '').toLowerCase().includes(fProduit.toLowerCase())))
         const totVal = jm.reduce((s, m) => s + (m.valeur != null ? N(m.valeur) * (m.type === 'sortie' ? -1 : 1) : 0), 0)
         return (
-          <Panel title="Journal des mouvements" meta={`${jm.length}`} flush actions={<>
-            <Select size="sm" value={fYear} onChange={e => setFYear(e.target.value)} options={[{ value: 'all', label: 'Toutes années' }, ...years.map(y => ({ value: y, label: y }))]} />
-            <Select size="sm" value={fMonth} onChange={e => setFMonth(e.target.value)} options={[{ value: 'all', label: 'Tous mois' }, ...MONTHS.map(m => ({ value: m, label: m }))]} />
-            {(fYear !== 'all' || fMonth !== 'all') && <Button size="sm" onClick={() => { setFYear('all'); setFMonth('all') }}>Réinit.</Button>}
-            <Tag>Solde : {fcfa(totVal)}</Tag>
-          </>}>
-            {jm.length ? <DataTable columns={journalColumns} rows={jm} /> : <PanelEmpty icon="calendar-days" label="Aucun mouvement sur cette période" />}
+          <Panel title="Journal des mouvements" meta={`${jm.length}`} flush
+            bodyStyle={openJournal ? undefined : { display: 'none' }}
+            actions={<IconButton icon="chevron-down" size="sm" title={openJournal ? 'Masquer' : 'Afficher'}
+              onClick={() => setOpenJournal(v => !v)} style={{ transform: openJournal ? 'rotate(180deg)' : 'none' }} />}>
+            <div style={{ display: 'flex', gap: 'var(--sp-3)', flexWrap: 'wrap', alignItems: 'center', padding: 'var(--gutter-panel)', paddingBottom: 0 }}>
+              <Input size="sm" value={fProduit} onChange={e => setFProduit(e.target.value)} placeholder="Rechercher un produit…" style={{ flex: '1 1 180px' }} />
+              <Select size="sm" value={fYear} onChange={e => setFYear(e.target.value)} options={[{ value: 'all', label: 'Toutes années' }, ...years.map(y => ({ value: y, label: y }))]} />
+              <Select size="sm" value={fMonth} onChange={e => setFMonth(e.target.value)} options={[{ value: 'all', label: 'Tous mois' }, ...MONTHS.map(m => ({ value: m, label: m }))]} />
+              {(fYear !== 'all' || fMonth !== 'all' || fProduit) && <Button size="sm" onClick={() => { setFYear('all'); setFMonth('all'); setFProduit('') }}>Réinit.</Button>}
+              <Tag>Solde : {fcfa(totVal)}</Tag>
+            </div>
+            <div style={{ marginTop: 'var(--sp-4)' }}>
+              {jm.length ? <DataTable columns={journalColumns} rows={jm} /> : <PanelEmpty icon="calendar-days" label="Aucun mouvement sur cette période" />}
+            </div>
           </Panel>
         )
       })() : (() => {
