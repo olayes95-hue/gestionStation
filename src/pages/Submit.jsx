@@ -8,6 +8,7 @@ import { compressImage } from '../lib/image'
 import OrderReception from '../components/OrderReception.jsx'
 import { Panel } from '../ds/octane/components/core/Panel.jsx'
 import { Button } from '../ds/octane/components/core/Button.jsx'
+import { IconButton } from '../ds/octane/components/core/IconButton.jsx'
 import { Icon } from '../ds/octane/components/core/Icon.jsx'
 import { Tag } from '../ds/octane/components/core/Tag.jsx'
 import { Field } from '../ds/octane/components/forms/Field.jsx'
@@ -70,6 +71,7 @@ export default function Submit() {
   const [openAchats, setOpenAchats] = useState(null)     // null = auto (ouvert si déjà des lignes)
   const [openDepenses, setOpenDepenses] = useState(null)
   const [openVersements, setOpenVersements] = useState(null)
+  const [openPhotosJour, setOpenPhotosJour] = useState(false)  // galerie "Photos du jour" repliée par défaut
   const matinMetersRef = useRef(null)
   const apresmidiMetersRef = useRef(null)
   const expensesRef = useRef(null)
@@ -537,9 +539,11 @@ export default function Submit() {
       {locked && <AlertBanner tone="alarm" title="Verrouillé">Journée verrouillée (plus d'un mois). Lecture seule — seul l'administrateur peut la corriger.</AlertBanner>}
       {isPompiste && <AlertBanner tone="info" title="Mode pompiste">Tu saisis les compteurs, le stock et les photos. Les ventes et versements sont gérés par le gérant.</AlertBanner>}
 
-      {/* ---- PHOTOS DU JOUR (vue seule, pour vérification admin) ---- */}
+      {/* ---- PHOTOS DU JOUR (vue seule, pour vérification admin) — accordéon replié par défaut ---- */}
       {attachments.length > 0 && (
-        <Panel title="Photos du jour">
+        <Panel title="Photos du jour" meta={`${attachments.length}`} bodyStyle={openPhotosJour ? undefined : { display: 'none' }}
+          actions={<IconButton icon="chevron-down" size="sm" title={openPhotosJour ? 'Masquer' : 'Afficher'}
+            onClick={() => setOpenPhotosJour(v => !v)} style={{ transform: openPhotosJour ? 'rotate(180deg)' : 'none' }} />}>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--sp-4)' }}>
             {attachments.map(a => (
               <EvidenceThumb key={a.id} src={photoUrl(a.photo_path)} label={a.categorie} timestamp={a.note} status="none" size={92}
