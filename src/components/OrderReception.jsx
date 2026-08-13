@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react'
 import { supabase, BORDEREAUX_BUCKET } from '../lib/supabase'
 import { useAuth } from '../lib/auth.jsx'
-import { numFR, today } from '../lib/format'
-import { compressImage } from '../lib/image'
+import { today } from '../lib/format'
+import { N, receptionner as receptionnerCommande } from '../lib/orderReception'
 import { ORDER_STATUS_TONES } from '../lib/tones'
 import { Panel } from '../ds/octane/components/core/Panel.jsx'
 import { Button } from '../ds/octane/components/core/Button.jsx'
@@ -17,7 +17,6 @@ import { EvidenceUpload } from '../ds/octane/components/evidence/EvidenceUpload.
 
 // Affichage UNIQUE des commandes à réceptionner (statut lancée / partielle),
 // partagé par « Saisie du jour » et « Commandes » → strictement identique.
-const N = (v) => (v ? (numFR(v) ?? 0) : 0)
 const CAT_LABELS = { carburant: 'Carburant', gaz: 'Gaz', lubrifiant: 'Lubrifiant', superette: 'Supérette' }
 
 export default function OrderReception({ stationId, date, settings = {}, onDone, open = true, onToggle }) {
@@ -38,59 +37,18 @@ export default function OrderReception({ stationId, date, settings = {}, onDone,
   }
   useEffect(() => { load() }, [stationId])
 
-  const pa = (produit) => produit === 'gasoil' ? N(settings.gasoil_pa || 730) : N(settings.essence_pa || 705)
   const flash = (m) => { setMsg(m); setTimeout(() => setMsg(''), 2500) }
 
   async function receptionner(o) {
-    const r = recv[o.id] || {}
-    const day = r.date || date || today()
-    const recu = numFR(r.quantite_recue)
-    if (!recu || recu <= 0) { setErr('Renseigne la quantité effectivement reçue (> 0).'); return }
-    if (o.categorie === 'carburant' && (r.cuve_avant === '' || r.cuve_apres === '' || r.cuve_avant == null || r.cuve_apres == null)) {
-      setErr('Renseigne cuve AVANT et APRÈS.'); return
-    }
-    // Garde-fou : quantité déclarée reçue vs mesure physique cuve_après−cuve_avant (CETTE réception).
-    // Un écart important signale un relevé « cuve avant » pris trop tôt (pollué par des ventes avant
-    // l'arrivée réelle du camion) ou une erreur de saisie — pas forcément une vraie perte.
-    if (o.categorie === 'carburant' && !r.forceEcart) {
-      const cuveDelta = N(r.cuve_apres) - N(r.cuve_avant)
-      const ecart = Math.abs(recu - cuveDelta)
-      const seuil = Math.max(recu * (N(settings.taux_perte_acceptable) || 5) / 100, 50)
-      if (ecart > seuil) {
-        setRecv(p => ({ ...p, [o.id]: { ...r, warnEcart: `Déclaré reçu ${recu.toLocaleString('fr-FR')} L, mais cuve après−avant = ${cuveDelta.toLocaleString('fr-FR')} L (écart ${Math.round(ecart).toLocaleString('fr-FR')} L). Vérifie que « cuve avant » a bien été relevée juste avant l'arrivée du camion.` } }))
-        return
-      }
-    }
-    const deja = N(totals[o.id]?.quantite_recue_total)
-    const total = deja + recu
-    const marge = N(o.quantite_commandee) * (N(settings.taux_perte_acceptable) || 5) / 100
-    const complet = total >= N(o.quantite_commandee) - marge
+    const raw = recv[o.id] || {}
+    const r = raw.date ? raw : { ...raw, date: date || today() }
     setErr('')
     try {
-      // Photo (bon de livraison / jauge) — facultative, n'empêche pas la réception.
-      let photo_path = null
-      if (r._file) {
-        photo_path = `${stationId}/reception/${day}/${o.id}_${(r._file.name || 'photo').replace(/[^\w.\-]/g, '_')}`
-        const { error: up } = await supabase.storage.from(BORDEREAUX_BUCKET).upload(photo_path, await compressImage(r._file))
-        if (up) throw up
-      }
-      if (o.categorie === 'carburant') {
-        const prix = pa(o.produit)
-        await supabase.from('order_receptions').insert({ order_id: o.id, station_id: stationId, report_date: day, quantite_recue: recu, cuve_avant: numFR(r.cuve_avant), cuve_apres: numFR(r.cuve_apres), prix_achat: prix, montant: recu * prix, photo_path, created_by: session.user.id })
-        await supabase.from('fuel_orders').update({ statut: complet ? 'recue' : 'partielle', cuve_avant: o.cuve_avant != null ? o.cuve_avant : numFR(r.cuve_avant), cuve_apres: numFR(r.cuve_apres), report_date: day, prix_achat: prix, montant: total * prix, recu_by: session.user.id, recu_at: new Date().toISOString() }).eq('id', o.id)
-        const sf = o.produit === 'gasoil' ? 'gas_stock' : 'ess_stock'
-        await supabase.from('daily_reports').upsert({ station_id: stationId, report_date: day, [sf]: numFR(r.cuve_apres), created_by: session.user.id }, { onConflict: 'station_id,report_date' })
-      } else {
-        await supabase.from('order_receptions').insert({ order_id: o.id, station_id: stationId, report_date: day, quantite_recue: recu, photo_path, created_by: session.user.id })
-        await supabase.from('fuel_orders').update({ statut: complet ? 'recue' : 'partielle', report_date: day, recu_by: session.user.id, recu_at: new Date().toISOString() }).eq('id', o.id)
-        const mvt = { station_id: stationId, categorie: o.categorie, type: 'entree', source: 'reception', ref: 'CMD#' + o.id, date_mouvement: day, created_by: session.user.id }
-        if (o.categorie === 'superette') mvt.valeur = N(o.montant_paiement)
-        else { mvt.produit = o.produit; mvt.quantite = recu }
-        await supabase.from('stock_movements').insert(mvt)
-      }
-      if (photo_path) await supabase.from('attachments').insert({ station_id: stationId, report_date: day, categorie: 'reception', note: `${o.produit || o.categorie} — reçu ${recu} / ${N(o.quantite_commandee)}`, photo_path, created_by: session.user.id })
+      const deja = N(totals[o.id]?.quantite_recue_total)
+      const result = await receptionnerCommande({ supabase, bucket: BORDEREAUX_BUCKET, stationId, session, order: o, recv: r, settings, deja })
+      if (result.warnEcart) { setRecv(p => ({ ...p, [o.id]: { ...r, warnEcart: result.warnEcart } })); return }
       setRecv(p => ({ ...p, [o.id]: undefined }))
-      flash(complet ? 'Commande soldée — stock mis à jour' : `Réception partielle (${total.toLocaleString('fr-FR')}/${N(o.quantite_commandee).toLocaleString('fr-FR')})`)
+      flash(result.complet ? 'Commande soldée — stock mis à jour' : `Réception partielle (${result.total.toLocaleString('fr-FR')}/${N(o.quantite_commandee).toLocaleString('fr-FR')})`)
       await load(); onDone && onDone()
     } catch (e) { setErr(e.message || String(e)) }
   }
