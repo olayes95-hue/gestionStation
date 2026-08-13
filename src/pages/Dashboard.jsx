@@ -44,6 +44,12 @@ export default function Dashboard() {
   const [openRecon, setOpenRecon] = useState(false)
   const [overview, setOverview] = useState([])   // vue comparative multi-stations (indép. de la station sélectionnée)
   const [polePeriod, setPolePeriod] = useState({ dr: [], dep: [], exp: [] })   // brut, pour manque-à-verser et dépenses par pôle/catégorie sur la période sélectionnée
+  const [charges, setCharges] = useState([])   // table "charges" du Point financier (Finance.jsx) — loyer, salaires, impôts...
+
+  useEffect(() => {
+    if (!stationId) return
+    supabase.from('charges').select('mois,categorie,montant').eq('station_id', stationId).then(({ data }) => setCharges(data || []))
+  }, [stationId])
 
   useEffect(() => {
     if (!stationId) return
@@ -132,6 +138,18 @@ export default function Dashboard() {
   const pctEsp = caTotal ? Math.round(100 * totCash / caTotal) : null
   const totDep = sum('total_depense'), totMarge = sum('commission_carburant'), totLivr = sum('total_livraisons')
   const gapVerse = totCash - totDep - totVerse
+
+  // Charges totales déclarées = mêmes deux sources que le Point financier (Finance.jsx) :
+  // les dépenses quotidiennes du gérant (SBEE + carburant propriétaire, non-cash inclus — le
+  // prélèvement carburant est une vraie charge même s'il ne bouge pas de cash) + les charges
+  // fixes saisies à la main dans le Point financier (loyer, salaires, impôts...). totDep (juste
+  // au-dessus) reste utilisé tel quel pour « Cash non tracé », qui ne doit lui rien voir passer
+  // de non-cash — ce sont deux notions de charges différentes, pas une erreur de doublon.
+  const REVENU_CAT = 'AUTRES_PRODUITS'
+  const totChargesAuto = polePeriod.exp.filter(e => e.categorie === 'SBEE' || e.categorie === 'CARBURANT').reduce((s, e) => s + N(e.montant), 0)
+  const chargeInPeriod = (m) => year === 'all' ? true : month === 'all' ? (m || '').startsWith(year) : m === `${year}-${month}`
+  const totChargesManuel = charges.filter(c => c.categorie !== REVENU_CAT && chargeInPeriod(c.mois)).reduce((s, c) => s + N(c.montant), 0)
+  const totChargesDeclarees = totChargesAuto + totChargesManuel
 
   // Répartition Bon / Espèce du CARBURANT uniquement.
   // ventes_bon = ess_bon+gas_bon (seul le carburant a des bons).
@@ -269,7 +287,7 @@ export default function Dashboard() {
       {/* Bandeau financier principal : les 4 chiffres qui comptent le plus, tout de suite visibles. */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 'var(--sp-4)' }}>
         <Kpi label="CA total (période)" value={L(fcfa(caTotal))} sub="ventes à bon + espèces" />
-        <Kpi label="Charges totales déclarées" value={L(fcfa(totDep))} />
+        <Kpi label="Charges totales déclarées" value={L(fcfa(totChargesDeclarees))} sub="gérant (SBEE + carburant) + point financier" />
         <Kpi label="Cash non tracé" value={L(fcfa(gapVerse))} status={gapVerse > 0 ? 'alarm' : undefined} sub="recettes − dépenses − versé" />
         <Kpi label="Versé banque" value={L(fcfa(totVerse))} />
       </div>
