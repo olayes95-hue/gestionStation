@@ -4,7 +4,7 @@ import { supabase } from '../lib/supabase'
 import { useStation } from '../lib/station.jsx'
 import { fcfa, frDate } from '../lib/format'
 import { ALERT_TONES } from '../lib/tones'
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend } from 'recharts'
+import { BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend } from 'recharts'
 import { Panel, PanelEmpty } from '../ds/octane/components/core/Panel.jsx'
 import { Button } from '../ds/octane/components/core/Button.jsx'
 import { IconButton } from '../ds/octane/components/core/IconButton.jsx'
@@ -20,6 +20,13 @@ const MONTHS = ['01','02','03','04','05','06','07','08','09','10','11','12']
 const ML = { '01':'Janv','02':'Févr','03':'Mars','04':'Avril','05':'Mai','06':'Juin','07':'Juil','08':'Août','09':'Sept','10':'Oct','11':'Nov','12':'Déc' }
 const YEAR_TONE = (d) => d == null ? undefined : d < 3 ? 'alarm' : d < 6 ? 'warn' : 'ok'
 const YEAR_COLOR = (d) => d == null ? 'var(--text-primary)' : d < 3 ? 'var(--state-alarm)' : d < 6 ? 'var(--state-warn)' : 'var(--state-ok)'
+const POLE_COLORS = { Carburant: 'var(--accent)', Gaz: 'var(--state-info)', Lubrifiant: 'var(--state-warn)', Supérette: 'var(--state-ok)' }
+// Bornes de dates pour une sélection année/mois du dashboard ('all' = pas de filtre sur ce niveau).
+function periodBounds(year, month) {
+  if (year === 'all') return { from: '2000-01-01', to: '2100-12-31' }
+  if (month === 'all') return { from: `${year}-01-01`, to: `${year}-12-31` }
+  return { from: `${year}-${month}-01`, to: `${year}-${month}-31` }
+}
 
 export default function Dashboard() {
   const { stationId, stations, setStationId } = useStation()
@@ -38,6 +45,21 @@ export default function Dashboard() {
   const [inited, setInited] = useState(false)
   const [openRecon, setOpenRecon] = useState(false)
   const [overview, setOverview] = useState([])   // vue comparative multi-stations (indép. de la station sélectionnée)
+  const [polePeriod, setPolePeriod] = useState({ dr: [], dep: [], exp: [] })   // brut, pour manque-à-verser et dépenses par pôle/catégorie sur la période sélectionnée
+
+  useEffect(() => {
+    if (!stationId) return
+    const { from, to } = periodBounds(year, month)
+    ;(async () => {
+      const [dr, dep, exp] = await Promise.all([
+        supabase.from('daily_reports').select('ess_espece,gas_espece,gaz_espece,superette_espece,lubrifiant_espece').eq('station_id', stationId).gte('report_date', from).lte('report_date', to),
+        supabase.from('deposits').select('pole,montant,periode_fin,report_date').eq('station_id', stationId)
+          .or(`and(periode_fin.gte.${from},periode_fin.lte.${to}),and(periode_fin.is.null,report_date.gte.${from},report_date.lte.${to})`),
+        supabase.from('expenses').select('categorie,montant,non_cash').eq('station_id', stationId).gte('report_date', from).lte('report_date', to),
+      ])
+      setPolePeriod({ dr: dr.data || [], dep: dep.data || [], exp: exp.data || [] })
+    })()
+  }, [stationId, year, month])
 
   async function loadStock() {
     if (!stationId) return
@@ -131,6 +153,53 @@ export default function Dashboard() {
 
   const chart = fm.map(m => ({ mois: m.mois.slice(2), 'Ventes bon': Math.round(N(m.ventes_bon)), 'Espèces': Math.round(N(m.recettes_especes)), 'Versé': Math.round(N(m.total_verse)) }))
 
+  // Répartition du CA par pôle (camembert) — période sélectionnée, agrégé mensuel déjà chargé.
+  const caParPole = [
+    { name: 'Carburant', value: sum('ca_carburant') },
+    { name: 'Gaz', value: sum('ventes_gaz') },
+    { name: 'Lubrifiant', value: sum('ventes_lubrifiant') },
+    { name: 'Supérette', value: sum('ventes_superette') },
+  ].filter(r => r.value > 0)
+
+  // Évolution mensuelle par pôle (bâtons empilés) — même agrégat, vue mois par mois plutôt que sommée.
+  const chartPoles = fm.map(m => ({
+    mois: m.mois.slice(2),
+    Carburant: Math.round(N(m.ca_carburant)), Gaz: Math.round(N(m.ventes_gaz)),
+    Lubrifiant: Math.round(N(m.ventes_lubrifiant)), Supérette: Math.round(N(m.ventes_superette)),
+  }))
+
+  // Manque à verser par pôle (bâtons) — même calcul que le Journal de bord du gérant
+  // (espèces − dépenses non-cash − versé, par pôle), mais sur la période sélectionnée du dashboard.
+  const manquePole = (() => {
+    let carbEsp = 0, gazEsp = 0, lubEsp = 0, supEsp = 0
+    for (const r of polePeriod.dr) {
+      carbEsp += N(r.ess_espece) + N(r.gas_espece)
+      gazEsp += N(r.gaz_espece); lubEsp += N(r.lubrifiant_espece); supEsp += N(r.superette_espece)
+    }
+    const verseByPole = { carburant: 0, gaz_lub: 0, superette: 0 }
+    for (const d of polePeriod.dep) {
+      const p = d.pole === 'carburant' ? 'carburant' : d.pole === 'superette' ? 'superette' : 'gaz_lub'
+      verseByPole[p] += N(d.montant)
+    }
+    let depSuperette = 0
+    for (const e of polePeriod.exp) { if (!e.non_cash && e.categorie === 'SUPERETTE') depSuperette += N(e.montant) }
+    return [
+      { name: 'Carburant', value: carbEsp - verseByPole.carburant },
+      { name: 'Gaz + Lubrifiant', value: (gazEsp + lubEsp) - verseByPole.gaz_lub },
+      { name: 'Supérette', value: supEsp - depSuperette - verseByPole.superette },
+    ]
+  })()
+
+  // Répartition des dépenses par catégorie (camembert) — toutes les dépenses de la période,
+  // y compris le prélèvement carburant non-cash (utile pour voir où va la valeur, pas seulement le cash).
+  const DEP_CAT_LABELS = { SBEE: 'SBEE (électricité)', SUPERETTE: 'Supérette', CARBURANT: 'Carburant (prélèvement propriétaire)', AUTRE: 'Autre' }
+  const depensesParCat = (() => {
+    const totals = {}
+    for (const e of polePeriod.exp) { const k = (e.categorie || 'AUTRE').toUpperCase(); totals[k] = (totals[k] || 0) + N(e.montant) }
+    return Object.entries(totals).filter(([, v]) => v > 0).map(([k, v]) => ({ name: DEP_CAT_LABELS[k] || k, value: v }))
+  })()
+  const DEP_CAT_COLORS = { 'SBEE (électricité)': 'var(--state-warn)', 'Supérette': 'var(--state-ok)', 'Carburant (prélèvement propriétaire)': 'var(--accent)', 'Autre': 'var(--text-muted)' }
+
   const yearOptions = [{ value: 'all', label: 'Toutes années' }, ...years.map(y => ({ value: y, label: y }))]
   const monthOptions = [{ value: 'all', label: 'Tous mois' }, ...MONTHS.map(m => ({ value: m, label: ML[m] }))]
 
@@ -168,12 +237,6 @@ export default function Dashboard() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-6)' }}>
-      {overview.length > 1 && (
-        <Panel title="Vue d'ensemble des stations" flush>
-          <DataTable columns={overviewColumns} rows={overview} rowStatus={r => r.nbAlertes > 0 || (r.cashNonTrace != null && r.cashNonTrace > 0) ? 'alarm' : undefined} />
-        </Panel>
-      )}
-
       {alerts.length > 0 && (
         <Panel title="Alertes — mois en cours" meta={`${alerts.length}`} flush>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-3)', padding: 'var(--gutter-panel)' }}>
@@ -204,6 +267,12 @@ export default function Dashboard() {
           </div>
         </>)}
       </Panel>
+
+      {overview.length > 1 && (
+        <Panel title="Vue d'ensemble des stations" flush>
+          <DataTable columns={overviewColumns} rows={overview} rowStatus={r => r.nbAlertes > 0 || (r.cashNonTrace != null && r.cashNonTrace > 0) ? 'alarm' : undefined} />
+        </Panel>
+      )}
 
       {reorder.length > 0 && (
         <Panel title="Prévision de commande carburant" status={reorder.some(r => r.commander_maintenant) ? 'alarm' : 'ok'} flush>
@@ -250,6 +319,37 @@ export default function Dashboard() {
         </>) : <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', margin: 0 }}>Pas de ventes carburant sur la période sélectionnée.</p>}
       </Panel>
 
+      <div style={{ display: 'flex', gap: 'var(--sp-6)', flexWrap: 'wrap' }}>
+        <div style={{ flex: '1 1 380px' }}>
+          <Panel title="Répartition du CA par pôle" style={{ height: '100%' }}>
+            {caParPole.length ? <PoleShare data={caParPole} colors={POLE_COLORS} /> : <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', margin: 0 }}>Pas de ventes sur la période sélectionnée.</p>}
+          </Panel>
+        </div>
+        <div style={{ flex: '1 1 380px' }}>
+          <Panel title="Répartition des dépenses par catégorie" style={{ height: '100%' }}>
+            {depensesParCat.length ? <PoleShare data={depensesParCat} colors={DEP_CAT_COLORS} /> : <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', margin: 0 }}>Pas de dépense sur la période sélectionnée.</p>}
+          </Panel>
+        </div>
+      </div>
+
+      <Panel title="Manque à verser par pôle" meta="période sélectionnée">
+        <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', marginTop: 0 }}>
+          Espèces déclarées − dépenses non-cash − versé en banque, par pôle. Même calcul que « Manque à verser » sur le Journal de bord du gérant, mais sur la période choisie ci-dessus plutôt que le mois en cours.
+        </p>
+        <div style={{ width: '100%', height: 220 }}>
+          <ResponsiveContainer>
+            <BarChart data={manquePole} layout="vertical" margin={{ left: 24 }}>
+              <XAxis type="number" fontSize={11} stroke="var(--text-muted)" tickFormatter={v => (v / 1e3).toFixed(0) + 'k'} />
+              <YAxis type="category" dataKey="name" fontSize={11} stroke="var(--text-muted)" width={110} />
+              <Tooltip formatter={v => fcfa(v)} contentStyle={{ background: 'var(--surface-panel)', border: '1px solid var(--border-default)', borderRadius: 'var(--radius-1)', font: '12px var(--font-ui)' }} />
+              <Bar dataKey="value">
+                {manquePole.map((r, i) => <Cell key={i} fill={r.value > 0 ? 'var(--state-alarm)' : 'var(--state-ok)'} />)}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      </Panel>
+
       <Panel title="Commandes & contrôles ANM">
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 'var(--sp-4)' }}>
           <Kpi label="Commandes reçues" value={ordRecues.length} sub={`${orders.length} au total`} />
@@ -271,6 +371,23 @@ export default function Dashboard() {
         </div>
       </Panel>
 
+      <Panel title="Évolution mensuelle par pôle">
+        <div style={{ width: '100%', height: 320 }}>
+          <ResponsiveContainer>
+            <BarChart data={chartPoles}>
+              <XAxis dataKey="mois" fontSize={11} stroke="var(--text-muted)" />
+              <YAxis fontSize={11} stroke="var(--text-muted)" tickFormatter={v => (v / 1e6).toFixed(0) + 'M'} />
+              <Tooltip formatter={v => fcfa(v)} contentStyle={{ background: 'var(--surface-panel)', border: '1px solid var(--border-default)', borderRadius: 'var(--radius-1)', font: '12px var(--font-ui)' }} />
+              <Legend wrapperStyle={{ font: '11px var(--font-ui)' }} />
+              <Bar dataKey="Carburant" stackId="pole" fill={POLE_COLORS.Carburant} />
+              <Bar dataKey="Gaz" stackId="pole" fill={POLE_COLORS.Gaz} />
+              <Bar dataKey="Lubrifiant" stackId="pole" fill={POLE_COLORS.Lubrifiant} />
+              <Bar dataKey="Supérette" stackId="pole" fill={POLE_COLORS['Supérette']} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      </Panel>
+
       <Panel title="Réconciliation versements (par mois)" meta={`${fm.length} mois`} flush
         bodyStyle={openRecon ? undefined : { display: 'none' }}
         actions={<IconButton icon="chevron-down" size="sm" title={openRecon ? 'Masquer' : 'Afficher'}
@@ -279,6 +396,34 @@ export default function Dashboard() {
           ? <DataTable columns={reconColumns} rows={fm.map(m => ({ ...m, id: m.mois }))} />
           : <PanelEmpty icon="chart-column" label="Aucune donnée sur la période" />}
       </Panel>
+    </div>
+  )
+}
+
+// Camembert + légende avec montant et part (%) — utilisé pour la répartition du CA par pôle
+// et la répartition des dépenses par catégorie.
+function PoleShare({ data, colors }) {
+  const total = data.reduce((s, r) => s + r.value, 0)
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-5)', flexWrap: 'wrap' }}>
+      <div style={{ width: 160, height: 160, flex: '0 0 auto' }}>
+        <ResponsiveContainer>
+          <PieChart>
+            <Pie data={data} dataKey="value" nameKey="name" innerRadius={40} outerRadius={78} paddingAngle={2}>
+              {data.map((r, i) => <Cell key={i} fill={colors[r.name] || 'var(--text-muted)'} />)}
+            </Pie>
+            <Tooltip formatter={v => fcfa(v)} contentStyle={{ background: 'var(--surface-panel)', border: '1px solid var(--border-default)', borderRadius: 'var(--radius-1)', font: '12px var(--font-ui)' }} />
+          </PieChart>
+        </ResponsiveContainer>
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-2)', flex: '1 1 160px' }}>
+        {data.map((r, i) => (
+          <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 'var(--sp-3)', font: '400 12px/1.3 var(--font-ui)' }}>
+            <span style={{ color: 'var(--text-body)' }}><span style={{ color: colors[r.name] || 'var(--text-muted)' }}>■</span> {r.name}</span>
+            <span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>{fcfa(r.value)} <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>({total ? Math.round(100 * r.value / total) : 0}%)</span></span>
+          </div>
+        ))}
+      </div>
     </div>
   )
 }
