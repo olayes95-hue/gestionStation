@@ -21,6 +21,9 @@ const ML = { '01':'Janv','02':'Févr','03':'Mars','04':'Avril','05':'Mai','06':'
 const YEAR_TONE = (d) => d == null ? undefined : d < 3 ? 'alarm' : d < 6 ? 'warn' : 'ok'
 const YEAR_COLOR = (d) => d == null ? 'var(--text-primary)' : d < 3 ? 'var(--state-alarm)' : d < 6 ? 'var(--state-warn)' : 'var(--state-ok)'
 const POLE_COLORS = { Carburant: 'var(--accent)', Gaz: 'var(--state-info)', Lubrifiant: 'var(--state-warn)', Supérette: 'var(--state-ok)' }
+// Palette neutre (pas de sens sémantique ok/alarm) pour différencier des catégories dans un
+// camembert détaillé — utilisée en repli quand une catégorie n'a pas de couleur dédiée.
+const SIGNAL_PALETTE = ['var(--signal-cyan)', 'var(--signal-amber)', 'var(--signal-green)', 'var(--signal-orange)', 'var(--signal-red)', 'var(--accent)', 'var(--carbon-500)', 'var(--carbon-700)']
 // Bornes de dates pour une sélection année/mois du dashboard ('all' = pas de filtre sur ce niveau).
 function periodBounds(year, month) {
   if (year === 'all') return { from: '2000-01-01', to: '2100-12-31' }
@@ -43,8 +46,9 @@ export default function Dashboard() {
   const [inited, setInited] = useState(false)
   const [openRecon, setOpenRecon] = useState(false)
   const [overview, setOverview] = useState([])   // vue comparative multi-stations (indép. de la station sélectionnée)
-  const [polePeriod, setPolePeriod] = useState({ dr: [], dep: [], exp: [] })   // brut, pour manque-à-verser et dépenses par pôle/catégorie sur la période sélectionnée
+  const [polePeriod, setPolePeriod] = useState({ dr: [], dep: [], exp: [], sup: [] })   // brut, pour manque-à-verser et détail par pôle/catégorie sur la période sélectionnée
   const [charges, setCharges] = useState([])   // table "charges" du Point financier (Finance.jsx) — loyer, salaires, impôts...
+  const [gazPrices, setGazPrices] = useState({})   // {nom bouteille: prix_vente actuel} — pour estimer le CA gaz par taille
 
   useEffect(() => {
     if (!stationId) return
@@ -52,16 +56,23 @@ export default function Dashboard() {
   }, [stationId])
 
   useEffect(() => {
+    supabase.from('products').select('nom,prix_vente').eq('categorie', 'gaz').then(({ data }) => {
+      const m = {}; for (const p of (data || [])) m[p.nom] = N(p.prix_vente); setGazPrices(m)
+    })
+  }, [])
+
+  useEffect(() => {
     if (!stationId) return
     const { from, to } = periodBounds(year, month)
     ;(async () => {
-      const [dr, dep, exp] = await Promise.all([
-        supabase.from('daily_reports').select('ess_espece,gas_espece,gaz_espece,superette_espece,lubrifiant_espece').eq('station_id', stationId).gte('report_date', from).lte('report_date', to),
+      const [dr, dep, exp, sup] = await Promise.all([
+        supabase.from('daily_reports').select('ess_espece,gas_espece,gaz_espece,superette_espece,lubrifiant_espece,ess_litres,ess_pu,gas_litres,gas_pu,gaz_vendu_3,gaz_vendu_6,gaz_vendu_12,gaz_vendu_38').eq('station_id', stationId).gte('report_date', from).lte('report_date', to),
         supabase.from('deposits').select('pole,montant,periode_fin,report_date').eq('station_id', stationId)
           .or(`and(periode_fin.gte.${from},periode_fin.lte.${to}),and(periode_fin.is.null,report_date.gte.${from},report_date.lte.${to})`),
         supabase.from('expenses').select('categorie,montant,non_cash').eq('station_id', stationId).gte('report_date', from).lte('report_date', to),
+        supabase.from('superette_sales').select('nom,montant').eq('station_id', stationId).gte('report_date', from).lte('report_date', to),
       ])
-      setPolePeriod({ dr: dr.data || [], dep: dep.data || [], exp: exp.data || [] })
+      setPolePeriod({ dr: dr.data || [], dep: dep.data || [], exp: exp.data || [], sup: sup.data || [] })
     })()
   }, [stationId, year, month])
 
@@ -190,15 +201,51 @@ export default function Dashboard() {
     ]
   })()
 
-  // Répartition des dépenses par catégorie (camembert) — toutes les dépenses de la période,
-  // y compris le prélèvement carburant non-cash (utile pour voir où va la valeur, pas seulement le cash).
-  const DEP_CAT_LABELS = { SBEE: 'SBEE (électricité)', SUPERETTE: 'Supérette', CARBURANT: 'Carburant (prélèvement propriétaire)', AUTRE: 'Autre' }
+  // Répartition des dépenses par catégorie (camembert) — dépenses quotidiennes du gérant
+  // (y compris le prélèvement carburant non-cash) + charges fixes du Point financier
+  // (loyer, salaires, impôts...), sur la période sélectionnée. Même sources que "Charges
+  // totales déclarées" ci-dessus, juste ventilées catégorie par catégorie au lieu d'un total.
+  const DEP_CAT_LABELS = {
+    SBEE: 'SBEE (électricité)', SUPERETTE: 'Dépenses supérette (gérant)', CARBURANT: 'Carburant (prélèvement propriétaire)', AUTRE: 'Autre',
+    LOYER: 'Loyer', SALAIRES: 'Salaires', PRELEVEMENT_GERANT: 'Prélèvement gérant', IMPOTS: 'Impôts', HONORAIRES: 'Honoraires',
+    PRESTATIONS: 'Prestations', PERTE_VENTE_CARBURANT: 'Perte vente carburant', SONEB: 'SONEB (eau)', TELEPHONE: 'Téléphone',
+  }
   const depensesParCat = (() => {
     const totals = {}
     for (const e of polePeriod.exp) { const k = (e.categorie || 'AUTRE').toUpperCase(); totals[k] = (totals[k] || 0) + N(e.montant) }
-    return Object.entries(totals).filter(([, v]) => v > 0).map(([k, v]) => ({ name: DEP_CAT_LABELS[k] || k, value: v }))
+    for (const c of charges) {
+      if (c.categorie === REVENU_CAT || !chargeInPeriod(c.mois)) continue
+      totals[c.categorie] = (totals[c.categorie] || 0) + N(c.montant)
+    }
+    return Object.entries(totals).filter(([, v]) => v > 0).map(([k, v]) => ({ name: DEP_CAT_LABELS[k] || k, value: v })).sort((a, b) => b.value - a.value)
   })()
-  const DEP_CAT_COLORS = { 'SBEE (électricité)': 'var(--state-warn)', 'Supérette': 'var(--state-ok)', 'Carburant (prélèvement propriétaire)': 'var(--accent)', 'Autre': 'var(--text-muted)' }
+  const DEP_CAT_COLORS = { 'SBEE (électricité)': 'var(--state-warn)', 'Carburant (prélèvement propriétaire)': 'var(--accent)' }
+
+  // Détail par produit AU SEIN de chaque pôle (essence/gasoil, gaz par taille, articles supérette).
+  // Le lubrifiant n'a pas d'équivalent : seul le total espèces est saisi, aucune vente par type
+  // n'est tracée nulle part — impossible à ventiler sans ajouter un nouveau suivi.
+  const carburantMix = [
+    { name: 'Essence', value: polePeriod.dr.reduce((s, r) => s + N(r.ess_litres) * N(r.ess_pu), 0) },
+    { name: 'Gasoil', value: polePeriod.dr.reduce((s, r) => s + N(r.gas_litres) * N(r.gas_pu), 0) },
+  ].filter(r => r.value > 0)
+  const CARBURANT_MIX_COLORS = { Essence: 'var(--accent)', Gasoil: 'var(--state-info)' }
+
+  // CA gaz estimé = quantité vendue (fiable, saisie chaque jour) × prix de vente ACTUEL du produit
+  // (le prix historique n'est pas conservé) — approximation si le prix a changé sur la période.
+  const gazMix = ['3 kg', '6 kg', '12 kg', '38 kg'].map(nom => ({
+    name: nom, value: polePeriod.dr.reduce((s, r) => s + N(r['gaz_vendu_' + nom.replace(' kg', '')]), 0) * N(gazPrices[nom]),
+  })).filter(r => r.value > 0)
+
+  const SUP_TOP_N = 6
+  const superetteMix = (() => {
+    const totals = {}
+    for (const s of polePeriod.sup) { const k = s.nom || 'Autre'; totals[k] = (totals[k] || 0) + N(s.montant) }
+    const rows = Object.entries(totals).filter(([, v]) => v > 0).map(([k, v]) => ({ name: k, value: v })).sort((a, b) => b.value - a.value)
+    if (rows.length <= SUP_TOP_N) return rows
+    const top = rows.slice(0, SUP_TOP_N)
+    const reste = rows.slice(SUP_TOP_N).reduce((s, r) => s + r.value, 0)
+    return [...top, { name: 'Autres articles', value: reste }]
+  })()
 
   const yearOptions = [{ value: 'all', label: 'Toutes années' }, ...years.map(y => ({ value: y, label: y }))]
   const monthOptions = [{ value: 'all', label: 'Tous mois' }, ...MONTHS.map(m => ({ value: m, label: ML[m] }))]
@@ -326,6 +373,32 @@ export default function Dashboard() {
         </div>
       </Panel>
 
+      <div style={{ font: 'var(--fw-semibold) 12px/1 var(--font-ui)', textTransform: 'uppercase', letterSpacing: 'var(--ls-label)', color: 'var(--text-muted)' }}>
+        Détail par produit, au sein de chaque pôle
+      </div>
+
+      <div style={{ display: 'flex', gap: 'var(--sp-6)', flexWrap: 'wrap' }}>
+        <div style={{ flex: '1 1 320px' }}>
+          <Panel title="Carburant — Essence vs Gasoil" style={{ height: '100%' }}>
+            {carburantMix.length ? <PoleShare data={carburantMix} colors={CARBURANT_MIX_COLORS} /> : <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', margin: 0 }}>Pas de ventes carburant sur la période.</p>}
+          </Panel>
+        </div>
+        <div style={{ flex: '1 1 320px' }}>
+          <Panel title="Gaz — par taille de bouteille" style={{ height: '100%' }}>
+            {gazMix.length ? <PoleShare data={gazMix} /> : <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', margin: 0 }}>Pas de ventes gaz sur la période.</p>}
+            <p style={{ font: '400 11px/1.3 var(--font-ui)', color: 'var(--text-muted)', margin: 'var(--sp-3) 0 0' }}>Estimé : quantité vendue × prix de vente actuel (le prix historique n'est pas conservé).</p>
+          </Panel>
+        </div>
+        <div style={{ flex: '1 1 320px' }}>
+          <Panel title="Supérette — par article" meta={polePeriod.sup.length ? `top ${Math.min(SUP_TOP_N, superetteMix.length)}` : undefined} style={{ height: '100%' }}>
+            {superetteMix.length ? <PoleShare data={superetteMix} /> : <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', margin: 0 }}>Pas de vente supérette détaillée sur la période (nécessite la saisie vendeuse par article).</p>}
+          </Panel>
+        </div>
+      </div>
+      <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', margin: 0 }}>
+        Lubrifiant : pas de détail par type disponible — seul le total en espèces est saisi au quotidien, aucune vente par référence n'est tracée.
+      </p>
+
       <div style={{ display: 'flex', gap: 'var(--sp-6)', flexWrap: 'wrap' }}>
         <div style={{ flex: '1 1 420px' }}>
           <Panel title="Évolution mensuelle" style={{ height: '100%' }}>
@@ -393,15 +466,16 @@ export default function Dashboard() {
 
 // Camembert + légende avec montant et part (%) — utilisé pour la répartition du CA par pôle
 // et la répartition des dépenses par catégorie.
-function PoleShare({ data, colors }) {
+function PoleShare({ data, colors = {} }) {
   const total = data.reduce((s, r) => s + r.value, 0)
+  const colorOf = (r, i) => colors[r.name] || SIGNAL_PALETTE[i % SIGNAL_PALETTE.length]
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-5)', flexWrap: 'wrap' }}>
       <div style={{ width: 160, height: 160, flex: '0 0 auto' }}>
         <ResponsiveContainer>
           <PieChart>
             <Pie data={data} dataKey="value" nameKey="name" innerRadius={40} outerRadius={78} paddingAngle={2}>
-              {data.map((r, i) => <Cell key={i} fill={colors[r.name] || 'var(--text-muted)'} />)}
+              {data.map((r, i) => <Cell key={i} fill={colorOf(r, i)} />)}
             </Pie>
             <Tooltip formatter={v => fcfa(v)} contentStyle={{ background: 'var(--surface-panel)', border: '1px solid var(--border-default)', borderRadius: 'var(--radius-1)', font: '12px var(--font-ui)' }} />
           </PieChart>
@@ -410,7 +484,7 @@ function PoleShare({ data, colors }) {
       <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-2)', flex: '1 1 160px' }}>
         {data.map((r, i) => (
           <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 'var(--sp-3)', font: '400 12px/1.3 var(--font-ui)' }}>
-            <span style={{ color: 'var(--text-body)' }}><span style={{ color: colors[r.name] || 'var(--text-muted)' }}>■</span> {r.name}</span>
+            <span style={{ color: 'var(--text-body)' }}><span style={{ color: colorOf(r, i) }}>■</span> {r.name}</span>
             <span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>{fcfa(r.value)} <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>({total ? Math.round(100 * r.value / total) : 0}%)</span></span>
           </div>
         ))}
