@@ -1,9 +1,9 @@
 import React from 'react';
 import {Icon} from './Icon.jsx';
 const RULE={none:null,ok:'var(--state-ok)',warn:'var(--state-warn)',alarm:'var(--state-alarm)',info:'var(--state-info)',accent:'var(--accent)'};
-export function Panel({title,meta,actions,children,status='none',flush,scroll,style,bodyStyle,...rest}){
+export function Panel({title,meta,actions,children,status='none',flush,scroll,style,bodyStyle,sectionRef,...rest}){
   const rule=RULE[status];
-  return <section style={{display:'flex',flexDirection:'column',minHeight:0,background:'var(--surface-panel)',border:'var(--border-panel)',borderRadius:'var(--radius-1)',
+  return <section ref={sectionRef} style={{display:'flex',flexDirection:'column',minHeight:0,background:'var(--surface-panel)',border:'var(--border-panel)',borderRadius:'var(--radius-1)',
       borderTop:rule?'var(--bw-accent) solid '+rule:'var(--border-panel)',...style}} {...rest}>
     {(title||actions)&&<header style={{display:'flex',alignItems:'center',gap:'var(--sp-4)',height:'32px',flex:'0 0 auto',padding:'0 var(--sp-5)',background:'var(--surface-raised)',borderBottom:'1px solid var(--border-hairline)'}}>
       <span style={{font:'var(--fw-semibold) 11px/1 var(--font-ui)',textTransform:'uppercase',letterSpacing:'var(--ls-label)',color:'var(--text-primary)'}}>{title}</span>

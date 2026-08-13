@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { supabase, BORDEREAUX_BUCKET } from '../lib/supabase'
 import { useAuth } from '../lib/auth.jsx'
@@ -64,6 +64,19 @@ export default function Submit() {
   const [forceMeter, setForceMeter] = useState(false)  // forcer malgré l'avertissement
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState(''); const [err, setErr] = useState('')
+  const [errTarget, setErrTarget] = useState('top')
+  const [submittedMoments, setSubmittedMoments] = useState(new Set())
+  const matinMetersRef = useRef(null)
+  const apresmidiMetersRef = useRef(null)
+  const expensesRef = useRef(null)
+  const depositsRef = useRef(null)
+
+  function fail(message, target = 'top', ref) {
+    setErr(message); setErrTarget(target)
+    const el = ref?.current
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    else window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
 
   useEffect(() => { supabase.from('settings').select('*').eq('id', 1).maybeSingle().then(({ data }) => data && setSettings(data)) }, [])
   useEffect(() => { supabase.from('suppliers').select('id,nom,categorie').order('nom').then(({ data }) => setSuppliers(data || [])) }, [])
@@ -102,9 +115,9 @@ export default function Submit() {
   }, [isVendeuse, stationId, date])
 
   async function load(d) {
-    setMsg(''); setErr('')
-    // Les 6 requêtes du jour sont lancées EN PARALLÈLE (avant : en série ≈ 6× la latence réseau).
-    const [r, ex, dep, dl, at, po, rt] = await Promise.all([
+    setMsg(''); setErr(''); setErrTarget('top')
+    // Les 7 requêtes du jour sont lancées EN PARALLÈLE (avant : en série ≈ 7× la latence réseau).
+    const [r, ex, dep, dl, at, po, rt, sub] = await Promise.all([
       supabase.from('daily_reports').select('*').eq('report_date', d).eq('station_id', stationId).maybeSingle(),
       supabase.from('expenses').select('*').eq('report_date', d).eq('station_id', stationId),
       supabase.from('deposits').select('*').eq('report_date', d).eq('station_id', stationId),
@@ -112,7 +125,9 @@ export default function Submit() {
       supabase.from('attachments').select('*').eq('report_date', d).eq('station_id', stationId).order('id'),
       supabase.from('fuel_orders').select('*').eq('station_id', stationId).in('statut', ['validee', 'lancee', 'partielle']).order('created_at'),
       supabase.from('v_order_reception').select('*').eq('station_id', stationId),
+      supabase.from('submissions').select('moment').eq('report_date', d).eq('station_id', stationId),
     ])
+    setSubmittedMoments(new Set((sub.data || []).map(x => x.moment)))
     if (r.data) { const c = { ...EMPTY }; Object.keys(EMPTY).forEach(k => c[k] = r.data[k] ?? ''); setF(c); setLub(r.data.lubrifiant_stock || {}) }
     else { setF({ ...EMPTY, ess_pu: settings.essence_pv, gas_pu: settings.gasoil_pv }); setLub({}) }
     setExpenses(ex.data || [])
@@ -130,12 +145,13 @@ export default function Submit() {
   const meterField = (k, label) => (
     <Field label={label} key={k}>
       <Input type="text" inputMode="decimal" numeric value={f[k]} onChange={e => set(k, e.target.value)} />
-      <label style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-2)', marginTop: 'var(--sp-2)', cursor: 'pointer' }}>
-        <Icon name="camera" size={12} color={meterPhotos[k]?.file ? 'var(--state-ok)' : 'var(--accent)'} />
-        <span style={{ font: '500 11px/1 var(--font-ui)', color: meterPhotos[k]?.file ? 'var(--state-ok)' : 'var(--accent)' }}>{meterPhotos[k]?.file ? 'Photo ✓' : 'Photo'}</span>
-        <input type="file" accept="image/*" capture="environment" style={{ display: 'none' }}
-          onChange={e => setMeterPhotos(p => ({ ...p, [k]: e.target.files[0] ? { file: e.target.files[0], label } : undefined }))} />
-      </label>
+      <Button type="button" size="sm" icon="camera" block
+        style={{ marginTop: 'var(--sp-2)', ...(meterPhotos[k]?.file ? { color: 'var(--state-ok)', borderColor: 'var(--state-ok)' } : {}) }}
+        onClick={() => document.getElementById(`meter-photo-${k}`)?.click()}>
+        {meterPhotos[k]?.file ? 'Photo ✓' : 'Ajouter la photo'}
+      </Button>
+      <input id={`meter-photo-${k}`} type="file" accept="image/*" capture="environment" style={{ display: 'none' }}
+        onChange={e => setMeterPhotos(p => ({ ...p, [k]: e.target.files[0] ? { file: e.target.files[0], label } : undefined }))} />
     </Field>
   )
 
@@ -200,33 +216,36 @@ export default function Submit() {
   const locked = !isAdmin && date < daysAgoIso(30)   // gérant/pompiste/vendeuse : passé verrouillé (>1 mois)
 
   async function save() {
-    if (!stationId) { setErr('Aucune station sélectionnée.'); return }
-    if (locked) { setErr('Journée verrouillée : seul l\'administrateur peut modifier un jour de plus d\'un mois.'); return }
+    if (!stationId) { fail('Aucune station sélectionnée.'); return }
+    if (locked) { fail('Journée verrouillée : seul l\'administrateur peut modifier un jour de plus d\'un mois.'); return }
     // 16h obligatoire : les 8 relevés doivent être remplis pour l'envoi de 16h
     if (moment === 'apres-midi' && METERS_16H.some(k => f[k] === '' || f[k] === null || f[k] === undefined)) {
-      setErr('Relevés 16 h obligatoires : remplis les 8 index des pompes (E1–E4, G1–G4) avant d\'envoyer.')
-      window.scrollTo({ top: 0, behavior: 'smooth' }); return
+      fail('Relevés 16 h obligatoires : remplis les 8 index des pompes (E1–E4, G1–G4) avant d\'envoyer.', 'meters-16h', apresmidiMetersRef); return
     }
     // justificatifs obligatoires : photo pour chaque dépense EN ESPÈCES
     // (la catégorie CARBURANT = prélèvement carburant du propriétaire, non-cash → pas de reçu).
     if (expenses.some(e => N(e.montant) > 0 && (e.categorie || '').toUpperCase() !== 'CARBURANT' && !e.photo_path && !e._file)) {
-      setErr('Photo du justificatif obligatoire pour chaque dépense en espèces.'); return
+      fail('Photo du justificatif obligatoire pour chaque dépense en espèces.', 'expenses', expensesRef); return
     }
     if (deposits.some(d => N(d.montant) > 0 && !d.photo_path && !d._file)) {
-      setErr('Photo du bordereau obligatoire pour chaque versement.'); return
+      fail('Photo du bordereau obligatoire pour chaque versement.', 'deposits', depositsRef); return
     }
     if (deposits.some(d => N(d.montant) > 0 && (!d.periode_debut || !d.periode_fin))) {
-      setErr('Indique la période concernée (du… au…) pour chaque versement.'); return
+      fail('Indique la période concernée (du… au…) pour chaque versement.', 'deposits', depositsRef); return
     }
     if (deposits.some(d => N(d.montant) > 0 && d.periode_debut > d.periode_fin)) {
-      setErr('La date de début d\'un versement doit être avant sa date de fin.'); return
+      fail('La date de début d\'un versement doit être avant sa date de fin.', 'deposits', depositsRef); return
     }
     // photo obligatoire pour chaque compteur saisi (du moment)
     const meterSets = []
     if (moment === 'matin' || showAll) meterSets.push(['e1_m', 'Essence 1'], ['e2_m', 'Essence 2'], ['e3_m', 'Essence 3'], ['e4_m', 'Essence 4'], ['g1_m', 'Gasoil 1'], ['g2_m', 'Gasoil 2'], ['g3_m', 'Gasoil 3'], ['g4_m', 'Gasoil 4'])
     if (moment === 'apres-midi' || showAll) meterSets.push(['e1', 'Pompe E1'], ['e2', 'Pompe E2'], ['e3', 'Pompe E3'], ['e4', 'Pompe E4'], ['g1', 'Pompe G1'], ['g2', 'Pompe G2'], ['g3', 'Pompe G3'], ['g4', 'Pompe G4'])
     const missM = meterSets.find(([k, label]) => f[k] !== '' && f[k] != null && !meterHasPhoto(k, label))
-    if (missM) { setErr(`Photo obligatoire pour le compteur ${missM[1]}.`); window.scrollTo({ top: 0, behavior: 'smooth' }); return }
+    if (missM) {
+      const isMatinField = missM[0].endsWith('_m')
+      fail(`Photo obligatoire pour le compteur ${missM[1]}.`, isMatinField ? 'meters-matin' : 'meters-16h', isMatinField ? matinMetersRef : apresmidiMetersRef)
+      return
+    }
     // Garde-fou décalage compteur : l'index du matin doit être > au dernier jour saisi.
     if ((moment === 'matin' || showAll) && prevMorning && !forceMeter) {
       const essNow = N(f.e1_m) + N(f.e2_m) + N(f.e3_m) + N(f.e4_m)
@@ -236,11 +255,11 @@ export default function Submit() {
       if (gasNow > 0 && prevMorning.gas > 0 && gasNow <= prevMorning.gas) parts.push(`gasoil ${Math.round(gasNow)} ≤ ${Math.round(prevMorning.gas)}`)
       if (parts.length) {
         setMeterWarn(`Index du matin ${parts.join(' et ')} — relevé du ${frDate(prevMorning.date)}. Un index de pompe ne peut que MONTER : sans ça, l'écart compteur sera décalé d'un jour.`)
-        setErr('Relevé compteur du matin incohérent — voir la section « Relevés compteurs à l\'ouverture » plus bas.')
-        window.scrollTo({ top: 0, behavior: 'smooth' }); return
+        fail('Relevé compteur du matin incohérent — voir la section « Relevés compteurs à l\'ouverture » ci-dessus.', 'meters-matin', matinMetersRef)
+        return
       }
     }
-    setBusy(true); setErr(''); setMsg('')
+    setBusy(true); setErr(''); setErrTarget('top'); setMsg('')
     const sid = stationId
     try {
       const payload = { report_date: date, station_id: sid, created_by: session.user.id, lubrifiant_stock: Object.keys(lub).length ? lub : null }
@@ -334,7 +353,7 @@ export default function Submit() {
       setMsg(`Enregistré ! (${momentLabel(moment)} — ${date})`)
       load(date)
       window.scrollTo({ top: 0, behavior: 'smooth' })
-    } catch (e) { setErr(e.message || String(e)) } finally { setBusy(false) }
+    } catch (e) { fail(e.message || String(e)) } finally { setBusy(false) }
   }
 
   // ===== VENDEUSE : ventes supérette par produit =====
@@ -463,14 +482,14 @@ export default function Submit() {
         <Field label="Date"><Input type="date" value={date} onChange={e => setDate(e.target.value)} max={today()} style={{ maxWidth: 200 }} /></Field>
         <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', margin: 'var(--sp-4) 0' }}>Choisis le moment de l'envoi. On ne te montre que ce qu'il faut remplir.</p>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 'var(--sp-3)' }}>
-          <MomentTile icon="calendar-days" t="Matin (8h)" d="Stock + ouverture" active={moment === 'matin'} onClick={() => setMoment('matin')} />
-          <MomentTile icon="clock" t="16 h" d="Ventes &amp; compteurs" active={moment === 'apres-midi'} onClick={() => setMoment('apres-midi')} />
-          <MomentTile icon="moon" t="Soir" d="Clôture &amp; versement" active={moment === 'soir'} onClick={() => setMoment('soir')} />
+          <MomentTile icon="calendar-days" t="Matin (8h)" d="Stock + ouverture" active={moment === 'matin'} done={submittedMoments.has('matin')} onClick={() => setMoment('matin')} />
+          <MomentTile icon="clock" t="16 h" d="Ventes &amp; compteurs" active={moment === 'apres-midi'} done={submittedMoments.has('apres-midi')} onClick={() => setMoment('apres-midi')} />
+          <MomentTile icon="moon" t="Soir" d="Clôture &amp; versement" active={moment === 'soir'} done={submittedMoments.has('soir')} onClick={() => setMoment('soir')} />
         </div>
         <Checkbox label="Tout afficher (avancé)" checked={showAll} onChange={v => setShowAll(v)} style={{ marginTop: 'var(--sp-4)' }} />
       </Panel>
 
-      {err && <AlertBanner tone="alarm" title="Erreur">{err}</AlertBanner>}
+      {err && errTarget === 'top' && <AlertBanner tone="alarm" title="Erreur">{err}</AlertBanner>}
       {msg && <AlertBanner tone="ok" title="Succès">{msg}</AlertBanner>}
       {locked && <AlertBanner tone="alarm" title="Verrouillé">Journée verrouillée (plus d'un mois). Lecture seule — seul l'administrateur peut la corriger.</AlertBanner>}
       {isPompiste && <AlertBanner tone="info" title="Mode pompiste">Tu saisis les compteurs, le stock et les photos. Les ventes et versements sont gérés par le gérant.</AlertBanner>}
@@ -496,8 +515,9 @@ export default function Submit() {
             <Field label="Essence en cuve (litres)" style={{ flex: '1 1 180px' }}><Input type="text" inputMode="decimal" numeric value={f.ess_stock} onChange={e => set('ess_stock', e.target.value)} /></Field>
             <Field label="Gasoil en cuve (litres)" style={{ flex: '1 1 180px' }}><Input type="text" inputMode="decimal" numeric value={f.gas_stock} onChange={e => set('gas_stock', e.target.value)} /></Field>
           </div>
-          <FormSection title="Relevés compteurs à l'ouverture" style={{ marginTop: 'var(--sp-4)' }}>
+          <FormSection title="Relevés compteurs à l'ouverture" style={{ marginTop: 'var(--sp-4)' }} innerRef={matinMetersRef}>
             <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', marginTop: 0 }}>Index de chaque pompe ce matin, avec sa photo (preuve). Sert à vérifier les ventes de la veille.</p>
+            {err && errTarget === 'meters-matin' && !meterWarn && <AlertBanner tone="alarm" title="Erreur" style={{ marginBottom: 'var(--sp-3)' }}>{err}</AlertBanner>}
             <div style={{ display: 'flex', gap: 'var(--sp-4)', flexWrap: 'wrap' }}>{meterField('e1_m', 'Essence 1')}{meterField('e2_m', 'Essence 2')}</div>
             <div style={{ display: 'flex', gap: 'var(--sp-4)', flexWrap: 'wrap', marginTop: 'var(--sp-3)' }}>{meterField('e3_m', 'Essence 3')}{meterField('e4_m', 'Essence 4')}</div>
             <div style={{ display: 'flex', gap: 'var(--sp-4)', flexWrap: 'wrap', marginTop: 'var(--sp-3)' }}>{meterField('g1_m', 'Gasoil 1')}{meterField('g2_m', 'Gasoil 2')}</div>
@@ -558,9 +578,10 @@ export default function Submit() {
           <AlertBanner tone="ok" title="Marge" style={{ marginTop: 'var(--sp-4)' }}>Marge carburant estimée : <b>{fcfa(marge)}</b> ({settings.marge_unitaire} F/L)</AlertBanner>
         </Panel>}
 
-        <Panel>
+        <Panel sectionRef={apresmidiMetersRef}>
           <StepHead n="3" title="Relevés 16 h — obligatoire" />
           <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)' }}>Index de chaque pompe à 16 h, avec sa photo (preuve). Ce relevé est <b>obligatoire</b>.</p>
+          {err && errTarget === 'meters-16h' && <AlertBanner tone="alarm" title="Erreur" style={{ marginBottom: 'var(--sp-4)' }}>{err}</AlertBanner>}
           <FormSection title="Essence">
             <div style={{ display: 'flex', gap: 'var(--sp-4)', flexWrap: 'wrap' }}>{meterField('e1', 'Pompe E1')}{meterField('e2', 'Pompe E2')}</div>
             <div style={{ display: 'flex', gap: 'var(--sp-4)', flexWrap: 'wrap', marginTop: 'var(--sp-3)' }}>{meterField('e3', 'Pompe E3')}{meterField('e4', 'Pompe E4')}</div>
@@ -631,9 +652,10 @@ export default function Submit() {
           <Button onClick={() => setDeliveries(p => [...p, { type: 'gaz', unite: 'bouteilles' }])} style={{ marginTop: 'var(--sp-4)' }}>+ Ajouter un achat</Button>
         </Panel>
 
-        <Panel>
+        <Panel sectionRef={expensesRef}>
           <StepHead n="7" title="Dépenses en espèces" />
           <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)' }}>Argent sorti de la caisse (électricité SBEE, achats…). Ajoute le justificatif si tu l'as.</p>
+          {err && errTarget === 'expenses' && <AlertBanner tone="alarm" title="Erreur" style={{ marginBottom: 'var(--sp-4)' }}>{err}</AlertBanner>}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-3)' }}>
             {expenses.map((e, i) => (
               <div key={i} style={{ padding: 'var(--sp-4)', background: 'var(--surface-raised)', borderRadius: 'var(--radius-1)', border: '1px solid var(--border-hairline)', display: 'flex', flexDirection: 'column', gap: 'var(--sp-3)' }}>
@@ -661,9 +683,10 @@ export default function Submit() {
           <Button onClick={() => setExpenses(p => [...p, { categorie: 'SBEE', montant: '' }])} style={{ marginTop: 'var(--sp-4)' }}>+ Ajouter une dépense</Button>
         </Panel>
 
-        <Panel>
+        <Panel sectionRef={depositsRef}>
           <StepHead n="8" title="Versement en banque" />
           <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)' }}>Prends la photo du bordereau juste après le dépôt. Un versement peut couvrir <b>plusieurs jours de recette</b> : indique la <b>période concernée</b> (du… au…). Le système additionnera les recettes de cette période pour vérifier que ça correspond.</p>
+          {err && errTarget === 'deposits' && <AlertBanner tone="alarm" title="Erreur" style={{ marginBottom: 'var(--sp-4)' }}>{err}</AlertBanner>}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-3)' }}>
             {deposits.map((d, i) => (
               <div key={i} style={{ padding: 'var(--sp-4)', background: 'var(--surface-raised)', borderRadius: 'var(--radius-1)', border: '1px solid var(--border-hairline)', display: 'flex', flexDirection: 'column', gap: 'var(--sp-3)' }}>
@@ -714,10 +737,13 @@ function defaultMoment() { const h = new Date().getHours(); return h < 12 ? 'mat
 function daysAgoIso(n) { const d = new Date(); d.setDate(d.getDate() - n); return d.toISOString().slice(0, 10) }
 function momentLabel(m) { return m === 'matin' ? 'Matin' : m === 'apres-midi' ? '16 h' : m === 'soir' ? 'Soir' : m }
 
-function MomentTile({ icon, t, d, active, onClick }) {
+function MomentTile({ icon, t, d, active, done, onClick }) {
   return (
-    <div onClick={onClick} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 'var(--sp-2)', padding: 'var(--sp-4)', textAlign: 'center', cursor: 'pointer',
+    <div onClick={onClick} style={{ position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 'var(--sp-2)', padding: 'var(--sp-4)', textAlign: 'center', cursor: 'pointer',
       background: active ? 'var(--accent-quiet)' : 'var(--surface-raised)', border: '1px solid ' + (active ? 'var(--accent)' : 'var(--border-default)'), borderRadius: 'var(--radius-1)', transition: 'var(--t-control)' }}>
+      {done && <span style={{ position: 'absolute', top: 'var(--sp-2)', right: 'var(--sp-2)', width: 16, height: 16, borderRadius: '50%', background: 'var(--state-ok)', color: '#FFFFFF', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <Icon name="check" size={10} strokeWidth={3} />
+      </span>}
       <Icon name={icon} size={18} color={active ? 'var(--accent)' : 'var(--text-muted)'} />
       <div style={{ font: 'var(--fw-semibold) 12px/1.2 var(--font-ui)', color: active ? 'var(--accent)' : 'var(--text-primary)' }}>{t}</div>
       <div style={{ font: '400 11px/1.2 var(--font-ui)', color: 'var(--text-muted)' }}>{d}</div>
@@ -732,9 +758,9 @@ function StepHead({ n, title }) {
     </div>
   )
 }
-function FormSection({ title, children, style }) {
+function FormSection({ title, children, style, innerRef }) {
   return (
-    <div style={{ padding: 'var(--sp-4)', background: 'var(--surface-raised)', borderRadius: 'var(--radius-1)', border: '1px solid var(--border-hairline)', ...style }}>
+    <div ref={innerRef} style={{ padding: 'var(--sp-4)', background: 'var(--surface-raised)', borderRadius: 'var(--radius-1)', border: '1px solid var(--border-hairline)', ...style }}>
       <div style={{ font: 'var(--fw-semibold) 11px/1 var(--font-ui)', textTransform: 'uppercase', letterSpacing: 'var(--ls-label)', color: 'var(--text-muted)', marginBottom: 'var(--sp-3)' }}>{title}</div>
       {children}
     </div>
