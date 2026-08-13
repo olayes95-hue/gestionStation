@@ -53,6 +53,7 @@ export default function Submit() {
   const [recvOrder, setRecvOrder] = useState({})         // {orderId: {cuve_avant, cuve_apres, quantite_recue}}
   const [recvTotals, setRecvTotals] = useState({})       // {orderId: {quantite_recue_total, reste, complet}}
   const [meterPhotos, setMeterPhotos] = useState({})     // {champCompteur: {file, label}}
+  const [openPhoto, setOpenPhoto] = useState({})         // {champCompteur: bool} — accordéon photo déplié
   const [lubTypes, setLubTypes] = useState(LUB_TYPES)    // références lubrifiant (dynamiques)
   const [settings, setSettings] = useState({ essence_pv: 725, gasoil_pv: 750, marge_unitaire: 25 })
   const [prods, setProds] = useState([])                 // catalogue supérette/autre (vendeuse)
@@ -145,21 +146,35 @@ export default function Submit() {
     const tmap = {}; for (const x of (rt.data || [])) tmap[x.order_id] = x; setRecvTotals(tmap)
     setRecvOrder({})
     setMeterPhotos({})
+    setOpenPhoto({})
   }
 
-  // champ compteur avec photo-preuve par pompe
-  const meterField = (k, label) => (
-    <Field label={label} key={k}>
-      <Input type="text" inputMode="decimal" numeric value={f[k]} onChange={e => set(k, e.target.value)} />
-      <Button type="button" size="sm" icon="camera" block
-        style={{ marginTop: 'var(--sp-2)', ...(meterPhotos[k]?.file ? { color: 'var(--state-ok)', borderColor: 'var(--state-ok)' } : {}) }}
-        onClick={() => document.getElementById(`meter-photo-${k}`)?.click()}>
-        {meterPhotos[k]?.file ? 'Photo ✓' : 'Ajouter la photo'}
-      </Button>
-      <input id={`meter-photo-${k}`} type="file" accept="image/*" capture="environment" style={{ display: 'none' }}
-        onChange={e => setMeterPhotos(p => ({ ...p, [k]: e.target.files[0] ? { file: e.target.files[0], label } : undefined }))} />
-    </Field>
-  )
+  // champ compteur avec photo-preuve par pompe — la partie photo est repliée par défaut
+  // (accordéon) pour alléger la carte, et se déplie au clic pour attacher la photo.
+  const meterField = (k, label) => {
+    const hasPhoto = !!meterPhotos[k]?.file
+    const open = !!openPhoto[k] || hasPhoto
+    return (
+      <Field label={label} key={k}>
+        <Input type="text" inputMode="decimal" numeric value={f[k]} onChange={e => set(k, e.target.value)} />
+        <div onClick={() => setOpenPhoto(p => ({ ...p, [k]: !open }))}
+          style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-2)', marginTop: 'var(--sp-2)', cursor: 'pointer' }}>
+          <Icon name="camera" size={12} color={hasPhoto ? 'var(--state-ok)' : 'var(--text-muted)'} />
+          <span style={{ font: '500 11px/1 var(--font-ui)', color: hasPhoto ? 'var(--state-ok)' : 'var(--text-muted)', flex: 1 }}>{hasPhoto ? 'Photo ✓' : 'Photo'}</span>
+          <Icon name="chevron-down" size={11} color="var(--text-muted)" style={{ transform: open ? 'rotate(180deg)' : 'none' }} />
+        </div>
+        {open && (
+          <Button type="button" size="sm" icon="camera" block
+            style={{ marginTop: 'var(--sp-2)', ...(hasPhoto ? { color: 'var(--state-ok)', borderColor: 'var(--state-ok)' } : {}) }}
+            onClick={() => document.getElementById(`meter-photo-${k}`)?.click()}>
+            {hasPhoto ? 'Changer la photo' : 'Ajouter la photo'}
+          </Button>
+        )}
+        <input id={`meter-photo-${k}`} type="file" accept="image/*" capture="environment" style={{ display: 'none' }}
+          onChange={e => setMeterPhotos(p => ({ ...p, [k]: e.target.files[0] ? { file: e.target.files[0], label } : undefined }))} />
+      </Field>
+    )
+  }
 
   // regroupe une pompe essence + gasoil de la même machine (E1+G1 sur la machine 1, etc.)
   const meterMachine = (n, eKey, eLabel, gKey, gLabel) => (
@@ -286,6 +301,7 @@ export default function Submit() {
     const missM = meterSets.find(([k, label]) => f[k] !== '' && f[k] != null && !meterHasPhoto(k, label))
     if (missM) {
       const isMatinField = missM[0].endsWith('_m')
+      setOpenPhoto(p => ({ ...p, [missM[0]]: true }))
       fail(`Photo obligatoire pour le compteur ${missM[1]}.`, isMatinField ? 'meters-matin' : 'meters-16h', isMatinField ? matinMetersRef : apresmidiMetersRef)
       return
     }
