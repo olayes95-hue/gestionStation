@@ -151,15 +151,6 @@ export default function Dashboard() {
   const totChargesManuel = charges.filter(c => c.categorie !== REVENU_CAT && chargeInPeriod(c.mois)).reduce((s, c) => s + N(c.montant), 0)
   const totChargesDeclarees = totChargesAuto + totChargesManuel
 
-  // Répartition Bon / Espèce du CARBURANT uniquement.
-  // ventes_bon = ess_bon+gas_bon (seul le carburant a des bons).
-  // espèce carburant = recettes_especes − espèces gaz/supérette/lubrifiant.
-  const carbBon = totBon
-  const carbEsp = Math.max(0, totCash - sum('ventes_gaz') - sum('ventes_superette') - sum('ventes_lubrifiant'))
-  const carbTotal = carbBon + carbEsp
-  const pctCarbBon = carbTotal ? Math.round(100 * carbBon / carbTotal) : null
-  const pctCarbEsp = carbTotal ? 100 - pctCarbBon : null
-
   const chart = fm.map(m => ({ mois: m.mois.slice(2), 'Ventes bon': Math.round(N(m.ventes_bon)), 'Espèces': Math.round(N(m.recettes_especes)), 'Versé': Math.round(N(m.total_verse)) }))
 
   // Répartition du CA par pôle (camembert) — période sélectionnée, agrégé mensuel déjà chargé.
@@ -299,23 +290,6 @@ export default function Dashboard() {
         <Kpi label="Marge carburant" value={L(fcfa(totMarge))} sub="25 F/L" />
         <Kpi label="Livraisons / achats" value={L(fcfa(totLivr))} />
       </div>
-
-      <Panel title="Ventes carburant — Bon vs Espèce">
-        {carbTotal ? (<>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 'var(--sp-4)' }}>
-            <Kpi label="Carburant en ESPÈCES" value={L(fcfa(carbEsp))} sub={pctCarbEsp != null ? `${pctCarbEsp}% du carburant` : ''} />
-            <Kpi label="CA carburant (période)" value={L(fcfa(carbTotal))} />
-          </div>
-          <div style={{ display: 'flex', height: 12, borderRadius: 'var(--radius-1)', overflow: 'hidden', marginTop: 'var(--sp-4)' }}>
-            <div title={`Bon ${pctCarbBon}%`} style={{ width: `${pctCarbBon || 0}%`, background: 'var(--accent)' }} />
-            <div title={`Espèce ${pctCarbEsp}%`} style={{ width: `${pctCarbEsp || 0}%`, background: 'var(--state-ok)' }} />
-          </div>
-          <div style={{ font: '400 11px/1 var(--font-ui)', color: 'var(--text-muted)', marginTop: 'var(--sp-3)' }}>
-            <span style={{ color: 'var(--accent)' }}>■</span> Bon {pctCarbBon}% (= Ventes à bon ci-dessus) &nbsp;·&nbsp;
-            <span style={{ color: 'var(--state-ok)' }}>■</span> Espèce {pctCarbEsp}% — essence + gasoil uniquement
-          </div>
-        </>) : <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', margin: 0 }}>Pas de ventes carburant sur la période sélectionnée.</p>}
-      </Panel>
 
       <div style={{ font: 'var(--fw-semibold) 12px/1 var(--font-ui)', textTransform: 'uppercase', letterSpacing: 'var(--ls-label)', color: 'var(--text-muted)' }}>
         Focus par pôle
