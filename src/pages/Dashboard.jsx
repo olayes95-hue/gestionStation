@@ -1,13 +1,17 @@
 import { useEffect, useMemo, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useStation } from '../lib/station.jsx'
 import { fcfa, frDate } from '../lib/format'
+import { ALERT_TONES } from '../lib/tones'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend } from 'recharts'
 import { Panel, PanelEmpty } from '../ds/octane/components/core/Panel.jsx'
 import { Button } from '../ds/octane/components/core/Button.jsx'
+import { IconButton } from '../ds/octane/components/core/IconButton.jsx'
 import { Badge } from '../ds/octane/components/core/Badge.jsx'
 import { Tag } from '../ds/octane/components/core/Tag.jsx'
 import { Select } from '../ds/octane/components/forms/Select.jsx'
+import { AlertBanner } from '../ds/octane/components/feedback/AlertBanner.jsx'
 import { DataTable } from '../ds/octane/components/data/DataTable.jsx'
 import { Kpi } from '../lib/Kpi.jsx'
 
@@ -18,9 +22,10 @@ const YEAR_TONE = (d) => d == null ? undefined : d < 3 ? 'alarm' : d < 6 ? 'warn
 const YEAR_COLOR = (d) => d == null ? 'var(--text-primary)' : d < 3 ? 'var(--state-alarm)' : d < 6 ? 'var(--state-warn)' : 'var(--state-ok)'
 
 export default function Dashboard() {
-  const { stationId } = useStation()
+  const { stationId, stations, setStationId } = useStation()
+  const nav = useNavigate()
   const [months, setMonths] = useState([])   // v_ventes_mensuelles (agrégé, rapide)
-  const [alertCount, setAlertCount] = useState(null)
+  const [alerts, setAlerts] = useState([])   // v_alerts du mois en cours (station active), triées par gravité
   const [stock, setStock] = useState(null)
   const [forecast, setForecast] = useState(null)
   const [reorder, setReorder] = useState([])
@@ -31,6 +36,8 @@ export default function Dashboard() {
   const [month, setMonth] = useState('all')
   const [refreshedAt, setRefreshedAt] = useState('')
   const [inited, setInited] = useState(false)
+  const [openRecon, setOpenRecon] = useState(false)
+  const [overview, setOverview] = useState([])   // vue comparative multi-stations (indép. de la station sélectionnée)
 
   async function loadStock() {
     if (!stationId) return
@@ -53,14 +60,46 @@ export default function Dashboard() {
       .then(({ data }) => setInspections(data || []))
     supabase.from('v_ventes_mensuelles').select('*').eq('station_id', stationId).order('mois')
       .then(({ data }) => { setMonths(data || []); setLoading(false) })
-    // les alertes (vue lourde) se chargent après l'affichage, sans bloquer
-    supabase.from('v_alerts').select('type', { count: 'exact', head: true }).eq('station_id', stationId).then(({ count }) => setAlertCount(count ?? 0))
+    // les alertes (vue lourde) se chargent après l'affichage, sans bloquer — mois en cours seulement,
+    // pour rester une liste actionnable plutôt qu'un historique complet.
+    const day = new Date().toISOString().slice(0, 10)
+    const monthStart = day.slice(0, 7) + '-01', monthEnd = day.slice(0, 7) + '-31'
+    supabase.from('v_alerts').select('*').eq('station_id', stationId).gte('report_date', monthStart).lte('report_date', monthEnd)
+      .then(({ data }) => setAlerts((data || []).sort((a, b) => (a.gravite === 'haute' ? -1 : 1) - (b.gravite === 'haute' ? -1 : 1))))
   }, [stationId])
   useEffect(() => {
     if (!stationId) return
     const ch = supabase.channel('stock-' + stationId).on('postgres_changes', { event: '*', schema: 'public', table: 'daily_reports', filter: `station_id=eq.${stationId}` }, loadStock).subscribe()
     return () => { supabase.removeChannel(ch) }
   }, [stationId])
+
+  // Vue comparative multi-stations : indépendante de la station sélectionnée, pour repérer en un
+  // coup d'œil laquelle a besoin d'attention sans avoir à basculer le sélecteur station par station.
+  useEffect(() => {
+    if (!stations.length) return
+    (async () => {
+      const day = new Date().toISOString().slice(0, 10)
+      const monthStart = day.slice(0, 7) + '-01', monthEnd = day.slice(0, 7) + '-31'
+      const [sf, al, vm] = await Promise.all([
+        supabase.from('v_stock_forecast').select('*'),
+        supabase.from('v_alerts').select('station_id').gte('report_date', monthStart).lte('report_date', monthEnd),
+        supabase.from('v_ventes_mensuelles').select('*').eq('mois', day.slice(0, 7)),
+      ])
+      const byStation = (rows) => { const m = {}; for (const r of (rows || [])) (m[r.station_id] = m[r.station_id] || []).push(r); return m }
+      const sfMap = {}; for (const r of (sf.data || [])) sfMap[r.station_id] = r
+      const alMap = byStation(al.data)
+      const vmMap = {}; for (const r of (vm.data || [])) vmMap[r.station_id] = r
+      setOverview(stations.map(s => {
+        const f = sfMap[s.id], m = vmMap[s.id]
+        const gap = m ? N(m.recettes_especes) - N(m.total_depense) - N(m.total_verse) : null
+        return {
+          id: s.id, nom: s.nom,
+          joursEssence: f?.jours_essence ?? null, joursGasoil: f?.jours_gasoil ?? null,
+          cashNonTrace: gap, nbAlertes: (alMap[s.id] || []).length,
+        }
+      }))
+    })()
+  }, [stations])
 
   const years = useMemo(() => [...new Set(months.map(m => m.mois.slice(0, 4)))].sort(), [months])
   useEffect(() => { if (!inited && months.length) { const m = months.map(x => x.mois).sort().at(-1); setYear(m.slice(0, 4)); setMonth(m.slice(5, 7)); setInited(true) } }, [months, inited])
@@ -110,6 +149,15 @@ export default function Dashboard() {
         : <span style={{ color: 'var(--state-ok)' }}>ok</span> },
   ]
 
+  const overviewColumns = [
+    { key: 'nom', header: 'Station', render: r => <span style={{ fontWeight: r.id === stationId ? 700 : 400 }}>{r.nom}{r.id === stationId ? ' (active)' : ''}</span> },
+    { key: 'ess', header: 'Essence', numeric: true, align: 'right', render: r => <span style={{ color: YEAR_COLOR(r.joursEssence) }}>{r.joursEssence != null ? `≈ ${r.joursEssence} j` : '—'}</span> },
+    { key: 'gas', header: 'Gasoil', numeric: true, align: 'right', render: r => <span style={{ color: YEAR_COLOR(r.joursGasoil) }}>{r.joursGasoil != null ? `≈ ${r.joursGasoil} j` : '—'}</span> },
+    { key: 'cash', header: 'Cash non tracé (mois)', numeric: true, align: 'right', render: r => r.cashNonTrace != null ? <span style={{ color: r.cashNonTrace > 0 ? 'var(--state-alarm)' : 'var(--state-ok)' }}>{fcfa(r.cashNonTrace)}</span> : '—' },
+    { key: 'al', header: 'Alertes (mois)', numeric: true, align: 'right', render: r => r.nbAlertes > 0 ? <Badge tone="alarm">{r.nbAlertes}</Badge> : <span style={{ color: 'var(--state-ok)' }}>0</span> },
+    { key: 'action', header: '', align: 'right', render: r => r.id === stationId ? null : <Button size="sm" onClick={() => setStationId(r.id)}>Voir</Button> },
+  ]
+
   const reconColumns = [
     { key: 'mois', header: 'Mois' },
     { key: 'esp', header: 'Espèces', numeric: true, align: 'right', render: m => fcfa(N(m.recettes_especes)) },
@@ -120,6 +168,29 @@ export default function Dashboard() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-6)' }}>
+      {overview.length > 1 && (
+        <Panel title="Vue d'ensemble des stations" flush>
+          <DataTable columns={overviewColumns} rows={overview} rowStatus={r => r.nbAlertes > 0 || (r.cashNonTrace != null && r.cashNonTrace > 0) ? 'alarm' : undefined} />
+        </Panel>
+      )}
+
+      {alerts.length > 0 && (
+        <Panel title="Alertes — mois en cours" meta={`${alerts.length}`} flush>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-3)', padding: 'var(--gutter-panel)' }}>
+            {alerts.slice(0, 5).map((a, i) => {
+              const meta = ALERT_TONES[a.type] || { label: a.type, tone: 'info' }
+              return (
+                <AlertBanner key={i} tone={meta.tone} title={meta.label} timestamp={frDate(a.report_date)}
+                  action={a.report_date && <Button size="sm" onClick={() => nav(`/saisie?date=${a.report_date}`)}>Traiter</Button>}>
+                  {a.detail}
+                </AlertBanner>
+              )
+            })}
+            {alerts.length > 5 && <p style={{ font: '400 12px/1 var(--font-ui)', color: 'var(--text-muted)', margin: 0 }}>+ {alerts.length - 5} autre(s) alerte(s) — voir Alertes.</p>}
+          </div>
+        </Panel>
+      )}
+
       <Panel title="Stock en temps réel & autonomie" status="accent" meta={`maj ${refreshedAt}`} actions={<Button size="sm" onClick={loadStock}>Rafraîchir</Button>}>
         {!stock ? <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', margin: 0 }}>Pas encore de stock saisi.</p> : (<>
           <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', marginTop: 0 }}>Dernière saisie : {frDate(stock.derniere_date)}</p>
@@ -159,7 +230,6 @@ export default function Dashboard() {
         <Kpi label="Cash non tracé" value={L(fcfa(gapVerse))} status={gapVerse > 0 ? 'alarm' : undefined} sub="recettes − dépenses − versé" />
         <Kpi label="Marge carburant" value={L(fcfa(totMarge))} sub="25 F/L" />
         <Kpi label="Livraisons / achats" value={L(fcfa(totLivr))} />
-        <Kpi label="Alertes (station)" value={alertCount == null ? '…' : alertCount} status={alertCount > 0 ? 'alarm' : undefined} />
       </div>
 
       <Panel title="Ventes carburant — Bon vs Espèce">
@@ -201,7 +271,10 @@ export default function Dashboard() {
         </div>
       </Panel>
 
-      <Panel title="Réconciliation versements (par mois)" flush>
+      <Panel title="Réconciliation versements (par mois)" meta={`${fm.length} mois`} flush
+        bodyStyle={openRecon ? undefined : { display: 'none' }}
+        actions={<IconButton icon="chevron-down" size="sm" title={openRecon ? 'Masquer' : 'Afficher'}
+          onClick={() => setOpenRecon(v => !v)} style={{ transform: openRecon ? 'rotate(180deg)' : 'none' }} />}>
         {fm.length
           ? <DataTable columns={reconColumns} rows={fm.map(m => ({ ...m, id: m.mois }))} />
           : <PanelEmpty icon="chart-column" label="Aucune donnée sur la période" />}
