@@ -39,6 +39,9 @@ export default function Finance() {
   const [settings, setSettings] = useState({ taux_gaz: 8, taux_superette: 8 })
   const [profiles, setProfiles] = useState({})     // {id: full_name} — traçabilité
   const [locked, setLocked] = useState(new Set())  // mois verrouillés ('YYYY-MM')
+  const [ouverture, setOuverture] = useState(null) // {montant, date_ouverture, note} — solde avant le suivi app
+  const [editOuverture, setEditOuverture] = useState(false)
+  const [ouvertureForm, setOuvertureForm] = useState({ montant: '', date_ouverture: '', note: '' })
   const [openAnnuel, setOpenAnnuel] = useState(false)
   // Par défaut, mois en cours (pas le dernier mois avec des données, qui peut être ancien).
   const [annee, setAnnee] = useState(today().slice(0, 4))
@@ -48,7 +51,7 @@ export default function Finance() {
 
   async function load() {
     if (!stationId) return
-    const [v, c, e, st, p, sv, ls, pr, fv] = await Promise.all([
+    const [v, c, e, st, p, sv, ls, pr, fv, ou] = await Promise.all([
       supabase.from('v_ventes_mensuelles').select('*').eq('station_id', stationId).order('mois'),
       supabase.from('charges').select('*').eq('station_id', stationId),
       supabase.from('expenses').select('report_date,categorie,montant').eq('station_id', stationId),
@@ -58,6 +61,7 @@ export default function Finance() {
       supabase.from('v_latest_stock').select('bons_restant').eq('station_id', stationId).maybeSingle(),
       supabase.from('profiles').select('id,full_name'),
       supabase.from('finance_periodes_verrouillees').select('mois').eq('station_id', stationId),
+      supabase.from('finance_soldes_ouverture').select('*').eq('station_id', stationId).maybeSingle(),
     ])
     setVentes(v.data || []); setCharges(c.data || []); setExpenses(e.data || [])
     if (st.data) setSettings(st.data)
@@ -65,6 +69,7 @@ export default function Finance() {
     setBonsRestant(N(ls.data?.bons_restant))
     const pm = {}; for (const x of (pr.data || [])) pm[x.id] = x.full_name; setProfiles(pm)
     setLocked(new Set((fv.data || []).map(x => x.mois)))
+    setOuverture(ou.data || null)
   }
   useEffect(() => { load() }, [stationId])
 
@@ -142,7 +147,11 @@ export default function Finance() {
     ? charges.filter(c => c.categorie !== REVENU_CAT && c.statut !== 'paye' && c.mois <= periodeFinBilan).reduce((s, c) => s + N(c.montant), 0)
     : 0
   const stockTotal = stockVal.reduce((s, v) => s + N(v.valeur), 0)
-  const totalActif = stockTotal + bonsRestant + cashCumule
+  // Le solde d'ouverture ne s'applique que si la période affichée est postérieure ou égale
+  // à sa date — sinon on regarderait une période antérieure à la saisie de ce solde.
+  const ouvertureActive = ouverture && periodeFinBilan && ouverture.date_ouverture.slice(0, 7) <= periodeFinBilan
+  const ouvertureMontant = ouvertureActive ? N(ouverture.montant) : 0
+  const totalActif = stockTotal + bonsRestant + cashCumule + ouvertureMontant
   const totalPassif = chargesAPayerCumule
   const situationNette = totalActif - totalPassif
 
@@ -189,6 +198,21 @@ export default function Finance() {
       flash('Mois verrouillé')
     }
     load()
+  }
+  function openOuvertureForm() {
+    setOuvertureForm(ouverture
+      ? { montant: String(ouverture.montant), date_ouverture: ouverture.date_ouverture, note: ouverture.note || '' }
+      : { montant: '', date_ouverture: today(), note: '' })
+    setEditOuverture(true)
+  }
+  async function saveOuverture(e) {
+    e.preventDefault(); setErr('')
+    if (!ouvertureForm.date_ouverture) { setErr("Renseigne la date d'ouverture."); return }
+    const { error } = await supabase.from('finance_soldes_ouverture').upsert({
+      station_id: stationId, date_ouverture: ouvertureForm.date_ouverture, montant: Number(ouvertureForm.montant) || 0,
+      note: ouvertureForm.note || null, created_by: session.user.id, updated_at: new Date().toISOString(),
+    }, { onConflict: 'station_id' })
+    if (error) setErr(error.message); else { setEditOuverture(false); flash("Solde d'ouverture enregistré"); load() }
   }
   // proposer : copier les charges récurrentes du mois précédent
   async function reporterMoisPrecedent() {
@@ -355,13 +379,30 @@ export default function Finance() {
         {openAnnuel && <DataTable columns={annualColumns} rows={annualRows} />}
       </Panel>
 
-      <Panel title="Bilan simplifié" meta={`au ${periodeFinBilan || '—'}`}>
+      <Panel title="Bilan simplifié" meta={`au ${periodeFinBilan || '—'}`}
+        actions={<Button size="sm" onClick={openOuvertureForm}>{ouverture ? "Modifier le solde d'ouverture" : "Définir le solde d'ouverture"}</Button>}>
         <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', marginTop: 0 }}>
-          Ce que la station possède / doit, cumulé depuis le début des données jusqu'à la fin de la période — pas un flux du mois comme le compte de résultat ci-dessus.
+          Ce que la station possède / doit, cumulé depuis le début des données (+ solde d'ouverture si renseigné) jusqu'à la fin de la période — pas un flux du mois comme le compte de résultat ci-dessus.
         </p>
+        {editOuverture && (
+          <form onSubmit={saveOuverture} style={{ display: 'flex', gap: 'var(--sp-4)', flexWrap: 'wrap', alignItems: 'end', marginBottom: 'var(--sp-4)', padding: 'var(--sp-4)', background: 'var(--surface-raised)', borderRadius: 'var(--radius-1)' }}>
+            <Field label="Date d'ouverture (avant le suivi app)" style={{ flex: '1 1 160px' }}>
+              <Input type="date" value={ouvertureForm.date_ouverture} max={today()} onChange={e => setOuvertureForm({ ...ouvertureForm, date_ouverture: e.target.value })} />
+            </Field>
+            <Field label="Solde net à cette date (F)" hint="actif − passif réels avant le suivi, peut être négatif" style={{ flex: '1 1 200px' }}>
+              <Input type="number" inputMode="decimal" numeric value={ouvertureForm.montant} onChange={e => setOuvertureForm({ ...ouvertureForm, montant: e.target.value })} />
+            </Field>
+            <Field label="Note (optionnel)" style={{ flex: '1 1 200px' }}>
+              <Input value={ouvertureForm.note} onChange={e => setOuvertureForm({ ...ouvertureForm, note: e.target.value })} />
+            </Field>
+            <Button type="submit" tone="primary" size="sm">Enregistrer</Button>
+            <Button type="button" size="sm" onClick={() => setEditOuverture(false)}>Annuler</Button>
+          </form>
+        )}
         <div style={{ display: 'flex', gap: 'var(--sp-6)', flexWrap: 'wrap' }}>
           <div style={{ flex: '1 1 260px', display: 'flex', flexDirection: 'column', gap: 'var(--sp-2)' }}>
             <LedgerHead>Actif</LedgerHead>
+            {ouverture && <LedgerRow label={`Solde d'ouverture (avant le suivi, ${frDate(ouverture.date_ouverture)})`} value={fcfa(ouvertureMontant)} />}
             <LedgerRow label="Stock (gaz + lubrifiant + supérette)" value={fcfa(stockTotal)} />
             <LedgerRow label="Bons en cours (créance, à ce jour)" value={fcfa(bonsRestant)} />
             <LedgerRow label="Cash non encore versé (cumulé)" value={fcfa(cashCumule)} />
