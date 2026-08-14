@@ -272,6 +272,23 @@ export default function Submit() {
     if (deposits.some(d => N(d.montant) > 0 && d.periode_debut > d.periode_fin)) {
       fail('La date de début d\'un versement doit être avant sa date de fin.', 'deposits', depositsRef); return
     }
+    // Doublon : même pôle + même période + même montant déjà déclaré un AUTRE jour (celui-ci
+    // remplace déjà ses propres versements à l'enregistrement, donc on ne se compare pas à
+    // soi-même) — signale sans bloquer définitivement, le gérant/admin peut forcer si ce sont
+    // réellement deux bordereaux distincts.
+    for (const d of deposits) {
+      if (N(d.montant) <= 0 || !d.periode_debut || !d.periode_fin || d.forceDoublon) continue
+      const { data: existing } = await supabase.from('deposits').select('report_date,montant')
+        .eq('station_id', stationId).eq('pole', d.pole)
+        .eq('periode_debut', d.periode_debut).eq('periode_fin', d.periode_fin)
+        .neq('report_date', date)
+      const dup = (existing || []).find(x => Math.abs(N(x.montant) - N(d.montant)) < 1)
+      if (dup) {
+        setDeposits(p => p.map(x => x === d ? { ...x, _dupWarn: `Un versement identique (${d.pole}, ${frDate(d.periode_debut)} → ${frDate(d.periode_fin)}, ${fcfa(N(d.montant))}) est déjà déclaré le ${frDate(dup.report_date)}.` } : x))
+        fail('Versement en double détecté — voir le détail ci-dessous.', 'deposits', depositsRef)
+        return
+      }
+    }
     // photo obligatoire pour chaque compteur saisi (du moment)
     const meterSets = []
     if (moment === 'matin' || showAll) meterSets.push(
@@ -756,17 +773,23 @@ export default function Submit() {
                 <div key={i} style={{ padding: 'var(--sp-4)', background: 'var(--surface-raised)', borderRadius: 'var(--radius-1)', border: '1px solid var(--border-hairline)', display: 'flex', flexDirection: 'column', gap: 'var(--sp-3)' }}>
                   <div style={{ display: 'flex', gap: 'var(--sp-4)', flexWrap: 'wrap' }}>
                     <Field label="Source (pôle) *" style={{ flex: '1 1 180px' }}>
-                      <Select value={d.pole || 'carburant'} onChange={ev => upd(setDeposits, i, 'pole', ev.target.value)} style={{ width: '100%' }}
+                      <Select value={d.pole || 'carburant'} onChange={ev => setDeposits(p => p.map((x, j) => j === i ? { ...x, pole: ev.target.value, _dupWarn: undefined, forceDoublon: false } : x))} style={{ width: '100%' }}
                         options={[{ value: 'carburant', label: 'Carburant' }, { value: 'gaz_lubrifiant', label: 'Gaz + Lubrifiant' }, { value: 'gaz', label: 'Gaz seul' }, { value: 'lubrifiant', label: 'Lubrifiant seul' }, { value: 'superette', label: 'Supérette' }]} />
                     </Field>
-                    <Field label="Montant versé *" style={{ flex: '1 1 140px' }}><Input type="text" inputMode="decimal" numeric value={d.montant || ''} onChange={ev => upd(setDeposits, i, 'montant', ev.target.value)} /></Field>
+                    <Field label="Montant versé *" style={{ flex: '1 1 140px' }}><Input type="text" inputMode="decimal" numeric value={d.montant || ''} onChange={ev => setDeposits(p => p.map((x, j) => j === i ? { ...x, montant: ev.target.value, _dupWarn: undefined, forceDoublon: false } : x))} /></Field>
                   </div>
                   <div style={{ display: 'flex', gap: 'var(--sp-4)', flexWrap: 'wrap' }}>
-                    <Field label="Période concernée — du *" style={{ flex: '1 1 160px' }}><Input type="date" max={date} value={d.periode_debut || ''} onChange={ev => upd(setDeposits, i, 'periode_debut', ev.target.value)} /></Field>
-                    <Field label="… au *" style={{ flex: '1 1 160px' }}><Input type="date" max={date} value={d.periode_fin || ''} onChange={ev => upd(setDeposits, i, 'periode_fin', ev.target.value)} /></Field>
+                    <Field label="Période concernée — du *" style={{ flex: '1 1 160px' }}><Input type="date" max={date} value={d.periode_debut || ''} onChange={ev => setDeposits(p => p.map((x, j) => j === i ? { ...x, periode_debut: ev.target.value, _dupWarn: undefined, forceDoublon: false } : x))} /></Field>
+                    <Field label="… au *" style={{ flex: '1 1 160px' }}><Input type="date" max={date} value={d.periode_fin || ''} onChange={ev => setDeposits(p => p.map((x, j) => j === i ? { ...x, periode_fin: ev.target.value, _dupWarn: undefined, forceDoublon: false } : x))} /></Field>
                   </div>
                   {d.periode_debut && d.periode_fin && d.periode_debut !== d.periode_fin &&
                     <p style={{ font: '400 12px/1 var(--font-ui)', color: 'var(--text-muted)', margin: 0 }}>Versement cumulé sur {frDate(d.periode_debut)} → {frDate(d.periode_fin)}</p>}
+                  {d._dupWarn && (
+                    <AlertBanner tone="warn" title="Versement en double ?">
+                      {d._dupWarn}
+                      <Checkbox label="Ce sont bien deux versements distincts (forcer)" checked={!!d.forceDoublon} onChange={v => upd(setDeposits, i, 'forceDoublon', v)} style={{ marginTop: 'var(--sp-3)' }} />
+                    </AlertBanner>
+                  )}
                   <Field label="Photo du bordereau *">
                     <Input type="file" accept="image/*" capture="environment" onChange={ev => upd(setDeposits, i, '_file', ev.target.files[0])} />
                   </Field>
