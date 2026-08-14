@@ -254,10 +254,11 @@ export default function History() {
           : <DataTable columns={columns} rows={shownRows.map(r => ({ ...r, id: r.report_date }))} footer={footer} onRowClick={r => setDetailDate(r.report_date)} />}
       </div>
       <p style={{ font: '400 12px/1.5 var(--font-ui)', color: 'var(--text-muted)', margin: 'var(--sp-4) var(--gutter-panel)' }}>
-        Un versement couvre une <b>période</b> (gaz et lubrifiant sont cumulables dans un même bordereau).
-        Tant que la période n'est pas clôturée, les jours sont « ✓ inclus » (écart 0). Le jour où la période
-        se termine, on compare la <b>somme des recettes</b> (carburant : <b>net des dépenses</b>) au
-        <b> montant versé</b> : s'il reste un écart, il apparaît en rouge dans le détail du jour et une alerte est levée.
+        La colonne <b>CA</b> affiche toujours le déclaré du seul jour. Un versement couvre une <b>période</b>
+        (gaz et lubrifiant sont cumulables dans un même bordereau) : tant qu'elle n'est pas clôturée, les jours
+        sont « ✓ inclus » (écart 0). Le jour où la période se termine, l'<b>Écart</b> compare la <b>somme des
+        recettes de toute la période</b> (carburant : <b>net des dépenses</b>) au <b>montant versé</b> — survole
+        le montant de l'écart pour voir ce cumul. S'il reste un écart, il apparaît en rouge et une alerte est levée.
       </p>
 
       <Drawer open={!!detailRow} onClose={() => setDetailDate(null)}
@@ -341,12 +342,11 @@ function poleState(g, espece) {
   return null
 }
 
-// Sur le jour de clôture d'un versement, la recette affichée = cumul de la
-// période (base réelle de l'écart) ; sinon la recette du seul jour.
+// CA affiché = toujours le déclaré du SEUL jour, jamais le cumul de la période versée —
+// sinon le jour de clôture affiche un montant qui ne correspond à aucune saisie du gérant
+// pour ce jour précis, ce qui prête à confusion. Le cumul (base réelle de l'écart) reste
+// visible via l'info-bulle de la colonne Écart, seule colonne qui a besoin de ce cumul.
 function caCell(g, dayVal) {
-  if (g && N(g.nb_cloture) > 0 && g.recette_cloture != null) {
-    return <span title="Recette cumulée de la période clôturée ce jour (base de l'écart)" style={{ borderBottom: '1px dotted var(--text-muted)', cursor: 'help' }}>{fcfa(g.recette_cloture)}</span>
-  }
   return fcfa(dayVal)
 }
 function verseCell(g) {
@@ -363,7 +363,8 @@ function ecartCell(g, dayVal) {
     // écart > 0 = il manque du versé (rouge) ; écart < 0 = surplus versé (vert) ; ≈0 = ok (vert).
     // Tout manque compte, même petit — 0.5 F n'est qu'un épsilon anti-bruit d'arrondi, pas une
     // tolérance métier (825 F par ex. doit être rouge, pas "ok" parce que sous un seuil arbitraire).
-    return <span style={{ fontWeight: 600, color: e > 0.5 ? 'var(--state-alarm)' : 'var(--state-ok)' }}>{fcfa(e)}{e < -0.5 ? ' (surplus)' : ''}</span>
+    const title = g.recette_cloture != null ? `Basé sur la recette cumulée de la période versée (clôturée ce jour) : ${fcfa(g.recette_cloture)}` : undefined
+    return <span title={title} style={{ fontWeight: 600, color: e > 0.5 ? 'var(--state-alarm)' : 'var(--state-ok)', borderBottom: title ? '1px dotted currentColor' : undefined, cursor: title ? 'help' : undefined }}>{fcfa(e)}{e < -0.5 ? ' (surplus)' : ''}</span>
   }
   if (g.couvert) return <span style={{ color: 'var(--state-ok)' }} title="Jour inclus dans une période versée ; l'écart sera calculé au dernier jour de la période.">✓ inclus</span>
   if (N(g.espece) > 0 || N(dayVal) > 0) return <span style={{ color: 'var(--text-muted)' }}>en attente</span>
@@ -371,7 +372,6 @@ function ecartCell(g, dayVal) {
 }
 // Équivalents en VALEUR BRUTE (nombres/texte, pas de JSX) — pour l'export CSV, miroir de caCell/verseCell/ecartCell.
 function caVal(g, dayVal) {
-  if (g && N(g.nb_cloture) > 0 && g.recette_cloture != null) return Math.round(N(g.recette_cloture))
   return Math.round(N(dayVal))
 }
 function verseVal(g) { return g && N(g.verse) ? Math.round(N(g.verse)) : '' }
