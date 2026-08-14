@@ -213,8 +213,6 @@ export default function Submit() {
   const totDepense = expenses.reduce((s, e) => s + N(e.montant), 0)
   const totVerse = deposits.reduce((s, d) => s + N(d.montant), 0)
   const totLivr = deliveries.reduce((s, d) => s + N(d.montant), 0)
-  const aVerser = cashDeclare - totDepense
-  const ecart = aVerser - totVerse
   const marge = (N(f.ess_litres) + N(f.gas_litres)) * N(settings.marge_unitaire)
   const show = (m) => showAll || moment === m
   // gérant/pompiste/vendeuse : verrouillage aligné sur la règle RLS réelle côté base
@@ -227,8 +225,14 @@ export default function Submit() {
   const depensesOpen = openDepenses ?? (expenses.length > 0)
   const versementsOpen = openVersements ?? (deposits.length > 0)
 
-  // Récap du footer adapté au moment actif : les KPI cash (à verser/versé) n'ont de sens
-  // qu'une fois le Soir en cours de saisie ; Matin/16h ont leur propre repère pertinent.
+  // Récap du footer adapté au moment actif : les KPI cash n'ont de sens qu'une fois le Soir
+  // en cours de saisie ; Matin/16h ont leur propre repère pertinent. Volontairement PAS
+  // d'écart calculé ici (recette − dépenses − versé) : ces 3 montants ne portent que sur le
+  // jour affiché et sont mélangés tous pôles confondus, alors qu'un versement peut couvrir
+  // plusieurs jours et que chaque pôle (carburant / gaz+lub / supérette) a son propre
+  // bordereau — un tel écart combiné-jour-unique serait faux dès qu'un versement est en
+  // retard ou groupé (constaté en prod : « surplus » affiché alors qu'il manquait 3 425 F
+  // sur un pôle). L'écart fiable, par pôle et cumulé sur la vraie période, est dans Historique.
   function footerKpis() {
     if (moment === 'matin' && !showAll) return (<>
       <MetricTile label="Essence en cuve" value={f.ess_stock !== '' ? Math.round(N(f.ess_stock)).toLocaleString('fr-FR') : '—'} unit={f.ess_stock !== '' ? 'L' : ''} />
@@ -242,7 +246,6 @@ export default function Submit() {
     return (<>
       <MetricTile label="Recette espèces (jour)" value={fcfa(cashDeclare)} />
       <MetricTile label="Dépenses (jour)" value={fcfa(totDepense)} />
-      <MetricTile label="À verser (jour)" value={fcfa(aVerser)} status="accent" />
       <MetricTile label="Versé saisi ce jour" value={fcfa(totVerse)} />
     </>)
   }
