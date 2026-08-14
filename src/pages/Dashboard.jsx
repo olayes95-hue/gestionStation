@@ -46,7 +46,7 @@ export default function Dashboard() {
   const [month, setMonth] = useState(today.slice(5, 7))
   const [refreshedAt, setRefreshedAt] = useState('')
   const [openRecon, setOpenRecon] = useState(false)
-  const [polePeriod, setPolePeriod] = useState({ dr: [], dep: [], exp: [], sup: [], lub: [] })   // brut, pour manque-à-verser et détail par pôle/catégorie sur la période sélectionnée
+  const [polePeriod, setPolePeriod] = useState({ dr: [], recon: [], exp: [], sup: [], lub: [] })   // brut, pour manque-à-verser et détail par pôle/catégorie sur la période sélectionnée
   const [charges, setCharges] = useState([])   // table "charges" du Point financier (Finance.jsx) — loyer, salaires, impôts...
   const [gazPrices, setGazPrices] = useState({})   // {nom bouteille: prix_vente actuel} — pour estimer le CA gaz par taille
   const [lubPrices, setLubPrices] = useState({})   // {nom référence: prix_vente actuel} — pour estimer le CA lubrifiant par type
@@ -104,15 +104,14 @@ export default function Dashboard() {
     if (!stationId) return
     const { from, to } = periodBounds(year, month)
     ;(async () => {
-      const [dr, dep, exp, sup, lub] = await Promise.all([
-        supabase.from('daily_reports').select('ess_espece,gas_espece,gaz_espece,superette_espece,lubrifiant_espece,ess_litres,ess_pu,gas_litres,gas_pu,gaz_vendu_3,gaz_vendu_6,gaz_vendu_12,gaz_vendu_38').eq('station_id', stationId).gte('report_date', from).lte('report_date', to),
-        supabase.from('deposits').select('pole,montant,periode_fin,report_date').eq('station_id', stationId)
-          .or(`and(periode_fin.gte.${from},periode_fin.lte.${to}),and(periode_fin.is.null,report_date.gte.${from},report_date.lte.${to})`),
+      const [dr, recon, exp, sup, lub] = await Promise.all([
+        supabase.from('daily_reports').select('ess_litres,ess_pu,gas_litres,gas_pu,gaz_vendu_3,gaz_vendu_6,gaz_vendu_12,gaz_vendu_38').eq('station_id', stationId).gte('report_date', from).lte('report_date', to),
+        supabase.from('v_pole_recon_jour').select('*').eq('station_id', stationId).gte('report_date', from).lte('report_date', to),
         supabase.from('expenses').select('categorie,montant,non_cash').eq('station_id', stationId).gte('report_date', from).lte('report_date', to),
         supabase.from('superette_sales').select('nom,montant,quantite').eq('station_id', stationId).gte('report_date', from).lte('report_date', to),
         supabase.from('v_sorties_deduites').select('produit,sortie_deduite').eq('station_id', stationId).eq('categorie', 'lubrifiant').gte('report_date', from).lte('report_date', to),
       ])
-      setPolePeriod({ dr: dr.data || [], dep: dep.data || [], exp: exp.data || [], sup: sup.data || [], lub: lub.data || [] })
+      setPolePeriod({ dr: dr.data || [], recon: recon.data || [], exp: exp.data || [], sup: sup.data || [], lub: lub.data || [] })
     })()
   }, [stationId, year, month])
 
@@ -191,25 +190,26 @@ export default function Dashboard() {
     Lubrifiant: Math.round(N(m.ventes_lubrifiant)), Supérette: Math.round(N(m.ventes_superette)),
   }))
 
-  // Manque à verser par pôle (bâtons) — même calcul que le Journal de bord du gérant
-  // (espèces − dépenses non-cash − versé, par pôle), mais sur la période sélectionnée du dashboard.
+  // Manque à verser par pôle (bâtons) — même calcul que le Journal de bord du gérant, attribué
+  // période par période via v_pole_recon_jour (pas de simple découpage calendaire) : un jour qui
+  // clôture une période compte le cumul réel de CETTE période (recette_cloture − verse, quelle
+  // que soit sa durée, même à cheval sur deux mois) ; un jour encore couvert par une période en
+  // cours ne compte rien (résolu à la clôture) ; un jour non couvert par aucune période compte sa
+  // recette brute. Sans ça, un versement à cheval sur deux mois comptait son montant entier dans
+  // le mois de clôture alors que la recette qu'il couvre restait pour partie dans l'autre mois.
   const manquePole = (() => {
-    let carbEsp = 0, gazEsp = 0, lubEsp = 0, supEsp = 0
-    for (const r of polePeriod.dr) {
-      carbEsp += N(r.ess_espece) + N(r.gas_espece)
-      gazEsp += N(r.gaz_espece); lubEsp += N(r.lubrifiant_espece); supEsp += N(r.superette_espece)
-    }
-    const verseByPole = { carburant: 0, gaz_lub: 0, superette: 0 }
-    for (const d of polePeriod.dep) {
-      const p = d.pole === 'carburant' ? 'carburant' : d.pole === 'superette' ? 'superette' : 'gaz_lub'
-      verseByPole[p] += N(d.montant)
+    const manqueByPole = { carburant: 0, gaz_lub: 0, superette: 0 }
+    for (const g of polePeriod.recon) {
+      if (!(g.pole_groupe in manqueByPole)) continue
+      if (N(g.nb_cloture) > 0 && g.recette_cloture != null) manqueByPole[g.pole_groupe] += N(g.recette_cloture) - N(g.verse)
+      else if (!g.couvert) manqueByPole[g.pole_groupe] += N(g.espece)
     }
     let depSuperette = 0
     for (const e of polePeriod.exp) { if (!e.non_cash && e.categorie === 'SUPERETTE') depSuperette += N(e.montant) }
     return [
-      { name: 'Carburant', value: carbEsp - verseByPole.carburant },
-      { name: 'Gaz + Lubrifiant', value: (gazEsp + lubEsp) - verseByPole.gaz_lub },
-      { name: 'Supérette', value: supEsp - depSuperette - verseByPole.superette },
+      { name: 'Carburant', value: manqueByPole.carburant },
+      { name: 'Gaz + Lubrifiant', value: manqueByPole.gaz_lub },
+      { name: 'Supérette', value: manqueByPole.superette - depSuperette },
     ]
   })()
 

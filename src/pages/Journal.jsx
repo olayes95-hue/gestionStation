@@ -58,13 +58,10 @@ export default function Journal() {
     const day = today()
     const monthStart = day.slice(0, 7) + '-01'
     const monthEnd = day.slice(0, 7) + '-31'
-    const [sub, fc, dr, dep, exp, pert, al, po, st, pr, ls] = await Promise.all([
+    const [sub, fc, recon, exp, pert, al, po, st, pr, ls] = await Promise.all([
       supabase.from('submissions').select('moment').eq('station_id', stationId).eq('report_date', day),
       supabase.from('v_stock_forecast').select('*').eq('station_id', stationId).maybeSingle(),
-      supabase.from('daily_reports').select('ess_espece,gas_espece,gaz_espece,superette_espece,lubrifiant_espece').eq('station_id', stationId).gte('report_date', monthStart).lte('report_date', monthEnd),
-      supabase.from('deposits').select('pole,montant,periode_fin,report_date')
-        .eq('station_id', stationId)
-        .or(`and(periode_fin.gte.${monthStart},periode_fin.lte.${monthEnd}),and(periode_fin.is.null,report_date.gte.${monthStart},report_date.lte.${monthEnd})`),
+      supabase.from('v_pole_recon_jour').select('*').eq('station_id', stationId).gte('report_date', monthStart).lte('report_date', monthEnd),
       supabase.from('expenses').select('categorie,montant,non_cash').eq('station_id', stationId).gte('report_date', monthStart).lte('report_date', monthEnd),
       supabase.from('v_pertes_mensuelles').select('*').eq('station_id', stationId).eq('mois', day.slice(0, 7)).maybeSingle(),
       supabase.from('v_alerts').select('*').eq('station_id', stationId).gte('report_date', monthStart).lte('report_date', monthEnd),
@@ -77,22 +74,21 @@ export default function Journal() {
     setForecast(fc.data || null)
     setStock(ls.data || null)
 
-    // Même décomposition que « Cash non tracé » du Tableau de bord admin (recettes − dépenses − versé),
-    // éclatée par pôle pour que la somme des 3 lignes (moins les charges générales non affectables
-    // à un pôle) redonne exactement le même total.
-    let carbEsp = 0, gazEsp = 0, lubEsp = 0, supEsp = 0
-    for (const r of (dr.data || [])) {
-      carbEsp += N(r.ess_espece) + N(r.gas_espece)
-      gazEsp += N(r.gaz_espece)
-      lubEsp += N(r.lubrifiant_espece)
-      supEsp += N(r.superette_espece)
-    }
-    const gazLubEsp = gazEsp + lubEsp
-
-    const verseByPole = { carburant: 0, gaz_lub: 0, superette: 0 }
-    for (const d of (dep.data || [])) {
-      const p = d.pole === 'carburant' ? 'carburant' : d.pole === 'superette' ? 'superette' : 'gaz_lub'
-      verseByPole[p] += N(d.montant)
+    // Même décomposition que « Cash non tracé » du Tableau de bord admin (recettes − versé,
+    // éclatée par pôle), MAIS attribuée période par période (via v_pole_recon_jour) et non plus
+    // par simple découpage calendaire : un versement à cheval sur deux mois comptait son montant
+    // ENTIER dans le mois de clôture alors que la recette qu'il couvre restait pour partie dans
+    // le mois précédent (via report_date) — ça faisait apparaître un manque négatif/trop bas ce
+    // mois-ci pendant que les vraies alertes (qui suivent chaque période, pas le mois calendaire)
+    // continuaient de signaler un manque réel sur une autre période/pôle. Ici : un jour qui clôture
+    // une période compte le cumul réel de CETTE période (recette_cloture − verse, quelle que soit
+    // sa durée) ; un jour encore ouvert/couvert par une période en cours ne compte rien (résolu au
+    // jour de clôture, où qu'il tombe) ; un jour non couvert par aucune période compte sa recette brute.
+    const manqueByPole = { carburant: 0, gaz_lub: 0, superette: 0 }
+    for (const g of (recon.data || [])) {
+      if (!(g.pole_groupe in manqueByPole)) continue
+      if (N(g.nb_cloture) > 0 && g.recette_cloture != null) manqueByPole[g.pole_groupe] += N(g.recette_cloture) - N(g.verse)
+      else if (!g.couvert) manqueByPole[g.pole_groupe] += N(g.espece)
     }
 
     let depSuperette = 0, depGen = 0
@@ -103,9 +99,9 @@ export default function Journal() {
     }
 
     setManque({
-      carburant: carbEsp - verseByPole.carburant,
-      gaz_lub: gazLubEsp - verseByPole.gaz_lub,
-      superette: supEsp - depSuperette - verseByPole.superette,
+      carburant: manqueByPole.carburant,
+      gaz_lub: manqueByPole.gaz_lub,
+      superette: manqueByPole.superette - depSuperette,
     })
     setDepGeneral(depGen)
 
