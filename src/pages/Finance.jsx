@@ -42,6 +42,9 @@ export default function Finance() {
   const [ouverture, setOuverture] = useState(null) // {montant, date_ouverture, note} — solde avant le suivi app
   const [editOuverture, setEditOuverture] = useState(false)
   const [ouvertureForm, setOuvertureForm] = useState({ montant: '', date_ouverture: '', note: '' })
+  const [bonsRecon, setBonsRecon] = useState({})   // {mois: {montant_direction, note}} — relevé direction par mois
+  const [editBonRecon, setEditBonRecon] = useState(false)
+  const [bonReconForm, setBonReconForm] = useState({ montant_direction: '', note: '' })
   const [openAnnuel, setOpenAnnuel] = useState(false)
   // Par défaut, mois en cours (pas le dernier mois avec des données, qui peut être ancien).
   const [annee, setAnnee] = useState(today().slice(0, 4))
@@ -51,7 +54,7 @@ export default function Finance() {
 
   async function load() {
     if (!stationId) return
-    const [v, c, e, st, p, sv, ls, pr, fv, ou] = await Promise.all([
+    const [v, c, e, st, p, sv, ls, pr, fv, ou, br] = await Promise.all([
       supabase.from('v_ventes_mensuelles').select('*').eq('station_id', stationId).order('mois'),
       supabase.from('charges').select('*').eq('station_id', stationId),
       supabase.from('expenses').select('report_date,categorie,montant').eq('station_id', stationId),
@@ -62,6 +65,7 @@ export default function Finance() {
       supabase.from('profiles').select('id,full_name'),
       supabase.from('finance_periodes_verrouillees').select('mois').eq('station_id', stationId),
       supabase.from('finance_soldes_ouverture').select('*').eq('station_id', stationId).maybeSingle(),
+      supabase.from('finance_bons_reconciliation').select('*').eq('station_id', stationId),
     ])
     setVentes(v.data || []); setCharges(c.data || []); setExpenses(e.data || [])
     if (st.data) setSettings(st.data)
@@ -70,6 +74,7 @@ export default function Finance() {
     const pm = {}; for (const x of (pr.data || [])) pm[x.id] = x.full_name; setProfiles(pm)
     setLocked(new Set((fv.data || []).map(x => x.mois)))
     setOuverture(ou.data || null)
+    const brm = {}; for (const x of (br.data || [])) brm[x.mois] = x; setBonsRecon(brm)
   }
   useEffect(() => { load() }, [stationId])
 
@@ -82,6 +87,13 @@ export default function Finance() {
   // commissions AUTO des autres pôles = ventes × taux
   const commGazLub = (sum('ventes_gaz') + sum('ventes_lubrifiant')) * N(settings.taux_gaz) / 100
   const commSuperette = sum('ventes_superette') * N(settings.taux_superette) / 100
+
+  // Rapprochement des bons : seul contrôle qui confronte le déclaratif du gérant (ventes_bon,
+  // cumulé jour par jour) à une source externe — le relevé mensuel envoyé par la direction.
+  const bonsDeclare = sum('ventes_bon')
+  const bonRecon = mois ? bonsRecon[mois] : null
+  const bonsDirection = bonRecon ? N(bonRecon.montant_direction) : null
+  const bonsEcart = bonsDirection != null ? bonsDeclare - bonsDirection : null
 
   // charges AUTO depuis les dépenses quotidiennes (SBEE, carburant) — factorisé pour être
   // réutilisable sur n'importe quel prédicat de mois (période courante, précédente, un mois donné).
@@ -213,6 +225,19 @@ export default function Finance() {
       note: ouvertureForm.note || null, created_by: session.user.id, updated_at: new Date().toISOString(),
     }, { onConflict: 'station_id' })
     if (error) setErr(error.message); else { setEditOuverture(false); flash("Solde d'ouverture enregistré"); load() }
+  }
+  function openBonReconForm() {
+    setBonReconForm(bonRecon ? { montant_direction: String(bonRecon.montant_direction), note: bonRecon.note || '' } : { montant_direction: '', note: '' })
+    setEditBonRecon(true)
+  }
+  async function saveBonRecon(e) {
+    e.preventDefault(); setErr('')
+    if (!mois) return
+    const { error } = await supabase.from('finance_bons_reconciliation').upsert({
+      station_id: stationId, mois, montant_direction: Number(bonReconForm.montant_direction) || 0,
+      note: bonReconForm.note || null, created_by: session.user.id, updated_at: new Date().toISOString(),
+    }, { onConflict: 'station_id,mois' })
+    if (error) setErr(error.message); else { setEditBonRecon(false); flash('Rapprochement des bons enregistré'); load() }
   }
   // proposer : copier les charges récurrentes du mois précédent
   async function reporterMoisPrecedent() {
@@ -349,6 +374,35 @@ export default function Finance() {
         <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', marginTop: 'var(--sp-4)', marginBottom: 0 }}>
           Total des pertes au-delà du seuil de tolérance sur les livraisons réceptionnées. Sert de base à une éventuelle retenue sur le salaire du gérant si non justifiées.
         </p>
+      </Panel>
+
+      <Panel title="Rapprochement des bons" meta={mois || annee}
+        status={bonsEcart != null ? (Math.abs(bonsEcart) > 0.5 ? 'alarm' : 'ok') : undefined}
+        actions={mois && <Button size="sm" onClick={openBonReconForm}>{bonRecon ? 'Modifier' : 'Renseigner'} le relevé direction</Button>}>
+        <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', marginTop: 0 }}>
+          Les ventes à bon sont déclarées au jour le jour par le gérant, sans preuve ni recoupement interne — c'est le seul montant qui confronte cette déclaration à une source externe (le relevé mensuel de la direction).
+        </p>
+        {editBonRecon && (
+          <form onSubmit={saveBonRecon} style={{ display: 'flex', gap: 'var(--sp-4)', flexWrap: 'wrap', alignItems: 'end', marginBottom: 'var(--sp-4)', padding: 'var(--sp-4)', background: 'var(--surface-raised)', borderRadius: 'var(--radius-1)' }}>
+            <Field label={`Montant confirmé par la direction — ${mois}`} style={{ flex: '1 1 220px' }}>
+              <Input type="number" inputMode="decimal" numeric value={bonReconForm.montant_direction} onChange={e => setBonReconForm({ ...bonReconForm, montant_direction: e.target.value })} />
+            </Field>
+            <Field label="Note (optionnel)" style={{ flex: '1 1 200px' }}>
+              <Input value={bonReconForm.note} onChange={e => setBonReconForm({ ...bonReconForm, note: e.target.value })} />
+            </Field>
+            <Button type="submit" tone="primary" size="sm">Enregistrer</Button>
+            <Button type="button" size="sm" onClick={() => setEditBonRecon(false)}>Annuler</Button>
+          </form>
+        )}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 'var(--sp-4)' }}>
+          <Kpi label="Bons déclarés (gérant)" value={fcfa(bonsDeclare)} sub={mois ? undefined : "somme sur l'année"} />
+          {mois
+            ? <>
+                <Kpi label="Confirmé par la direction" value={bonsDirection != null ? fcfa(bonsDirection) : '—'} />
+                <Kpi label="Écart" value={bonsDirection != null ? fcfa(bonsEcart) : '—'} status={bonsDirection != null ? (Math.abs(bonsEcart) > 0.5 ? 'alarm' : 'ok') : undefined} />
+              </>
+            : <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', alignSelf: 'center', margin: 0 }}>Sélectionne un mois précis pour comparer au relevé de la direction.</p>}
+        </div>
       </Panel>
 
       <Panel title="Compte de résultat" meta={mois || annee} actions={<Button size="sm" onClick={exportCompteResultat}>Exporter (CSV)</Button>}>
