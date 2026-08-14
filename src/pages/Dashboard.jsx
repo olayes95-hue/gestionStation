@@ -106,7 +106,9 @@ export default function Dashboard() {
     ;(async () => {
       const [dr, recon, exp, sup, lub] = await Promise.all([
         supabase.from('daily_reports').select('ess_litres,ess_pu,gas_litres,gas_pu,gaz_vendu_3,gaz_vendu_6,gaz_vendu_12,gaz_vendu_38').eq('station_id', stationId).gte('report_date', from).lte('report_date', to),
-        supabase.from('v_pole_recon_jour').select('*').eq('station_id', stationId).gte('report_date', from).lte('report_date', to),
+        // 3 lignes/jour (une par pôle) : sur "Toutes années", sans tri+limite explicites, la
+        // limite par défaut de l'API (1000 lignes) tronque arbitrairement (cf. bug Historique).
+        supabase.from('v_pole_recon_jour').select('*').eq('station_id', stationId).gte('report_date', from).lte('report_date', to).order('report_date', { ascending: false }).limit(5000),
         supabase.from('expenses').select('categorie,montant,non_cash').eq('station_id', stationId).gte('report_date', from).lte('report_date', to),
         supabase.from('superette_sales').select('nom,montant,quantite').eq('station_id', stationId).gte('report_date', from).lte('report_date', to),
         supabase.from('v_sorties_deduites').select('produit,sortie_deduite').eq('station_id', stationId).eq('categorie', 'lubrifiant').gte('report_date', from).lte('report_date', to),

@@ -56,7 +56,10 @@ export default function History() {
     const CUTOFF = new Date(Date.now() - 600 * 864e5).toISOString().slice(0, 10)
     const [m, cr, at, exp, dep] = await Promise.all([
       supabase.from('v_report_metrics').select('*').eq('station_id', stationId).gte('report_date', CUTOFF).order('report_date', { ascending: false }).limit(600),
-      supabase.from('v_pole_recon_jour').select('*').eq('station_id', stationId).gte('report_date', CUTOFF),
+      // 3 lignes/jour (une par pôle) : sans tri+limite explicites, la limite par défaut de l'API
+      // (1000 lignes) pouvait tronquer arbitrairement — des jours récents disparaissaient de
+      // `recon`, retombant à tort sur l'affichage "en attente" (repli quand la ligne est absente).
+      supabase.from('v_pole_recon_jour').select('*').eq('station_id', stationId).gte('report_date', CUTOFF).order('report_date', { ascending: false }).limit(1800),
       supabase.from('attachments').select('report_date,categorie').eq('station_id', stationId).gte('report_date', CUTOFF),
       supabase.from('expenses').select('report_date,montant,non_cash,photo_path').eq('station_id', stationId).gte('report_date', CUTOFF),
       supabase.from('deposits').select('report_date,montant,photo_path').eq('station_id', stationId).gte('report_date', CUTOFF),
