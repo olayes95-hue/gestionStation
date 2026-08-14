@@ -4,7 +4,7 @@ import { useAuth } from '../lib/auth.jsx'
 import { useStation } from '../lib/station.jsx'
 import { fcfa, frDate, numFR, today } from '../lib/format'
 import { ORDER_STATUS_TONES } from '../lib/tones'
-import { N, receptionner as receptionnerCommande } from '../lib/orderReception'
+import { N, receptionner as receptionnerCommande, cumulStatus } from '../lib/orderReception'
 import { Panel } from '../ds/octane/components/core/Panel.jsx'
 import { Button } from '../ds/octane/components/core/Button.jsx'
 import { Badge } from '../ds/octane/components/core/Badge.jsx'
@@ -450,6 +450,15 @@ export default function Orders() {
                     <Field label="Cuve avant"><Input type="text" inputMode="decimal" numeric value={r?.cuve_avant ?? ''} onChange={e => setRecv(p => ({ ...p, [o.id]: { ...(p[o.id] || {}), cuve_avant: e.target.value } }))} /></Field>
                     <Field label="Cuve après"><Input type="text" inputMode="decimal" numeric value={r?.cuve_apres ?? ''} onChange={e => setRecv(p => ({ ...p, [o.id]: { ...(p[o.id] || {}), cuve_apres: e.target.value } }))} /></Field>
                   </div>}
+                  {cat === 'carburant' && (() => {
+                    const s = cumulStatus({ quantiteCommandee: o.quantite_commandee, deja, recuSaisi: r?.quantite_recue, tauxPerteAcceptable: settings.taux_perte_acceptable })
+                    return (
+                      <p style={{ font: '400 11px/1.4 var(--font-ui)', color: s.dansLaNorme ? 'var(--state-ok)' : 'var(--state-alarm)', margin: 0 }}>
+                        Cumul avec cette réception : {Math.round(s.cumul).toLocaleString('fr-FR')} / {Math.round(s.commande).toLocaleString('fr-FR')} L —
+                        {s.dansLaNorme ? ' dans la norme' : ` hors norme (${Math.round(s.perteNa).toLocaleString('fr-FR')} L au-delà du seuil toléré)`}
+                      </p>
+                    )
+                  })()}
                   <Field label="Date"><Input type="date" value={r?.date || today()} max={today()} onChange={e => setRecv(p => ({ ...p, [o.id]: { ...(p[o.id] || {}), date: e.target.value } }))} /></Field>
                   {r?.warnEcart && (
                     <AlertBanner tone="warn" title="Écart détecté">

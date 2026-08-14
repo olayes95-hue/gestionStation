@@ -23,6 +23,18 @@ export function ecartWarning({ recu, cuveAvant, cuveApres, tauxPerteAcceptable, 
   return `Déclaré reçu ${recu.toLocaleString('fr-FR')} L, mais cuve après−avant = ${cuveDelta.toLocaleString('fr-FR')} L (écart ${Math.round(ecart).toLocaleString('fr-FR')} L). Vérifie que « cuve avant » a bien été relevée juste avant l'arrivée du camion.`
 }
 
+// État du cumul (déjà reçu + saisie en cours) vs commandé, affiché en temps réel pendant la
+// saisie d'une réception partielle — pour qu'un dépassement de tolérance se voie tout de suite,
+// pas seulement une fois la commande entièrement soldée (quand v_pertes_livraison la calcule).
+// Purement informatif ici, ne bloque rien (cf. receptionner ci-dessous pour le garde-fou réel).
+export function cumulStatus({ quantiteCommandee, deja, recuSaisi, tauxPerteAcceptable }) {
+  const commande = N(quantiteCommandee)
+  const cumul = N(deja) + N(recuSaisi)
+  const seuil = commande * (N(tauxPerteAcceptable) || 5) / 100
+  const perteNa = Math.max(0, (commande - cumul) - seuil)
+  return { commande, cumul, seuil, perteNa, dansLaNorme: perteNa <= 0 }
+}
+
 // Valide + écrit en base une réception (partielle ou soldante). Lève une Error pour les
 // erreurs de saisie bloquantes ; renvoie { warnEcart } pour un écart à confirmer (non bloquant,
 // l'appelant réaffiche le formulaire avec la case « forcer ») ; renvoie { complet, total } au succès.

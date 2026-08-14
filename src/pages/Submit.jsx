@@ -59,8 +59,6 @@ export default function Submit() {
   const [suppliers, setSuppliers] = useState([])
   const [attachments, setAttachments] = useState([])   // photos déjà envoyées
   const [newPhotos, setNewPhotos] = useState([])        // {file, categorie}
-  const [pendingOrders, setPendingOrders] = useState([]) // commandes carburant à réceptionner
-  const [recvOrder, setRecvOrder] = useState({})         // {orderId: {cuve_avant, cuve_apres, quantite_recue}}
   const [recvTotals, setRecvTotals] = useState({})       // {orderId: {quantite_recue_total, reste, complet}}
   const [meterPhotos, setMeterPhotos] = useState({})     // {champCompteur: {file, label}}
   const [lubTypes, setLubTypes] = useState(LUB_TYPES)    // références lubrifiant (dynamiques)
@@ -137,14 +135,13 @@ export default function Submit() {
 
   async function load(d) {
     setMsg(''); setErr(''); setErrTarget('top')
-    // Les 7 requêtes du jour sont lancées EN PARALLÈLE (avant : en série ≈ 7× la latence réseau).
-    const [r, ex, dep, dl, at, po, rt, sub] = await Promise.all([
+    // Les 6 requêtes du jour sont lancées EN PARALLÈLE (avant : en série ≈ 6× la latence réseau).
+    const [r, ex, dep, dl, at, rt, sub] = await Promise.all([
       supabase.from('daily_reports').select('*').eq('report_date', d).eq('station_id', stationId).maybeSingle(),
       supabase.from('expenses').select('*').eq('report_date', d).eq('station_id', stationId),
       supabase.from('deposits').select('*').eq('report_date', d).eq('station_id', stationId),
       supabase.from('deliveries').select('*').eq('report_date', d).eq('station_id', stationId),
       supabase.from('attachments').select('*').eq('report_date', d).eq('station_id', stationId).order('id'),
-      supabase.from('fuel_orders').select('*').eq('station_id', stationId).in('statut', ['validee', 'lancee', 'partielle']).order('created_at'),
       supabase.from('v_order_reception').select('*').eq('station_id', stationId),
       supabase.from('submissions').select('moment').eq('report_date', d).eq('station_id', stationId),
     ])
@@ -161,9 +158,7 @@ export default function Submit() {
     setDeliveries(dl.data || [])
     setAttachments(at.data || [])
     setNewPhotos([])
-    setPendingOrders(po.data || [])
     const tmap = {}; for (const x of (rt.data || [])) tmap[x.order_id] = x; setRecvTotals(tmap)
-    setRecvOrder({})
     setMeterPhotos({})
     setOpenReception(false)
   }
@@ -196,41 +191,6 @@ export default function Submit() {
     </div>
   )
 
-  async function receptionOrder(o) {
-    if (locked) { setErr(lockedMsg); return }
-    const r = recvOrder[o.id] || {}
-    const recu = numFR(r.quantite_recue)
-    if (!recu || recu <= 0) { setErr('Renseigne les litres effectivement reçus (> 0).'); return }
-    if (r.cuve_avant === '' || r.cuve_apres === '' || r.cuve_avant == null || r.cuve_apres == null) { setErr('Renseigne cuve avant ET après pour la réception.'); return }
-    if (!r._file) { setErr('Photo obligatoire pour valider la réception (bon de livraison / jauge).'); return }
-    const prix = o.produit === 'gasoil' ? Number(settings.gasoil_pa || 730) : Number(settings.essence_pa || 705)
-    // photo de réception
-    const path = `${stationId}/reception/${date}/${Date.now()}_${r._file.name.replace(/[^\w.\-]/g, '_')}`
-    const { error: up } = await supabase.storage.from(BORDEREAUX_BUCKET).upload(path, await compressImage(r._file)); if (up) { setErr(up.message); return }
-    // 1) enregistre CETTE réception partielle
-    const { error: eIns } = await supabase.from('order_receptions').insert({
-      order_id: o.id, station_id: stationId, report_date: date, quantite_recue: recu,
-      cuve_avant: numFR(r.cuve_avant), cuve_apres: numFR(r.cuve_apres),
-      prix_achat: prix, montant: recu * prix, photo_path: path, created_by: session.user.id })
-    if (eIns) { setErr(eIns.message); return }
-    await supabase.from('attachments').insert({ station_id: stationId, report_date: date, categorie: 'reception', note: `${o.produit} — reçu ${recu} L / ${N(o.quantite_commandee)} L commandés`, photo_path: path, created_by: session.user.id })
-    // 2) recalcule le cumul reçu + statut (partielle / recue) à la marge près
-    const dejaRecu = N(recvTotals[o.id]?.quantite_recue_total)
-    const total = dejaRecu + recu
-    const marge = N(o.quantite_commandee) * (Number(settings.taux_perte_acceptable) || 5) / 100
-    const complet = total >= N(o.quantite_commandee) - marge
-    const { error } = await supabase.from('fuel_orders').update({
-      statut: complet ? 'recue' : 'partielle',
-      cuve_avant: o.cuve_avant != null ? o.cuve_avant : numFR(r.cuve_avant),   // fixé à la 1re réception
-      cuve_apres: numFR(r.cuve_apres),                                          // dernier niveau connu
-      report_date: date, prix_achat: prix, montant: total * prix,
-      recu_by: session.user.id, recu_at: new Date().toISOString() }).eq('id', o.id)
-    if (error) { setErr(error.message); return }
-    // 3) stock cuve = niveau après cette réception
-    const sf = o.produit === 'gasoil' ? 'gas_stock' : 'ess_stock'
-    await supabase.from('daily_reports').upsert({ station_id: stationId, report_date: date, [sf]: numFR(r.cuve_apres), created_by: session.user.id }, { onConflict: 'station_id,report_date' })
-    setMsg(complet ? 'Commande entièrement reçue — stock cuve mis à jour' : `Réception partielle enregistrée (${total.toLocaleString('fr-FR')} / ${N(o.quantite_commandee).toLocaleString('fr-FR')} L)`); load(date)
-  }
 
   // un compteur a-t-il déjà sa photo (nouvelle ou déjà enregistrée) ?
   const meterHasPhoto = (k, label) => !!meterPhotos[k]?.file || attachments.some(a => a.categorie === 'compteur' && (a.note || '').startsWith(label))

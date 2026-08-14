@@ -40,8 +40,9 @@ export default function Finance() {
   const [profiles, setProfiles] = useState({})     // {id: full_name} — traçabilité
   const [locked, setLocked] = useState(new Set())  // mois verrouillés ('YYYY-MM')
   const [openAnnuel, setOpenAnnuel] = useState(false)
-  const [annee, setAnnee] = useState('')
-  const [mois, setMois] = useState('')
+  // Par défaut, mois en cours (pas le dernier mois avec des données, qui peut être ancien).
+  const [annee, setAnnee] = useState(today().slice(0, 4))
+  const [mois, setMois] = useState(today().slice(0, 7))
   const [nc, setNc] = useState(blankCharge())
   const [msg, setMsg] = useState(''); const [err, setErr] = useState('')
 
@@ -67,8 +68,7 @@ export default function Finance() {
   }
   useEffect(() => { load() }, [stationId])
 
-  const annees = useMemo(() => [...new Set(ventes.map(v => v.mois.slice(0, 4)))].sort(), [ventes])
-  useEffect(() => { if (!annee && annees.length) setAnnee(annees[annees.length - 1]) }, [annees])
+  const annees = useMemo(() => [...new Set([...ventes.map(v => v.mois.slice(0, 4)), today().slice(0, 4)])].sort(), [ventes])
 
   const inPeriod = (m) => mois ? m === mois : (m || '').startsWith(annee)
   const V = ventes.filter(v => inPeriod(v.mois))
