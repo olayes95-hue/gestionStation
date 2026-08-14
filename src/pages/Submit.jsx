@@ -305,6 +305,16 @@ export default function Submit() {
       const payload = { report_date: date, station_id: sid, created_by: session.user.id, lubrifiant_stock: Object.keys(lub).length ? lub : null }
       NUMFIELDS.forEach(k => payload[k] = f[k] === '' ? null : numFR(f[k]))
       payload.note = f.note || null
+      // Relevé du matin FIGÉ, distinct de ess_stock/gas_stock (qui continuent de refléter le
+      // dernier niveau connu et sont réécrits par toute réception de livraison, même tard le
+      // soir). Sans cette copie séparée, une livraison reçue le même jour après le relevé du
+      // matin écrase ess_stock — et la réconciliation anti-coulage, qui compare le relevé du
+      // matin d'un jour à l'autre, comptait alors la livraison une seconde fois par-dessus une
+      // valeur qui la contenait déjà. Écrit UNIQUEMENT lors d'une saisie du pas "Matin".
+      if (moment === 'matin' || showAll) {
+        payload.ess_stock_matin = payload.ess_stock
+        payload.gas_stock_matin = payload.gas_stock
+      }
       const { error: e1 } = await supabase.from('daily_reports').upsert(payload, { onConflict: 'station_id,report_date' })
       if (e1) throw e1
 
