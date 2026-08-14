@@ -136,8 +136,16 @@ export default function Dashboard() {
     // pour rester une liste actionnable plutôt qu'un historique complet.
     const day = new Date().toISOString().slice(0, 10)
     const monthStart = day.slice(0, 7) + '-01', monthEnd = day.slice(0, 7) + '-31'
-    supabase.from('v_alerts').select('*').eq('station_id', stationId).gte('report_date', monthStart).lte('report_date', monthEnd)
-      .then(({ data }) => setAlerts((data || []).sort((a, b) => (a.gravite === 'haute' ? -1 : 1) - (b.gravite === 'haute' ? -1 : 1))))
+    Promise.all([
+      supabase.from('v_alerts').select('*').eq('station_id', stationId).gte('report_date', monthStart).lte('report_date', monthEnd),
+      supabase.from('alert_dismissals').select('report_date,type').eq('station_id', stationId),
+    ]).then(([al, dis]) => {
+      // v_alerts n'a aucune notion de "traité" (vue calculée) — sans ce filtre, une alerte
+      // marquée traitée sur la page Alertes continuait d'apparaître ici indéfiniment.
+      const dismissedKeys = new Set((dis.data || []).map(x => x.report_date + '|' + x.type))
+      const activeAlerts = (al.data || []).filter(a => !dismissedKeys.has(a.report_date + '|' + a.type))
+      setAlerts(activeAlerts.sort((a, b) => (a.gravite === 'haute' ? -1 : 1) - (b.gravite === 'haute' ? -1 : 1)))
+    })
   }, [stationId])
   useEffect(() => {
     if (!stationId) return

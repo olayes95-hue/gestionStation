@@ -58,13 +58,14 @@ export default function Journal() {
     const day = today()
     const monthStart = day.slice(0, 7) + '-01'
     const monthEnd = day.slice(0, 7) + '-31'
-    const [sub, fc, recon, exp, pert, al, po, st, pr, ls] = await Promise.all([
+    const [sub, fc, recon, exp, pert, al, dis, po, st, pr, ls] = await Promise.all([
       supabase.from('submissions').select('moment').eq('station_id', stationId).eq('report_date', day),
       supabase.from('v_stock_forecast').select('*').eq('station_id', stationId).maybeSingle(),
       supabase.from('v_pole_recon_jour').select('*').eq('station_id', stationId).gte('report_date', monthStart).lte('report_date', monthEnd),
       supabase.from('expenses').select('categorie,montant,non_cash').eq('station_id', stationId).gte('report_date', monthStart).lte('report_date', monthEnd),
       supabase.from('v_pertes_mensuelles').select('*').eq('station_id', stationId).eq('mois', day.slice(0, 7)).maybeSingle(),
       supabase.from('v_alerts').select('*').eq('station_id', stationId).gte('report_date', monthStart).lte('report_date', monthEnd),
+      supabase.from('alert_dismissals').select('report_date,type').eq('station_id', stationId),
       supabase.from('fuel_orders').select('id', { count: 'exact', head: true }).eq('station_id', stationId).in('statut', ['lancee', 'partielle']),
       supabase.from('settings').select('pompe_inactive_apres').eq('id', 1).maybeSingle(),
       supabase.from('daily_reports').select(['report_date', ...machineNums(MAX_MACHINES).flatMap(n => [`e${n}`, `g${n}`])].join(',')).eq('station_id', stationId).order('report_date', { ascending: false }).limit(60),
@@ -106,7 +107,11 @@ export default function Journal() {
     setDepGeneral(depGen)
 
     setPertes(pert.data || null)
-    setAlerts((al.data || []).sort((a, b) => (a.gravite === 'haute' ? -1 : 1) - (b.gravite === 'haute' ? -1 : 1)))
+    // v_alerts n'a aucune notion de "traité" (vue calculée) — sans ce filtre, une alerte
+    // marquée traitée sur la page Alertes continuait d'apparaître ici indéfiniment.
+    const dismissedKeys = new Set((dis.data || []).map(x => x.report_date + '|' + x.type))
+    const activeAlerts = (al.data || []).filter(a => !dismissedKeys.has(a.report_date + '|' + a.type))
+    setAlerts(activeAlerts.sort((a, b) => (a.gravite === 'haute' ? -1 : 1) - (b.gravite === 'haute' ? -1 : 1)))
     setPendingCount(po.count || 0)
     setPompeInactiveApres(N(st.data?.pompe_inactive_apres) || 5)
     setPumpRows(pr.data || [])
