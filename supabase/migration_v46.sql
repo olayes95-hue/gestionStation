@@ -53,16 +53,32 @@ do $$ begin
 end $$;
 
 -- ── 3. v_report_metrics : élargit e_open/g_open aux relevés matin des machines 5-10 ──
+--
+-- IMPORTANT : la vue en place liste ses colonnes EXPLICITEMENT (au lieu de r.*) pour
+-- reproduire EXACTEMENT l'ordre des colonnes déjà exposées aujourd'hui (vérifié via
+-- information_schema.columns sur la base réelle). Postgres refuse un CREATE OR REPLACE
+-- VIEW qui déplacerait une colonne existante ("cannot change name of view column") —
+-- avec r.*, les nouvelles colonnes e5..g10_m de daily_reports s'insèrent AVANT
+-- cash_declare et cassent l'ordre. Les 24 nouvelles colonnes sont donc ajoutées à la
+-- toute fin, via une jointure séparée sur l'id, plutôt que mêlées dans r.*.
 create or replace view v_report_metrics as
 with base as (
-  select r.*,
-    coalesce(ess_espece,0)+coalesce(gas_espece,0)+coalesce(gaz_espece,0)
-      +coalesce(superette_espece,0)+coalesce(lubrifiant_espece,0) as cash_declare,
-    coalesce(ess_bon,0)+coalesce(gas_bon,0) as ventes_bon,
-    coalesce(e1_m,0)+coalesce(e2_m,0)+coalesce(e3_m,0)+coalesce(e4_m,0)
-      +coalesce(e5_m,0)+coalesce(e6_m,0)+coalesce(e7_m,0)+coalesce(e8_m,0)+coalesce(e9_m,0)+coalesce(e10_m,0) as e_open,
-    coalesce(g1_m,0)+coalesce(g2_m,0)+coalesce(g3_m,0)+coalesce(g4_m,0)
-      +coalesce(g5_m,0)+coalesce(g6_m,0)+coalesce(g7_m,0)+coalesce(g8_m,0)+coalesce(g9_m,0)+coalesce(g10_m,0) as g_open
+  select
+    r.id, r.report_date, r.ess_litres, r.ess_pu, r.ess_bon, r.ess_espece,
+    r.gas_litres, r.gas_pu, r.gas_bon, r.gas_espece, r.gaz_espece, r.superette_espece,
+    r.lubrifiant_espece, r.e1, r.e2, r.e3, r.e4, r.g1, r.g2, r.g3, r.g4,
+    r.total_bon_cumul, r.note, r.created_by, r.created_at, r.ess_stock, r.gas_stock,
+    r.gaz_stock_3, r.gaz_stock_6, r.gaz_stock_12, r.gaz_stock_38,
+    r.gaz_vendu_3, r.gaz_vendu_6, r.gaz_vendu_12, r.gaz_vendu_38,
+    r.lubrifiant_stock, r.station_id,
+    r.e1_m, r.e2_m, r.e3_m, r.e4_m, r.g1_m, r.g2_m, r.g3_m, r.g4_m,
+    coalesce(r.ess_espece,0)+coalesce(r.gas_espece,0)+coalesce(r.gaz_espece,0)
+      +coalesce(r.superette_espece,0)+coalesce(r.lubrifiant_espece,0) as cash_declare,
+    coalesce(r.ess_bon,0)+coalesce(r.gas_bon,0) as ventes_bon,
+    coalesce(r.e1_m,0)+coalesce(r.e2_m,0)+coalesce(r.e3_m,0)+coalesce(r.e4_m,0)
+      +coalesce(r.e5_m,0)+coalesce(r.e6_m,0)+coalesce(r.e7_m,0)+coalesce(r.e8_m,0)+coalesce(r.e9_m,0)+coalesce(r.e10_m,0) as e_open,
+    coalesce(r.g1_m,0)+coalesce(r.g2_m,0)+coalesce(r.g3_m,0)+coalesce(r.g4_m,0)
+      +coalesce(r.g5_m,0)+coalesce(r.g6_m,0)+coalesce(r.g7_m,0)+coalesce(r.g8_m,0)+coalesce(r.g9_m,0)+coalesce(r.g10_m,0) as g_open
   from daily_reports r),
 withlead as (
   select *,
@@ -86,7 +102,13 @@ select c.*,
      where e.report_date=c.report_date and e.station_id=c.station_id and coalesce(e.non_cash,false)=false) as total_depense,
   (select coalesce(sum(montant),0) from deposits d
      where d.station_id=c.station_id and coalesce(d.periode_fin, d.deposit_date, d.report_date)=c.report_date) as total_verse,
-  (select coalesce(sum(montant),0) from deliveries l where l.report_date=c.report_date and l.station_id=c.station_id) as total_livraisons
-from calc c;
+  (select coalesce(sum(montant),0) from deliveries l where l.report_date=c.report_date and l.station_id=c.station_id) as total_livraisons,
+  -- Nouvelles colonnes (v46) : ajoutées en tout dernier, jamais mêlées à r.* plus haut.
+  r2.e5, r2.e6, r2.e7, r2.e8, r2.e9, r2.e10,
+  r2.g5, r2.g6, r2.g7, r2.g8, r2.g9, r2.g10,
+  r2.e5_m, r2.e6_m, r2.e7_m, r2.e8_m, r2.e9_m, r2.e10_m,
+  r2.g5_m, r2.g6_m, r2.g7_m, r2.g8_m, r2.g9_m, r2.g10_m
+from calc c
+join daily_reports r2 on r2.id = c.id;
 
 grant select on v_report_metrics to authenticated, anon;
