@@ -214,10 +214,17 @@ export default function Dashboard() {
       if (N(g.nb_cloture) > 0 && g.recette_cloture != null) manqueByPole[g.pole_groupe] += N(g.recette_cloture) - N(g.verse)
       else if (!g.couvert) manqueByPole[g.pole_groupe] += N(g.espece)
     }
-    let depSuperette = 0
-    for (const e of polePeriod.exp) { if (!e.non_cash && e.categorie === 'SUPERETTE') depSuperette += N(e.montant) }
+    // SBEE/AUTRE sont payées en pratique depuis la caisse carburant (c'est elle qui encaisse le
+    // plus de cash au quotidien) — les déduire du bâton Carburant, sinon il affiche un manque qui
+    // ignore une charge réellement sortie de cette caisse.
+    let depSuperette = 0, depGeneral = 0
+    for (const e of polePeriod.exp) {
+      if (e.non_cash) continue
+      if (e.categorie === 'SUPERETTE') depSuperette += N(e.montant)
+      else if (e.categorie !== 'CARBURANT') depGeneral += N(e.montant)
+    }
     return [
-      { name: 'Carburant', value: manqueByPole.carburant },
+      { name: 'Carburant', value: manqueByPole.carburant - depGeneral },
       { name: 'Gaz + Lubrifiant', value: manqueByPole.gaz_lub },
       { name: 'Supérette', value: manqueByPole.superette - depSuperette },
     ]

@@ -92,15 +92,18 @@ export default function Journal() {
       else if (!g.couvert) manqueByPole[g.pole_groupe] += N(g.espece)
     }
 
+    // SBEE/AUTRE sont payées en pratique depuis la caisse carburant (c'est elle qui encaisse le
+    // plus de cash au quotidien) — les déduire du carburant, pas seulement du total, sinon le
+    // bâton "Carburant" affiche un manque qui ignore une charge réellement sortie de cette caisse.
     let depSuperette = 0, depGen = 0
     for (const e of (exp.data || [])) {
       if (e.non_cash) continue // prélèvement carburant propriétaire : non-cash, jamais décompté
       if (e.categorie === 'SUPERETTE') depSuperette += N(e.montant)
-      else if (e.categorie !== 'CARBURANT') depGen += N(e.montant) // SBEE, AUTRE : charges générales non affectées à un pôle
+      else if (e.categorie !== 'CARBURANT') depGen += N(e.montant) // SBEE, AUTRE
     }
 
     setManque({
-      carburant: manqueByPole.carburant,
+      carburant: manqueByPole.carburant - depGen,
       gaz_lub: manqueByPole.gaz_lub,
       superette: manqueByPole.superette - depSuperette,
     })
@@ -120,7 +123,9 @@ export default function Journal() {
 
   if (loading) return <Panel><p style={{ font: '400 12px/1 var(--font-ui)', color: 'var(--text-muted)', margin: 0 }}>Chargement…</p></Panel>
 
-  const manqueTotal = manque.carburant + manque.gaz_lub + manque.superette - depGeneral
+  // depGeneral (SBEE/AUTRE) est déjà déduit de manque.carburant (voir le chargement des données) —
+  // ne pas le soustraire une seconde fois ici.
+  const manqueTotal = manque.carburant + manque.gaz_lub + manque.superette
   const topAlerts = alerts.slice(0, 5)
   const nombreMachines = Math.min(MAX_MACHINES, Math.max(1, N(current?.nombre_machines) || 4))
   const pumps = machineNums(nombreMachines).map(n => ({
@@ -183,9 +188,9 @@ export default function Journal() {
       <Panel title="Manque à verser par pôle" meta="ce mois">
         <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-3)' }}>
           <PoleLine label="Carburant" value={manque.carburant} />
+          {depGeneral > 0 && <p style={{ font: '400 11px/1.3 var(--font-ui)', color: 'var(--text-muted)', margin: '0 0 0 var(--sp-4)' }}>dont {fcfa(depGeneral)} de charges générales (SBEE, autre) déjà déduites</p>}
           <PoleLine label="Gaz + Lubrifiant" value={manque.gaz_lub} />
           <PoleLine label="Supérette" value={manque.superette} />
-          <PoleLine label="Charges générales (SBEE, autre)" value={-depGeneral} muted />
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: 'var(--sp-3) var(--sp-4)', borderTop: '1px solid var(--border-default)', marginTop: 'var(--sp-2)' }}>
             <span style={{ font: 'var(--fw-semibold) 13px/1.3 var(--font-ui)', color: 'var(--text-primary)' }}>= Cash non tracé (mois)</span>
             <span style={{ font: '600 13px/1 var(--font-data)', color: manqueTotal > 0 ? 'var(--state-alarm)' : 'var(--state-ok)' }}>{fcfa(manqueTotal)}</span>
