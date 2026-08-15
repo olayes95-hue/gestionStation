@@ -221,6 +221,19 @@ export default function Submit() {
   const locked = !isAdmin && date < daysAgoIso(joursCorrection)
   const lockedMsg = `Journée verrouillée : tu ne peux créer ou corriger qu'un jour des ${joursCorrection} derniers jours. Au-delà, demande à la direction.`
   const nombreMachines = Math.min(MAX_MACHINES, Math.max(1, Number(current?.nombre_machines) || 4))
+  // Mouvement compteur du matin (aujourd'hui − dernier relevé matin saisi) : dispo dès que les
+  // relevés d'ouverture sont remplis, avant même d'atteindre l'étape « Ventes carburant ».
+  const eOpenNow = machineNums(nombreMachines).reduce((s, n) => s + N(f['e' + n + '_m']), 0)
+  const gOpenNow = machineNums(nombreMachines).reduce((s, n) => s + N(f['g' + n + '_m']), 0)
+  const essCompteur = prevMorning && eOpenNow > prevMorning.ess && (eOpenNow - prevMorning.ess) < 30000 ? Math.round(eOpenNow - prevMorning.ess) : null
+  const gasCompteur = prevMorning && gOpenNow > prevMorning.gas && (gOpenNow - prevMorning.gas) < 30000 ? Math.round(gOpenNow - prevMorning.gas) : null
+  // Pré-remplit « Litres » avec le mouvement compteur dès qu'il est calculable — le gérant
+  // n'a plus qu'à confirmer/corriger au lieu de tout retaper depuis les relevés qu'il vient
+  // de saisir. Ne touche jamais un champ déjà rempli (saisie manuelle ou rechargement du jour).
+  useEffect(() => {
+    if (essCompteur != null && f.ess_litres === '') set('ess_litres', String(essCompteur))
+    if (gasCompteur != null && f.gas_litres === '') set('gas_litres', String(gasCompteur))
+  }, [essCompteur, gasCompteur])
   const achatsOpen = openAchats ?? (deliveries.length > 0)
   const depensesOpen = openDepenses ?? (expenses.length > 0)
   const versementsOpen = openVersements ?? (deposits.length > 0)
@@ -632,10 +645,10 @@ export default function Submit() {
       {show('apres-midi') && (<>
         {!isPompiste && <Panel>
           <StepHead n="2" title="Ventes carburant (de la veille)" />
-          <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)' }}>Ce sont les ventes du jour écoulé. Saisis les litres et sépare Bon / Espèces (l'admin vérifie ensuite avec les compteurs).</p>
+          <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)' }}>Ce sont les ventes du jour écoulé. Les litres sont pré-remplis depuis les relevés compteur du matin — vérifie et corrige si besoin, puis sépare Bon / Espèces.</p>
           <FormSection title={`Essence — ${settings.essence_pv} F/L`}>
             <div style={{ display: 'flex', gap: 'var(--sp-4)', flexWrap: 'wrap' }}>
-              <Field label="Litres" style={{ flex: '1 1 140px' }}><Input type="text" inputMode="decimal" numeric {...numProps('ess_litres')} /></Field>
+              <Field label="Litres" style={{ flex: '1 1 140px' }} hint={essCompteur != null ? `Compteurs : ${essCompteur.toLocaleString('fr-FR')} L` : undefined}><Input type="text" inputMode="decimal" numeric {...numProps('ess_litres')} /></Field>
               <Field label="Prix / L" style={{ flex: '1 1 140px' }}><Input type="text" inputMode="decimal" numeric {...numProps('ess_pu')} /></Field>
               <Field label="Vente à bon" style={{ flex: '1 1 140px' }}><Input type="text" inputMode="decimal" numeric {...numProps('ess_bon')} /></Field>
             </div>
@@ -643,7 +656,7 @@ export default function Submit() {
           </FormSection>
           <FormSection title={`Gasoil — ${settings.gasoil_pv} F/L`} style={{ marginTop: 'var(--sp-4)' }}>
             <div style={{ display: 'flex', gap: 'var(--sp-4)', flexWrap: 'wrap' }}>
-              <Field label="Litres" style={{ flex: '1 1 140px' }}><Input type="text" inputMode="decimal" numeric {...numProps('gas_litres')} /></Field>
+              <Field label="Litres" style={{ flex: '1 1 140px' }} hint={gasCompteur != null ? `Compteurs : ${gasCompteur.toLocaleString('fr-FR')} L` : undefined}><Input type="text" inputMode="decimal" numeric {...numProps('gas_litres')} /></Field>
               <Field label="Prix / L" style={{ flex: '1 1 140px' }}><Input type="text" inputMode="decimal" numeric {...numProps('gas_pu')} /></Field>
               <Field label="Vente à bon" style={{ flex: '1 1 140px' }}><Input type="text" inputMode="decimal" numeric {...numProps('gas_bon')} /></Field>
             </div>
