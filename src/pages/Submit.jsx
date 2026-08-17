@@ -368,10 +368,12 @@ export default function Submit() {
         const isCarb = (e.categorie || '').toUpperCase() === 'CARBURANT'
         const row = { report_date: date, station_id: sid, categorie: e.categorie || "AUTRE", montant: numFR(e.montant),
           motif: e.motif || (isCarb ? 'Carburant / déplacement propriétaire' : null),
-          justificatif: true, photo_path, created_by: session.user.id }
-        // non_cash n'est envoyé QUE pour le carburant/déplacement → les autres dépenses
-        // continuent de fonctionner même si la migration v36 n'est pas encore exécutée.
-        if (isCarb) row.non_cash = true
+          justificatif: true, photo_path, created_by: session.user.id,
+          // Toujours explicite (jamais omis) : un insert groupé où certaines lignes ont
+          // non_cash et d'autres non fait envoyer NULL (pas le DEFAULT false) sur les lignes
+          // qui l'omettent — violait la contrainte NOT NULL dès qu'un lot mélangeait une
+          // dépense carburant (non-cash) avec une autre catégorie.
+          non_cash: isCarb }
         exRows.push(row)
       }
       if (exRows.length) { const { error } = await supabase.from('expenses').insert(exRows); if (error) throw error }
