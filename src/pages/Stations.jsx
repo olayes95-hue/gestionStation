@@ -8,12 +8,20 @@ import { Select } from '../ds/octane/components/forms/Select.jsx'
 import { Checkbox } from '../ds/octane/components/forms/Checkbox.jsx'
 import { AlertBanner } from '../ds/octane/components/feedback/AlertBanner.jsx'
 import { DataTable } from '../ds/octane/components/data/DataTable.jsx'
+import { Tabs } from '../ds/octane/components/navigation/Tabs.jsx'
 
 const ROLE_OPTIONS = [
   { value: 'pompiste', label: 'Pompiste' },
   { value: 'vendeuse', label: 'Vendeuse' },
   { value: 'gerant', label: 'Gérant' },
   { value: 'admin', label: 'Admin' },
+]
+
+const TABS = [
+  { value: 'stations', label: 'Stations' },
+  { value: 'equipe', label: 'Équipe' },
+  { value: 'parametres', label: 'Paramètres' },
+  { value: 'lubrifiants', label: 'Lubrifiants' },
 ]
 
 export default function Stations() {
@@ -24,6 +32,7 @@ export default function Stations() {
   const [newLub, setNewLub] = useState('')
   const [msg, setMsg] = useState(''); const [err, setErr] = useState('')
   const [newName, setNewName] = useState('')
+  const [tab, setTab] = useState('stations')
 
   async function load() {
     const [s, u, st, lt] = await Promise.all([
@@ -108,6 +117,9 @@ export default function Stations() {
       {msg && <AlertBanner tone="ok" title="Succès">{msg}</AlertBanner>}
       {err && <AlertBanner tone="alarm" title="Erreur">{err}</AlertBanner>}
 
+      <Tabs items={TABS} value={tab} onChange={setTab} />
+
+      {tab === 'stations' && (
       <Panel title="Stations">
         <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', marginTop: 0 }}>
           Nom, compte bancaire et seuils d'alerte de stock bas (en litres).
@@ -143,7 +155,9 @@ export default function Stations() {
           <Button type="submit" tone="primary">+ Ajouter</Button>
         </form>
       </Panel>
+      )}
 
+      {tab === 'equipe' && (
       <Panel title="Équipe" flush>
         <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', margin: 'var(--sp-4) var(--gutter-panel) 0' }}>
           Rattache chaque gérant à sa station. Un admin voit toutes les stations.
@@ -152,7 +166,9 @@ export default function Stations() {
           <DataTable columns={userColumns} rows={users} />
         </div>
       </Panel>
+      )}
 
+      {tab === 'lubrifiants' && (
       <Panel title="Références lubrifiant" flush>
         <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', margin: 'var(--sp-4) var(--gutter-panel) 0' }}>
           Ajoute, renomme, désactive ou supprime les références proposées à la saisie.
@@ -165,8 +181,9 @@ export default function Stations() {
           <Button type="submit" tone="primary">+ Ajouter</Button>
         </form>
       </Panel>
+      )}
 
-      {settings && (
+      {tab === 'parametres' && settings && (
         <Panel title="Prix & marge">
           <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', marginTop: 0 }}>
             Prix de vente (pré-remplis dans la saisie), prix d'achat (coût des commandes) et marge, en FCFA/L.

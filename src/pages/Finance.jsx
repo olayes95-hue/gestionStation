@@ -15,7 +15,15 @@ import { Select } from '../ds/octane/components/forms/Select.jsx'
 import { AlertBanner } from '../ds/octane/components/feedback/AlertBanner.jsx'
 import { DataTable } from '../ds/octane/components/data/DataTable.jsx'
 import { EvidenceUpload } from '../ds/octane/components/evidence/EvidenceUpload.jsx'
+import { Tabs } from '../ds/octane/components/navigation/Tabs.jsx'
 import { Kpi } from '../lib/Kpi.jsx'
+
+const TABS = [
+  { value: 'apercu', label: 'Vue d’ensemble' },
+  { value: 'controles', label: 'Contrôles' },
+  { value: 'tresorerie', label: 'Trésorerie' },
+  { value: 'charges', label: 'Charges fixes' },
+]
 
 const N = (v) => (v ? Number(v) : 0)
 // charges saisies à la main (les récurrentes se reportent d'un mois sur l'autre)
@@ -60,6 +68,7 @@ export default function Finance() {
   const [mois, setMois] = useState(today().slice(0, 7))
   const [nc, setNc] = useState(blankCharge())
   const [msg, setMsg] = useState(''); const [err, setErr] = useState('')
+  const [tab, setTab] = useState('apercu')
 
   async function load() {
     if (!stationId) return
@@ -438,6 +447,9 @@ export default function Finance() {
         </AlertBanner>
       )}
 
+      <Tabs items={TABS} value={tab} onChange={setTab} />
+
+      {tab === 'apercu' && <>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 'var(--sp-4)' }}>
         <Kpi label="Litres carburant" value={Math.round(sum('litres_carburant')).toLocaleString('fr-FR')} unit="L" />
         <Kpi label="Commission carburant" value={fcfa(commCarb)} sub="litres × marge" {...cmp(commCarb, commCarbPrev)} />
@@ -448,46 +460,6 @@ export default function Finance() {
         <Kpi label="Valeur du stock" value={fcfa(stockTotal)} sub="gaz + lubrifiant + supérette" />
         <Kpi label="RÉSULTAT" value={fcfa(resultat)} status={resultat < 0 ? 'alarm' : 'ok'} {...cmp(resultat, resultatPrev)} />
       </div>
-
-      <Panel title="Pertes sur livraisons" meta={mois || annee} status={perteNaMontant > 0 ? 'alarm' : 'ok'}>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 'var(--sp-4)' }}>
-          <Kpi label="Pertes totales" value={fcfa(perteMontant)} sub="comptées en charge, seuil inclus" />
-          <Kpi label="Pertes NON acceptables" value={Math.round(perteNaLitres).toLocaleString('fr-FR')} unit="L" status={perteNaLitres > 0 ? 'alarm' : 'ok'} sub={`au-delà de ${settings.taux_perte_acceptable || 5}%`} />
-          <Kpi label="Montant (base retenue)" value={fcfa(perteNaMontant)} status={perteNaMontant > 0 ? 'alarm' : 'ok'} />
-        </div>
-        <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', marginTop: 'var(--sp-4)', marginBottom: 0 }}>
-          Les <b>pertes totales</b> (y compris dans le seuil de tolérance) sont comptées comme une charge automatique dans le compte de résultat ci-dessous. Les <b>pertes NON acceptables</b> (au-delà du seuil) sont une notion séparée : base d'une éventuelle retenue sur le salaire du gérant si non justifiées.
-        </p>
-      </Panel>
-
-      <Panel title="Rapprochement des bons" meta={mois || annee}
-        status={bonsEcart != null ? (Math.abs(bonsEcart) > 0.5 ? 'alarm' : 'ok') : undefined}
-        actions={mois && <Button size="sm" onClick={openBonReconForm}>{bonRecon ? 'Modifier' : 'Renseigner'} le relevé direction</Button>}>
-        <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', marginTop: 0 }}>
-          Les ventes à bon sont déclarées au jour le jour par le gérant, sans preuve ni recoupement interne — c'est le seul montant qui confronte cette déclaration à une source externe (le relevé mensuel de la direction).
-        </p>
-        {editBonRecon && (
-          <form onSubmit={saveBonRecon} style={{ display: 'flex', gap: 'var(--sp-4)', flexWrap: 'wrap', alignItems: 'end', marginBottom: 'var(--sp-4)', padding: 'var(--sp-4)', background: 'var(--surface-raised)', borderRadius: 'var(--radius-1)' }}>
-            <Field label={`Montant confirmé par la direction — ${mois}`} style={{ flex: '1 1 220px' }}>
-              <Input type="number" inputMode="decimal" numeric value={bonReconForm.montant_direction} onChange={e => setBonReconForm({ ...bonReconForm, montant_direction: e.target.value })} />
-            </Field>
-            <Field label="Note (optionnel)" style={{ flex: '1 1 200px' }}>
-              <Input value={bonReconForm.note} onChange={e => setBonReconForm({ ...bonReconForm, note: e.target.value })} />
-            </Field>
-            <Button type="submit" tone="primary" size="sm">Enregistrer</Button>
-            <Button type="button" size="sm" onClick={() => setEditBonRecon(false)}>Annuler</Button>
-          </form>
-        )}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 'var(--sp-4)' }}>
-          <Kpi label="Bons déclarés (gérant)" value={fcfa(bonsDeclare)} sub={mois ? undefined : "somme sur l'année"} />
-          {mois
-            ? <>
-                <Kpi label="Confirmé par la direction" value={bonsDirection != null ? fcfa(bonsDirection) : '—'} />
-                <Kpi label="Écart" value={bonsDirection != null ? fcfa(bonsEcart) : '—'} status={bonsDirection != null ? (Math.abs(bonsEcart) > 0.5 ? 'alarm' : 'ok') : undefined} />
-              </>
-            : <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', alignSelf: 'center', margin: 0 }}>Sélectionne un mois précis pour comparer au relevé de la direction.</p>}
-        </div>
-      </Panel>
 
       <Panel title="Compte de résultat" meta={mois || annee} actions={<Button size="sm" onClick={exportCompteResultat}>Exporter (CSV)</Button>}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-2)' }}>
@@ -520,7 +492,51 @@ export default function Finance() {
           <DataTable columns={annualColumns} rows={annualRows} />
         </>}
       </Panel>
+      </>}
 
+      {tab === 'controles' && <>
+      <Panel title="Pertes sur livraisons" meta={mois || annee} status={perteNaMontant > 0 ? 'alarm' : 'ok'}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 'var(--sp-4)' }}>
+          <Kpi label="Pertes totales" value={fcfa(perteMontant)} sub="comptées en charge, seuil inclus" />
+          <Kpi label="Pertes NON acceptables" value={Math.round(perteNaLitres).toLocaleString('fr-FR')} unit="L" status={perteNaLitres > 0 ? 'alarm' : 'ok'} sub={`au-delà de ${settings.taux_perte_acceptable || 5}%`} />
+          <Kpi label="Montant (base retenue)" value={fcfa(perteNaMontant)} status={perteNaMontant > 0 ? 'alarm' : 'ok'} />
+        </div>
+        <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', marginTop: 'var(--sp-4)', marginBottom: 0 }}>
+          Les <b>pertes totales</b> (y compris dans le seuil de tolérance) sont comptées comme une charge automatique dans le compte de résultat. Les <b>pertes NON acceptables</b> (au-delà du seuil) sont une notion séparée : base d'une éventuelle retenue sur le salaire du gérant si non justifiées.
+        </p>
+      </Panel>
+
+      <Panel title="Rapprochement des bons" meta={mois || annee}
+        status={bonsEcart != null ? (Math.abs(bonsEcart) > 0.5 ? 'alarm' : 'ok') : undefined}
+        actions={mois && <Button size="sm" onClick={openBonReconForm}>{bonRecon ? 'Modifier' : 'Renseigner'} le relevé direction</Button>}>
+        <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', marginTop: 0 }}>
+          Les ventes à bon sont déclarées au jour le jour par le gérant, sans preuve ni recoupement interne — c'est le seul montant qui confronte cette déclaration à une source externe (le relevé mensuel de la direction).
+        </p>
+        {editBonRecon && (
+          <form onSubmit={saveBonRecon} style={{ display: 'flex', gap: 'var(--sp-4)', flexWrap: 'wrap', alignItems: 'end', marginBottom: 'var(--sp-4)', padding: 'var(--sp-4)', background: 'var(--surface-raised)', borderRadius: 'var(--radius-1)' }}>
+            <Field label={`Montant confirmé par la direction — ${mois}`} style={{ flex: '1 1 220px' }}>
+              <Input type="number" inputMode="decimal" numeric value={bonReconForm.montant_direction} onChange={e => setBonReconForm({ ...bonReconForm, montant_direction: e.target.value })} />
+            </Field>
+            <Field label="Note (optionnel)" style={{ flex: '1 1 200px' }}>
+              <Input value={bonReconForm.note} onChange={e => setBonReconForm({ ...bonReconForm, note: e.target.value })} />
+            </Field>
+            <Button type="submit" tone="primary" size="sm">Enregistrer</Button>
+            <Button type="button" size="sm" onClick={() => setEditBonRecon(false)}>Annuler</Button>
+          </form>
+        )}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 'var(--sp-4)' }}>
+          <Kpi label="Bons déclarés (gérant)" value={fcfa(bonsDeclare)} sub={mois ? undefined : "somme sur l'année"} />
+          {mois
+            ? <>
+                <Kpi label="Confirmé par la direction" value={bonsDirection != null ? fcfa(bonsDirection) : '—'} />
+                <Kpi label="Écart" value={bonsDirection != null ? fcfa(bonsEcart) : '—'} status={bonsDirection != null ? (Math.abs(bonsEcart) > 0.5 ? 'alarm' : 'ok') : undefined} />
+              </>
+            : <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', alignSelf: 'center', margin: 0 }}>Sélectionne un mois précis pour comparer au relevé de la direction.</p>}
+        </div>
+      </Panel>
+      </>}
+
+      {tab === 'tresorerie' && <>
       <Panel title="Compte bancaire" meta={soldeBanque ? `depuis ${frDate(soldeBanque.date_solde)}` : undefined}
         actions={<Button size="sm" onClick={openSoldeBanqueForm}>{soldeBanque ? 'Modifier' : 'Définir'} le solde initial</Button>}>
         <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', marginTop: 0 }}>
@@ -638,7 +654,9 @@ export default function Finance() {
           "Bons en cours", "Stock carburant" et "Commandes en cours" reflètent la valeur à aujourd'hui (pas d'historique disponible pour une date passée).
         </p>
       </Panel>
+      </>}
 
+      {tab === 'charges' && <>
       <Panel title="Charges fixes" meta={mois || undefined} flush
         actions={chP.length > 0 && <Button size="sm" onClick={exportChargesFixes}>Exporter (CSV)</Button>}>
         <div style={{ padding: 'var(--gutter-panel)', display: 'flex', flexDirection: 'column', gap: 'var(--sp-4)' }}>
@@ -676,6 +694,7 @@ export default function Finance() {
           ? <DataTable columns={chargesColumns} rows={[...chP].sort((a, b) => (a.mois + a.categorie).localeCompare(b.mois + b.categorie))} />
           : <PanelEmpty icon="landmark" label="Aucune charge fixe pour cette période" />}
       </Panel>
+      </>}
     </div>
   )
 }
