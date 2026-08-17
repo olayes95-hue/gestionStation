@@ -36,14 +36,14 @@ where o.statut='recue' and o.quantite_commandee is not null
 
 grant select on v_pertes_livraison to authenticated, anon;
 
--- ── v_pertes_mensuelles : ajoute sum(perte_montant) ──
+-- ── v_pertes_mensuelles : ajoute sum(perte_montant) EN DERNIER (colonnes existantes intactes) ──
 create or replace view v_pertes_mensuelles as
 select station_id, to_char(report_date,'YYYY-MM') as mois,
   sum(perte_litres) as perte_litres,
   sum(perte_na_litres) as perte_na_litres,
   sum(perte_na_montant) as perte_na_montant,
-  sum(perte_montant) as perte_montant,
-  count(*) filter (where perte_na_litres > 0) as nb_livraisons_hors_seuil
+  count(*) filter (where perte_na_litres > 0) as nb_livraisons_hors_seuil,
+  sum(perte_montant) as perte_montant
 from v_pertes_livraison
 group by station_id, to_char(report_date,'YYYY-MM');
 
