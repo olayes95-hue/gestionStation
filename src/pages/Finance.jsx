@@ -162,14 +162,22 @@ export default function Finance() {
     return { delta: `${pct > 0 ? '+' : ''}${pct}%`, direction: curr === prev ? 'flat' : curr > prev ? 'up' : 'down' }
   }
 
-  // Bilan simplifié : actif/passif CUMULÉS depuis le début des données jusqu'à la fin de la
-  // période affichée (pas juste le flux de la période, comme le compte de résultat ci-dessus).
+  // Bilan simplifié : actif/passif CUMULÉS depuis la date d'ouverture (ou depuis le début des
+  // données si aucune n'est définie) jusqu'à la fin de la période affichée — pas juste le flux
+  // de la période, comme le compte de résultat ci-dessus.
   const periodeFinBilan = mois || (annee ? `${annee}-12` : null)
+  // Le solde d'ouverture agit comme une vraie COUPURE : les mois avant sa date sont exclus des
+  // cumuls (pas juste additionnés par-dessus tout l'historique) — utile pour repartir d'une
+  // date à partir de laquelle les données sont fiables, sans que des mois antérieurs incomplets
+  // ne polluent le bilan et le compte de résultat annuel.
+  const ouvertureActive = ouverture && periodeFinBilan && ouverture.date_ouverture.slice(0, 7) <= periodeFinBilan
+  const ouvertureMoisDebut = ouvertureActive ? ouverture.date_ouverture.slice(0, 7) : null
+  const ouvertureMontant = ouvertureActive ? N(ouverture.montant) : 0
   const cashCumule = periodeFinBilan
-    ? ventes.filter(v => v.mois <= periodeFinBilan).reduce((s, v) => s + N(v.recettes_especes) - N(v.total_depense) - N(v.total_verse), 0)
+    ? ventes.filter(v => v.mois <= periodeFinBilan && (!ouvertureMoisDebut || v.mois >= ouvertureMoisDebut)).reduce((s, v) => s + N(v.recettes_especes) - N(v.total_depense) - N(v.total_verse), 0)
     : 0
   const chargesAPayerCumule = periodeFinBilan
-    ? charges.filter(c => c.categorie !== REVENU_CAT && c.statut !== 'paye' && c.mois <= periodeFinBilan).reduce((s, c) => s + N(c.montant), 0)
+    ? charges.filter(c => c.categorie !== REVENU_CAT && c.statut !== 'paye' && c.mois <= periodeFinBilan && (!ouvertureMoisDebut || c.mois >= ouvertureMoisDebut)).reduce((s, c) => s + N(c.montant), 0)
     : 0
   const stockTotal = stockVal.reduce((s, v) => s + N(v.valeur), 0)
   // Stock carburant (cuves), valorisé au prix d'achat — absent de v_stock_valeur (gaz + lubrifiant
@@ -187,10 +195,6 @@ export default function Finance() {
     const montantTotal = (o.categorie || 'carburant') === 'carburant' ? N(o.bons_base) + N(o.cheque_montant) : N(o.montant_paiement)
     return s + montantTotal * (reste / commande)
   }, 0)
-  // Le solde d'ouverture ne s'applique que si la période affichée est postérieure ou égale
-  // à sa date — sinon on regarderait une période antérieure à la saisie de ce solde.
-  const ouvertureActive = ouverture && periodeFinBilan && ouverture.date_ouverture.slice(0, 7) <= periodeFinBilan
-  const ouvertureMontant = ouvertureActive ? N(ouverture.montant) : 0
   const totalActif = stockTotal + stockCarburant + commandesEnCoursValeur + bonsRestant + cashCumule + ouvertureMontant
   const totalPassif = chargesAPayerCumule
   const situationNette = totalActif - totalPassif
@@ -361,11 +365,13 @@ export default function Finance() {
     return { commCarb: cCarb, commGL: cGL, commSup: cSup, autresProduits: autresP, sbee: N(auto.SBEE), carbDepl: N(auto.CARBURANT), pertes: pertesM, chargesFixes: totMan, produits: prod, charges: tot, resultat: prod - tot }
   }
   const yearMonths = annee ? MONTHS.map(m => `${annee}-${m}`) : []
-  const monthly = openAnnuel ? yearMonths.map(monthMetrics) : []
+  // Mois exclus (avant la date d'ouverture, si définie) : null plutôt que calculés, pour ne
+  // pas mélanger des données jugées incomplètes dans le Total avec celles jugées fiables.
+  const monthly = openAnnuel ? yearMonths.map(m => (ouvertureMoisDebut && m < ouvertureMoisDebut) ? null : monthMetrics(m)) : []
   const annualColumns = [
     { key: 'label', header: 'Poste' },
-    ...MONTHS.map((m, i) => ({ key: m, header: ML[m], numeric: true, align: 'right', render: row => fcfa(monthly[i]?.[row.key] ?? 0) })),
-    { key: 'total', header: 'Total', numeric: true, align: 'right', render: row => <b>{fcfa(monthly.reduce((s, mm) => s + N(mm[row.key]), 0))}</b> },
+    ...MONTHS.map((m, i) => ({ key: m, header: ML[m], numeric: true, align: 'right', render: row => monthly[i] == null ? <span style={{ color: 'var(--text-muted)' }}>—</span> : fcfa(monthly[i][row.key] ?? 0) })),
+    { key: 'total', header: 'Total', numeric: true, align: 'right', render: row => <b>{fcfa(monthly.reduce((s, mm) => s + (mm ? N(mm[row.key]) : 0), 0))}</b> },
   ]
   const annualRows = LEDGER_LINES.map(l => ({ id: l.key, label: l.bold ? <b>{l.label}</b> : l.label, key: l.key }))
 
@@ -463,13 +469,16 @@ export default function Finance() {
         bodyStyle={openAnnuel ? undefined : { display: 'none' }}
         actions={<IconButton icon="chevron-down" size="sm" title={openAnnuel ? 'Masquer' : 'Afficher'}
           onClick={() => setOpenAnnuel(v => !v)} style={{ transform: openAnnuel ? 'rotate(180deg)' : 'none' }} />}>
-        {openAnnuel && <DataTable columns={annualColumns} rows={annualRows} />}
+        {openAnnuel && <>
+          {ouvertureMoisDebut && <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', margin: '0 0 var(--sp-3) var(--gutter-panel)' }}>Mois avant {ouvertureMoisDebut} exclus du Total ("—") — solde d'ouverture défini.</p>}
+          <DataTable columns={annualColumns} rows={annualRows} />
+        </>}
       </Panel>
 
       <Panel title="Bilan simplifié" meta={`au ${periodeFinBilan || '—'}`}
         actions={<Button size="sm" onClick={openOuvertureForm}>{ouverture ? "Modifier le solde d'ouverture" : "Définir le solde d'ouverture"}</Button>}>
         <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', marginTop: 0 }}>
-          Ce que la station possède / doit, cumulé depuis le début des données (+ solde d'ouverture si renseigné) jusqu'à la fin de la période — pas un flux du mois comme le compte de résultat ci-dessus.
+          Ce que la station possède / doit, cumulé {ouvertureMoisDebut ? `depuis ${ouvertureMoisDebut} (solde d'ouverture — les mois antérieurs sont exclus)` : 'depuis le début des données'} jusqu'à la fin de la période — pas un flux du mois comme le compte de résultat ci-dessus.
         </p>
         {editOuverture && (
           <form onSubmit={saveOuverture} style={{ display: 'flex', gap: 'var(--sp-4)', flexWrap: 'wrap', alignItems: 'end', marginBottom: 'var(--sp-4)', padding: 'var(--sp-4)', background: 'var(--surface-raised)', borderRadius: 'var(--radius-1)' }}>
