@@ -16,7 +16,14 @@ export function AuthProvider({ children }) {
   }
 
   useEffect(() => {
+    // Filet de sécurité : si getSession() ne répond jamais (réseau capricieux, verrou du SDK
+    // malgré le contournement dans lib/supabase.js), ne pas bloquer l'app indéfiniment sur
+    // "Chargement…" — onAuthStateChange, abonné juste après, mettra à jour la session dès
+    // qu'elle sera réellement connue.
+    let settled = false
+    const timeout = setTimeout(() => { if (!settled) setLoading(false) }, 6000)
     supabase.auth.getSession().then(async ({ data }) => {
+      settled = true; clearTimeout(timeout)
       setSession(data.session)
       await loadProfile(data.session?.user?.id)
       setLoading(false)
@@ -25,7 +32,7 @@ export function AuthProvider({ children }) {
       setSession(s)
       await loadProfile(s?.user?.id)
     })
-    return () => sub.subscription.unsubscribe()
+    return () => { clearTimeout(timeout); sub.subscription.unsubscribe() }
   }, [])
 
   const value = {
