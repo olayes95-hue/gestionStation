@@ -36,6 +36,9 @@ export default function Finance() {
   const [pertes, setPertes] = useState([])
   const [stockVal, setStockVal] = useState([])
   const [bonsRestant, setBonsRestant] = useState(0)
+  const [stockCuve, setStockCuve] = useState({ ess_stock: 0, gas_stock: 0 })
+  const [commandesEnCours, setCommandesEnCours] = useState([])   // fuel_orders lancée/partielle
+  const [receptionsTotaux, setReceptionsTotaux] = useState({})  // {order_id: quantite_recue_total}
   const [settings, setSettings] = useState({ taux_gaz: 8, taux_superette: 8 })
   const [profiles, setProfiles] = useState({})     // {id: full_name} — traçabilité
   const [locked, setLocked] = useState(new Set())  // mois verrouillés ('YYYY-MM')
@@ -54,27 +57,32 @@ export default function Finance() {
 
   async function load() {
     if (!stationId) return
-    const [v, c, e, st, p, sv, ls, pr, fv, ou, br] = await Promise.all([
+    const [v, c, e, st, p, sv, ls, pr, fv, ou, br, co, rt] = await Promise.all([
       supabase.from('v_ventes_mensuelles').select('*').eq('station_id', stationId).order('mois'),
       supabase.from('charges').select('*').eq('station_id', stationId),
       supabase.from('expenses').select('report_date,categorie,montant').eq('station_id', stationId),
       supabase.from('settings').select('*').eq('id', 1).maybeSingle(),
       supabase.from('v_pertes_mensuelles').select('*').eq('station_id', stationId),
       supabase.from('v_stock_valeur').select('*').eq('station_id', stationId),
-      supabase.from('v_latest_stock').select('bons_restant').eq('station_id', stationId).maybeSingle(),
+      supabase.from('v_latest_stock').select('bons_restant,ess_stock,gas_stock').eq('station_id', stationId).maybeSingle(),
       supabase.from('profiles').select('id,full_name'),
       supabase.from('finance_periodes_verrouillees').select('mois').eq('station_id', stationId),
       supabase.from('finance_soldes_ouverture').select('*').eq('station_id', stationId).maybeSingle(),
       supabase.from('finance_bons_reconciliation').select('*').eq('station_id', stationId),
+      supabase.from('fuel_orders').select('*').eq('station_id', stationId).in('statut', ['lancee', 'partielle']),
+      supabase.from('v_order_reception').select('*').eq('station_id', stationId),
     ])
     setVentes(v.data || []); setCharges(c.data || []); setExpenses(e.data || [])
     if (st.data) setSettings(st.data)
     setPertes(p.data || []); setStockVal(sv.data || [])
     setBonsRestant(N(ls.data?.bons_restant))
+    setStockCuve({ ess_stock: N(ls.data?.ess_stock), gas_stock: N(ls.data?.gas_stock) })
     const pm = {}; for (const x of (pr.data || [])) pm[x.id] = x.full_name; setProfiles(pm)
     setLocked(new Set((fv.data || []).map(x => x.mois)))
     setOuverture(ou.data || null)
     const brm = {}; for (const x of (br.data || [])) brm[x.mois] = x; setBonsRecon(brm)
+    setCommandesEnCours(co.data || [])
+    const rtm = {}; for (const x of (rt.data || [])) rtm[x.order_id] = N(x.quantite_recue_total); setReceptionsTotaux(rtm)
   }
   useEffect(() => { load() }, [stationId])
 
@@ -164,11 +172,26 @@ export default function Finance() {
     ? charges.filter(c => c.categorie !== REVENU_CAT && c.statut !== 'paye' && c.mois <= periodeFinBilan).reduce((s, c) => s + N(c.montant), 0)
     : 0
   const stockTotal = stockVal.reduce((s, v) => s + N(v.valeur), 0)
+  // Stock carburant (cuves), valorisé au prix d'achat — absent de v_stock_valeur (gaz + lubrifiant
+  // + supérette seulement), pourtant le plus gros poste de valeur d'une station.
+  const stockCarburant = stockCuve.ess_stock * N(settings.essence_pa || 705) + stockCuve.gas_stock * N(settings.gasoil_pa || 730)
+  // Commandes en cours (lancées/partielles) : valeur engagée pas encore convertie en stock —
+  // sans cette ligne, l'argent "disparaît" du bilan entre le lancement d'une commande (les bons
+  // en cours diminuent aussitôt) et sa réception (le stock augmente). Seule la part RESTANTE
+  // (non encore reçue) compte ici, pour ne pas doubler ce qui est déjà dans le stock ci-dessus.
+  const commandesEnCoursValeur = commandesEnCours.reduce((s, o) => {
+    const commande = N(o.quantite_commandee)
+    if (commande <= 0) return s
+    const deja = N(receptionsTotaux[o.id])
+    const reste = Math.max(commande - deja, 0)
+    const montantTotal = (o.categorie || 'carburant') === 'carburant' ? N(o.bons_base) + N(o.cheque_montant) : N(o.montant_paiement)
+    return s + montantTotal * (reste / commande)
+  }, 0)
   // Le solde d'ouverture ne s'applique que si la période affichée est postérieure ou égale
   // à sa date — sinon on regarderait une période antérieure à la saisie de ce solde.
   const ouvertureActive = ouverture && periodeFinBilan && ouverture.date_ouverture.slice(0, 7) <= periodeFinBilan
   const ouvertureMontant = ouvertureActive ? N(ouverture.montant) : 0
-  const totalActif = stockTotal + bonsRestant + cashCumule + ouvertureMontant
+  const totalActif = stockTotal + stockCarburant + commandesEnCoursValeur + bonsRestant + cashCumule + ouvertureMontant
   const totalPassif = chargesAPayerCumule
   const situationNette = totalActif - totalPassif
 
@@ -467,7 +490,9 @@ export default function Finance() {
           <div style={{ flex: '1 1 260px', display: 'flex', flexDirection: 'column', gap: 'var(--sp-2)' }}>
             <LedgerHead>Actif</LedgerHead>
             {ouverture && <LedgerRow label={`Solde d'ouverture (avant le suivi, ${frDate(ouverture.date_ouverture)})`} value={fcfa(ouvertureMontant)} />}
+            <LedgerRow label="Stock carburant (cuves, au prix d'achat)" value={fcfa(stockCarburant)} />
             <LedgerRow label="Stock (gaz + lubrifiant + supérette)" value={fcfa(stockTotal)} />
+            {commandesEnCoursValeur > 0 && <LedgerRow label="Commandes en cours (en transit)" value={fcfa(commandesEnCoursValeur)} />}
             <LedgerRow label="Bons en cours (créance, à ce jour)" value={fcfa(bonsRestant)} />
             <LedgerRow label="Cash non encore versé (cumulé)" value={fcfa(cashCumule)} />
             <div style={{ display: 'flex', justifyContent: 'space-between', paddingLeft: 'var(--sp-5)', paddingTop: 'var(--sp-2)', borderTop: '1px solid var(--border-hairline)', font: 'var(--fw-semibold) 13px/1.2 var(--font-ui)' }}>
@@ -487,7 +512,7 @@ export default function Finance() {
           </div>
         </div>
         <p style={{ font: '400 11px/1.4 var(--font-ui)', color: 'var(--text-muted)', marginTop: 'var(--sp-4)', marginBottom: 0 }}>
-          "Bons en cours" reflète la valeur à aujourd'hui (pas d'historique disponible pour une date passée).
+          "Bons en cours", "Stock carburant" et "Commandes en cours" reflètent la valeur à aujourd'hui (pas d'historique disponible pour une date passée).
         </p>
       </Panel>
 
