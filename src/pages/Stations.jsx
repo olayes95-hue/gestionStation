@@ -70,6 +70,7 @@ export default function Stations() {
       bons_utilisables_commande: !!settings.bons_utilisables_commande,
       pompe_inactive_apres: num(settings.pompe_inactive_apres) ?? 5,
       jours_correction_gerant: Math.max(0, num(settings.jours_correction_gerant) ?? 2),
+      deconnexion_auto_heures: Math.max(1, num(settings.deconnexion_auto_heures) ?? 24),
     }).eq('id', 1)
     error ? fail(error) : flash('Prix enregistrés')
   }
@@ -208,6 +209,14 @@ export default function Stations() {
               </p>
               <Field label="N — jours en arrière" style={{ maxWidth: 160 }}>
                 <Input type="number" numeric value={settings.jours_correction_gerant ?? 2} onChange={e => setSettings({ ...settings, jours_correction_gerant: e.target.value })} />
+              </Field>
+            </FormSection>
+            <FormSection title="Déconnexion automatique">
+              <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', marginTop: 0 }}>
+                Tout utilisateur est déconnecté automatiquement N heures après sa connexion, même si l'onglet reste ouvert — utile sur les téléphones partagés en station.
+              </p>
+              <Field label="N — heures" hint="1 jour = 24" style={{ maxWidth: 160 }}>
+                <Input type="number" numeric value={settings.deconnexion_auto_heures ?? 24} onChange={e => setSettings({ ...settings, deconnexion_auto_heures: e.target.value })} />
               </Field>
             </FormSection>
             <FormSection title="Détection pompes inactives">

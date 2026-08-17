@@ -4,10 +4,14 @@ import { supabase } from './supabase'
 const AuthCtx = createContext(null)
 export const useAuth = () => useContext(AuthCtx)
 
+const SIGNIN_KEY = 'station_signin_at'
+const DECONNEXION_DEFAUT_HEURES = 24
+
 export function AuthProvider({ children }) {
   const [session, setSession] = useState(null)
   const [profile, setProfile] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [deconnexionHeures, setDeconnexionHeures] = useState(DECONNEXION_DEFAUT_HEURES)
 
   async function loadProfile(userId) {
     if (!userId) { setProfile(null); return }
@@ -28,12 +32,38 @@ export function AuthProvider({ children }) {
       await loadProfile(data.session?.user?.id)
       setLoading(false)
     })
-    const { data: sub } = supabase.auth.onAuthStateChange(async (_e, s) => {
+    const { data: sub } = supabase.auth.onAuthStateChange(async (event, s) => {
       setSession(s)
       await loadProfile(s?.user?.id)
+      if (event === 'SIGNED_IN') localStorage.setItem(SIGNIN_KEY, String(Date.now()))
+      if (event === 'SIGNED_OUT') localStorage.removeItem(SIGNIN_KEY)
     })
     return () => { clearTimeout(timeout); sub.subscription.unsubscribe() }
   }, [])
+
+  // Seuil de déconnexion auto, réglable par l'admin (Stations & équipe) — utile sur les
+  // téléphones partagés en station, pour ne pas rester connecté indéfiniment.
+  useEffect(() => {
+    supabase.from('settings').select('deconnexion_auto_heures').eq('id', 1).maybeSingle()
+      .then(({ data }) => { if (data?.deconnexion_auto_heures) setDeconnexionHeures(Number(data.deconnexion_auto_heures)) })
+  }, [])
+
+  // Déconnexion auto après N heures depuis la connexion — vérifiée périodiquement, pas
+  // seulement au chargement, sinon un onglet resté ouvert des jours ne serait jamais déconnecté.
+  useEffect(() => {
+    if (!session) return
+    const check = () => {
+      let signinAt = Number(localStorage.getItem(SIGNIN_KEY))
+      if (!signinAt) { signinAt = Date.now(); localStorage.setItem(SIGNIN_KEY, String(signinAt)) }
+      if (Date.now() - signinAt > deconnexionHeures * 3600 * 1000) {
+        localStorage.removeItem(SIGNIN_KEY)
+        supabase.auth.signOut()
+      }
+    }
+    check()
+    const id = setInterval(check, 5 * 60 * 1000)
+    return () => clearInterval(id)
+  }, [session, deconnexionHeures])
 
   const value = {
     session,

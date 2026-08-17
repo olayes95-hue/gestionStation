@@ -115,12 +115,16 @@ export default function Finance() {
   const totManuel = chP.filter(c => c.categorie !== REVENU_CAT).reduce((s, c) => s + N(c.montant), 0)
   const chargesAPayer = chP.filter(c => c.categorie !== REVENU_CAT && c.statut !== 'paye').reduce((s, c) => s + N(c.montant), 0)
 
-  // pertes livraison non acceptables sur la période
+  // Pertes livraison sur la période — deux notions distinctes :
+  // perteNaMontant (hors seuil de tolérance) sert de base à une éventuelle retenue sur le
+  // salaire du gérant ; perteMontant (TOTALE, seuil inclus) est un vrai coût pour la station
+  // qu'elle soit ou non imputable au gérant — comptée comme charge automatique ci-dessous.
   const pertesP = pertes.filter(p => inPeriod(p.mois))
   const perteNaMontant = pertesP.reduce((s, p) => s + N(p.perte_na_montant), 0)
   const perteNaLitres = pertesP.reduce((s, p) => s + N(p.perte_na_litres), 0)
+  const perteMontant = pertesP.reduce((s, p) => s + N(p.perte_montant), 0)
 
-  const totCharges = totAuto + totManuel
+  const totCharges = totAuto + totManuel + perteMontant
   const produits = commCarb + commGazLub + commSuperette + autresProduits
   const resultat = produits - totCharges
 
@@ -140,8 +144,9 @@ export default function Finance() {
   const chPprev = charges.filter(c => prevInPeriod(c.mois))
   const autresProduitsPrev = chPprev.filter(c => c.categorie === REVENU_CAT).reduce((s, c) => s + N(c.montant), 0)
   const totManuelPrev = chPprev.filter(c => c.categorie !== REVENU_CAT).reduce((s, c) => s + N(c.montant), 0)
+  const perteMontantPrev = pertes.filter(p => prevInPeriod(p.mois)).reduce((s, p) => s + N(p.perte_montant), 0)
   const produitsPrev = commCarbPrev + commGazLubPrev + commSuperettePrev + autresProduitsPrev
-  const totChargesPrev = totAutoPrev + totManuelPrev
+  const totChargesPrev = totAutoPrev + totManuelPrev + perteMontantPrev
   const resultatPrev = produitsPrev - totChargesPrev
   function cmp(curr, prev) {
     if (!prevLabel || !prev) return {}
@@ -264,6 +269,7 @@ export default function Finance() {
       { poste: '= PRODUITS', montant: Math.round(produits) },
       { poste: 'SBEE (auto)', montant: Math.round(N(autoCharges.SBEE)) },
       { poste: 'Carburant / déplacement (auto)', montant: Math.round(N(autoCharges.CARBURANT)) },
+      { poste: 'Pertes livraison (auto)', montant: Math.round(perteMontant) },
       { poste: 'Charges fixes', montant: Math.round(totManuel) },
       { poste: '= CHARGES', montant: Math.round(totCharges) },
       { poste: 'RÉSULTAT', montant: Math.round(resultat) },
@@ -310,6 +316,7 @@ export default function Finance() {
     { key: 'produits', label: '= PRODUITS', bold: true },
     { key: 'sbee', label: 'SBEE (auto)' },
     { key: 'carbDepl', label: 'Carburant / déplacement (auto)' },
+    { key: 'pertes', label: 'Pertes livraison (auto)' },
     { key: 'chargesFixes', label: 'Charges fixes' },
     { key: 'charges', label: '= CHARGES', bold: true },
     { key: 'resultat', label: 'RÉSULTAT', bold: true },
@@ -325,9 +332,10 @@ export default function Finance() {
     const cM = charges.filter(c => c.mois === m)
     const autresP = cM.filter(c => c.categorie === REVENU_CAT).reduce((sum, c) => sum + N(c.montant), 0)
     const totMan = cM.filter(c => c.categorie !== REVENU_CAT).reduce((sum, c) => sum + N(c.montant), 0)
+    const pertesM = pertes.filter(p => p.mois === m).reduce((sum, p) => sum + N(p.perte_montant), 0)
     const prod = cCarb + cGL + cSup + autresP
-    const tot = totA + totMan
-    return { commCarb: cCarb, commGL: cGL, commSup: cSup, autresProduits: autresP, sbee: N(auto.SBEE), carbDepl: N(auto.CARBURANT), chargesFixes: totMan, produits: prod, charges: tot, resultat: prod - tot }
+    const tot = totA + totMan + pertesM
+    return { commCarb: cCarb, commGL: cGL, commSup: cSup, autresProduits: autresP, sbee: N(auto.SBEE), carbDepl: N(auto.CARBURANT), pertes: pertesM, chargesFixes: totMan, produits: prod, charges: tot, resultat: prod - tot }
   }
   const yearMonths = annee ? MONTHS.map(m => `${annee}-${m}`) : []
   const monthly = openAnnuel ? yearMonths.map(monthMetrics) : []
@@ -368,11 +376,12 @@ export default function Finance() {
 
       <Panel title="Pertes sur livraisons" meta={mois || annee} status={perteNaMontant > 0 ? 'alarm' : 'ok'}>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 'var(--sp-4)' }}>
+          <Kpi label="Pertes totales" value={fcfa(perteMontant)} sub="comptées en charge, seuil inclus" />
           <Kpi label="Pertes NON acceptables" value={Math.round(perteNaLitres).toLocaleString('fr-FR')} unit="L" status={perteNaLitres > 0 ? 'alarm' : 'ok'} sub={`au-delà de ${settings.taux_perte_acceptable || 5}%`} />
           <Kpi label="Montant (base retenue)" value={fcfa(perteNaMontant)} status={perteNaMontant > 0 ? 'alarm' : 'ok'} />
         </div>
         <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', marginTop: 'var(--sp-4)', marginBottom: 0 }}>
-          Total des pertes au-delà du seuil de tolérance sur les livraisons réceptionnées. Sert de base à une éventuelle retenue sur le salaire du gérant si non justifiées.
+          Les <b>pertes totales</b> (y compris dans le seuil de tolérance) sont comptées comme une charge automatique dans le compte de résultat ci-dessous. Les <b>pertes NON acceptables</b> (au-delà du seuil) sont une notion séparée : base d'une éventuelle retenue sur le salaire du gérant si non justifiées.
         </p>
       </Panel>
 
@@ -415,6 +424,7 @@ export default function Finance() {
           <LedgerHead>Charges</LedgerHead>
           <LedgerRow label="SBEE (auto, depuis dépenses)" value={fcfa(autoCharges.SBEE)} />
           <LedgerRow label="Carburant / déplacement (auto)" value={fcfa(autoCharges.CARBURANT)} />
+          {perteMontant > 0 && <LedgerRow label="Pertes livraison (auto)" value={fcfa(perteMontant)} />}
           <LedgerRow label="Charges fixes (saisies)" value={fcfa(totManuel)} />
           <div style={{ display: 'flex', justifyContent: 'space-between', paddingTop: 'var(--sp-3)', borderTop: '2px solid var(--border-default)', font: 'var(--fw-semibold) 13px/1.2 var(--font-ui)', color: 'var(--text-primary)' }}>
             <span>RÉSULTAT</span>
@@ -422,7 +432,7 @@ export default function Finance() {
           </div>
         </div>
         <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', marginTop: 'var(--sp-4)', marginBottom: 0 }}>
-          SBEE et carburant/déplacement sont <b>déduits automatiquement</b> des dépenses saisies au quotidien. Les charges fixes se <b>reportent d'un mois sur l'autre</b> (bouton ci-dessous), tout reste modifiable.
+          SBEE, carburant/déplacement et les pertes sur livraisons sont <b>déduits automatiquement</b> (dépenses quotidiennes et livraisons réceptionnées). Les charges fixes se <b>reportent d'un mois sur l'autre</b> (bouton ci-dessous), tout reste modifiable.
         </p>
       </Panel>
 
