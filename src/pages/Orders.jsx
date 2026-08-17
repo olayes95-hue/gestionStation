@@ -46,7 +46,18 @@ export default function Orders() {
   const [bonsRestant, setBonsRestant] = useState(0)
   const [openCombos, setOpenCombos] = useState(false)
   const [detailId, setDetailId] = useState(null)   // id de la commande ouverte dans le panneau de détail
+  const [receptions, setReceptions] = useState([])   // historique des réceptions PARTIELLES de la commande ouverte
   const [page, setPage] = useState(1); const [pageSize, setPageSize] = useState(25)
+
+  // Historique des réceptions (order_receptions) de la commande ouverte — jusqu'ici invisible dans
+  // l'app une fois la commande soldée : seul le cumul (v_order_reception) et le dernier cuve_avant/
+  // après (stampés sur fuel_orders) restaient consultables, les réceptions PARTIELLES individuelles
+  // (dates, quantités, photos de chaque passage du camion) disparaissaient de la vue.
+  useEffect(() => {
+    if (!detailId) { setReceptions([]); return }
+    supabase.from('order_receptions').select('*').eq('order_id', detailId).order('report_date')
+      .then(({ data }) => setReceptions(data || []))
+  }, [detailId])
 
   async function load() {
     if (!stationId) return
@@ -426,6 +437,25 @@ export default function Orders() {
                 {o.note && <DrawerRow label="Note" mono={false} value={o.note} />}
                 {cat === 'superette' && o.lignes && <DrawerRow label="Articles" mono={false} value={o.lignes.map(l => `${l.article} ×${l.qte}`).join(' · ')} />}
               </div>
+
+              {receptions.length > 0 && (
+                <div>
+                  <div style={{ font: 'var(--fw-semibold) 11px/1 var(--font-ui)', textTransform: 'uppercase', letterSpacing: 'var(--ls-label)', color: 'var(--text-muted)', marginBottom: 'var(--sp-3)' }}>
+                    Réceptions{receptions.length > 1 ? ` (${receptions.length} passages)` : ''}
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-2)' }}>
+                    {receptions.map(r => (
+                      <div key={r.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 'var(--sp-3)', padding: 'var(--sp-3)', background: 'var(--surface-raised)', borderRadius: 'var(--radius-1)', font: '400 12px/1.4 var(--font-ui)' }}>
+                        <span style={{ color: 'var(--text-body)' }}>
+                          {frDate(r.report_date)} — {N(r.quantite_recue).toLocaleString('fr-FR')} L
+                          {cat === 'carburant' && r.cuve_avant != null && r.cuve_apres != null && ` (cuve ${N(r.cuve_avant).toLocaleString('fr-FR')} → ${N(r.cuve_apres).toLocaleString('fr-FR')})`}
+                        </span>
+                        {r.photo_path && <a href={supabase.storage.from(BORDEREAUX_BUCKET).getPublicUrl(r.photo_path).data.publicUrl} target="_blank" rel="noreferrer">Photo</a>}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               {o.statut === 'proposee' && isAdmin && (
                 <div style={{ display: 'flex', gap: 'var(--sp-3)' }}>
