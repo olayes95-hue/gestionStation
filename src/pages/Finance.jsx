@@ -48,6 +48,12 @@ export default function Finance() {
   const [bonsRecon, setBonsRecon] = useState({})   // {mois: {montant_direction, note}} — relevé direction par mois
   const [editBonRecon, setEditBonRecon] = useState(false)
   const [bonReconForm, setBonReconForm] = useState({ montant_direction: '', note: '' })
+  const [compteBancaire, setCompteBancaire] = useState(null)   // v_compte_bancaire (solde courant)
+  const [soldeBanque, setSoldeBanque] = useState(null)         // compte_bancaire_solde_initial
+  const [editSoldeBanque, setEditSoldeBanque] = useState(false)
+  const [soldeBanqueForm, setSoldeBanqueForm] = useState({ montant: '', date_solde: '', note: '' })
+  const [mouvementsBanque, setMouvementsBanque] = useState([])
+  const [nm, setNm] = useState({ type: 'virement_bons', montant: '', date_mouvement: today(), note: '', _file: null })
   const [openAnnuel, setOpenAnnuel] = useState(false)
   // Par défaut, mois en cours (pas le dernier mois avec des données, qui peut être ancien).
   const [annee, setAnnee] = useState(today().slice(0, 4))
@@ -57,7 +63,7 @@ export default function Finance() {
 
   async function load() {
     if (!stationId) return
-    const [v, c, e, st, p, sv, ls, pr, fv, ou, br, co, rt] = await Promise.all([
+    const [v, c, e, st, p, sv, ls, pr, fv, ou, br, co, rt, cb, sb, mb] = await Promise.all([
       supabase.from('v_ventes_mensuelles').select('*').eq('station_id', stationId).order('mois'),
       supabase.from('charges').select('*').eq('station_id', stationId),
       supabase.from('expenses').select('report_date,categorie,montant').eq('station_id', stationId),
@@ -71,6 +77,9 @@ export default function Finance() {
       supabase.from('finance_bons_reconciliation').select('*').eq('station_id', stationId),
       supabase.from('fuel_orders').select('*').eq('station_id', stationId).in('statut', ['lancee', 'partielle']),
       supabase.from('v_order_reception').select('*').eq('station_id', stationId),
+      supabase.from('v_compte_bancaire').select('*').eq('station_id', stationId).maybeSingle(),
+      supabase.from('compte_bancaire_solde_initial').select('*').eq('station_id', stationId).maybeSingle(),
+      supabase.from('compte_bancaire_mouvements').select('*').eq('station_id', stationId).order('date_mouvement', { ascending: false }),
     ])
     setVentes(v.data || []); setCharges(c.data || []); setExpenses(e.data || [])
     if (st.data) setSettings(st.data)
@@ -83,6 +92,9 @@ export default function Finance() {
     const brm = {}; for (const x of (br.data || [])) brm[x.mois] = x; setBonsRecon(brm)
     setCommandesEnCours(co.data || [])
     const rtm = {}; for (const x of (rt.data || [])) rtm[x.order_id] = N(x.quantite_recue_total); setReceptionsTotaux(rtm)
+    setCompteBancaire(cb.data || null)
+    setSoldeBanque(sb.data || null)
+    setMouvementsBanque(mb.data || [])
   }
   useEffect(() => { load() }, [stationId])
 
@@ -195,7 +207,8 @@ export default function Finance() {
     const montantTotal = (o.categorie || 'carburant') === 'carburant' ? N(o.bons_base) + N(o.cheque_montant) : N(o.montant_paiement)
     return s + montantTotal * (reste / commande)
   }, 0)
-  const totalActif = stockTotal + stockCarburant + commandesEnCoursValeur + bonsRestant + cashCumule + ouvertureMontant
+  const soldeBancaireActuel = N(compteBancaire?.solde_actuel)
+  const totalActif = stockTotal + stockCarburant + commandesEnCoursValeur + bonsRestant + cashCumule + ouvertureMontant + soldeBancaireActuel
   const totalPassif = chargesAPayerCumule
   const situationNette = totalActif - totalPassif
 
@@ -270,6 +283,39 @@ export default function Finance() {
       note: bonReconForm.note || null, created_by: session.user.id, updated_at: new Date().toISOString(),
     }, { onConflict: 'station_id,mois' })
     if (error) setErr(error.message); else { setEditBonRecon(false); flash('Rapprochement des bons enregistré'); load() }
+  }
+  function openSoldeBanqueForm() {
+    setSoldeBanqueForm(soldeBanque
+      ? { montant: String(soldeBanque.montant), date_solde: soldeBanque.date_solde, note: soldeBanque.note || '' }
+      : { montant: '', date_solde: today(), note: '' })
+    setEditSoldeBanque(true)
+  }
+  async function saveSoldeBanque(e) {
+    e.preventDefault(); setErr('')
+    if (!soldeBanqueForm.date_solde) { setErr('Renseigne la date du solde.'); return }
+    const { error } = await supabase.from('compte_bancaire_solde_initial').upsert({
+      station_id: stationId, date_solde: soldeBanqueForm.date_solde, montant: Number(soldeBanqueForm.montant) || 0,
+      note: soldeBanqueForm.note || null, created_by: session.user.id, updated_at: new Date().toISOString(),
+    }, { onConflict: 'station_id' })
+    if (error) setErr(error.message); else { setEditSoldeBanque(false); flash('Solde bancaire initial enregistré'); load() }
+  }
+  async function addMouvementBanque(e) {
+    e.preventDefault(); setErr('')
+    if (!nm.montant || Number(nm.montant) <= 0) return
+    let photo_path = null
+    if (nm._file) {
+      const path = `${stationId}/banque/${nm.date_mouvement}/${Date.now()}_${nm._file.name.replace(/[^\w.\-]/g, '_')}`
+      const { error: up } = await supabase.storage.from(BORDEREAUX_BUCKET).upload(path, await compressImage(nm._file))
+      if (up) { setErr(up.message); return }
+      photo_path = path
+    }
+    const { error } = await supabase.from('compte_bancaire_mouvements').insert({
+      station_id: stationId, date_mouvement: nm.date_mouvement, type: nm.type, montant: Number(nm.montant),
+      note: nm.note || null, photo_path, created_by: session.user.id })
+    if (error) setErr(error.message); else { setNm({ type: 'virement_bons', montant: '', date_mouvement: today(), note: '', _file: null }); flash('Mouvement enregistré'); load() }
+  }
+  async function delMouvementBanque(m) {
+    await supabase.from('compte_bancaire_mouvements').delete().eq('id', m.id); load()
   }
   // proposer : copier les charges récurrentes du mois précédent
   async function reporterMoisPrecedent() {
@@ -475,6 +521,73 @@ export default function Finance() {
         </>}
       </Panel>
 
+      <Panel title="Compte bancaire" meta={soldeBanque ? `depuis ${frDate(soldeBanque.date_solde)}` : undefined}
+        actions={<Button size="sm" onClick={openSoldeBanqueForm}>{soldeBanque ? 'Modifier' : 'Définir'} le solde initial</Button>}>
+        <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', marginTop: 0 }}>
+          Suivi du compte, calculé depuis un solde initial : + dépôts (déjà saisis dans les versements) − chèques de commandes − frais bancaires + virements reçus (remboursement des bons).
+        </p>
+        {editSoldeBanque && (
+          <form onSubmit={saveSoldeBanque} style={{ display: 'flex', gap: 'var(--sp-4)', flexWrap: 'wrap', alignItems: 'end', marginBottom: 'var(--sp-4)', padding: 'var(--sp-4)', background: 'var(--surface-raised)', borderRadius: 'var(--radius-1)' }}>
+            <Field label="Date du solde" style={{ flex: '1 1 160px' }}>
+              <Input type="date" value={soldeBanqueForm.date_solde} max={today()} onChange={e => setSoldeBanqueForm({ ...soldeBanqueForm, date_solde: e.target.value })} />
+            </Field>
+            <Field label="Solde à cette date (F)" style={{ flex: '1 1 200px' }}>
+              <Input type="number" inputMode="decimal" numeric value={soldeBanqueForm.montant} onChange={e => setSoldeBanqueForm({ ...soldeBanqueForm, montant: e.target.value })} />
+            </Field>
+            <Field label="Note (optionnel)" style={{ flex: '1 1 200px' }}>
+              <Input value={soldeBanqueForm.note} onChange={e => setSoldeBanqueForm({ ...soldeBanqueForm, note: e.target.value })} />
+            </Field>
+            <Button type="submit" tone="primary" size="sm">Enregistrer</Button>
+            <Button type="button" size="sm" onClick={() => setEditSoldeBanque(false)}>Annuler</Button>
+          </form>
+        )}
+        {soldeBanque ? <>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 'var(--sp-4)', marginBottom: 'var(--sp-4)' }}>
+            <Kpi label="Solde actuel" value={fcfa(soldeBancaireActuel)} status={soldeBancaireActuel < 0 ? 'alarm' : 'ok'} />
+            <Kpi label="Dépôts" value={fcfa(N(compteBancaire?.total_depots))} />
+            <Kpi label="Chèques commandes" value={fcfa(N(compteBancaire?.total_cheques))} />
+            <Kpi label="Virements bons reçus" value={fcfa(N(compteBancaire?.total_virements))} />
+            <Kpi label="Frais bancaires" value={fcfa(N(compteBancaire?.total_frais))} />
+          </div>
+          <form onSubmit={addMouvementBanque} style={{ display: 'flex', gap: 'var(--sp-4)', flexWrap: 'wrap', alignItems: 'end', marginBottom: 'var(--sp-4)' }}>
+            <Field label="Type" style={{ flex: '1 1 180px' }}>
+              <Select value={nm.type} onChange={e => setNm({ ...nm, type: e.target.value })} style={{ width: '100%' }}
+                options={[{ value: 'virement_bons', label: 'Virement reçu (bons)' }, { value: 'frais_bancaire', label: 'Frais bancaire' }]} />
+            </Field>
+            <Field label="Montant" style={{ flex: '1 1 140px' }}>
+              <Input type="number" inputMode="decimal" numeric value={nm.montant} onChange={e => setNm({ ...nm, montant: e.target.value })} />
+            </Field>
+            <Field label="Date" style={{ flex: '1 1 150px' }}>
+              <Input type="date" value={nm.date_mouvement} max={today()} onChange={e => setNm({ ...nm, date_mouvement: e.target.value })} />
+            </Field>
+            <Field label="Note (optionnel)" style={{ flex: '1 1 180px' }}>
+              <Input value={nm.note} onChange={e => setNm({ ...nm, note: e.target.value })} />
+            </Field>
+            <Field label="Justificatif (optionnel)" style={{ flex: '1 1 200px' }}>
+              <EvidenceUpload label={nm._file ? nm._file.name : 'Déposer la photo'} multiple={false} onFiles={files => setNm({ ...nm, _file: files[0] })} />
+            </Field>
+            <Button type="submit" tone="primary" size="sm">Ajouter</Button>
+          </form>
+          {mouvementsBanque.length > 0 && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-2)' }}>
+              {mouvementsBanque.map(m => (
+                <div key={m.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 'var(--sp-3)', padding: 'var(--sp-3)', background: 'var(--surface-raised)', borderRadius: 'var(--radius-1)', font: '400 12px/1.4 var(--font-ui)' }}>
+                  <span style={{ color: 'var(--text-body)' }}>
+                    {frDate(m.date_mouvement)} — {m.type === 'virement_bons' ? 'Virement bons' : 'Frais bancaire'}
+                    {m.note ? ` · ${m.note}` : ''}
+                  </span>
+                  <span style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-3)' }}>
+                    <b style={{ color: m.type === 'virement_bons' ? 'var(--state-ok)' : 'var(--state-alarm)' }}>{m.type === 'virement_bons' ? '+' : '−'}{fcfa(m.montant)}</b>
+                    {m.photo_path && <a href={photoUrl(m.photo_path)} target="_blank" rel="noreferrer">Photo</a>}
+                    <Button size="sm" tone="danger" onClick={() => delMouvementBanque(m)}>Suppr.</Button>
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </> : <PanelEmpty icon="landmark" label="Définis le solde initial du compte pour commencer le suivi" />}
+      </Panel>
+
       <Panel title="Bilan simplifié" meta={`au ${periodeFinBilan || '—'}`}
         actions={<Button size="sm" onClick={openOuvertureForm}>{ouverture ? "Modifier le solde d'ouverture" : "Définir le solde d'ouverture"}</Button>}>
         <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', marginTop: 0 }}>
@@ -504,6 +617,7 @@ export default function Finance() {
             {commandesEnCoursValeur > 0 && <LedgerRow label="Commandes en cours (en transit)" value={fcfa(commandesEnCoursValeur)} />}
             <LedgerRow label="Bons en cours (créance, à ce jour)" value={fcfa(bonsRestant)} />
             <LedgerRow label="Cash non encore versé (cumulé)" value={fcfa(cashCumule)} />
+            {soldeBanque && <LedgerRow label="Solde bancaire (à ce jour)" value={fcfa(soldeBancaireActuel)} />}
             <div style={{ display: 'flex', justifyContent: 'space-between', paddingLeft: 'var(--sp-5)', paddingTop: 'var(--sp-2)', borderTop: '1px solid var(--border-hairline)', font: 'var(--fw-semibold) 13px/1.2 var(--font-ui)' }}>
               <span>Total actif</span><span>{fcfa(totalActif)}</span>
             </div>
