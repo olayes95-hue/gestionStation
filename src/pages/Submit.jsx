@@ -234,6 +234,13 @@ export default function Submit() {
     if (essCompteur != null && f.ess_litres === '') set('ess_litres', String(essCompteur))
     if (gasCompteur != null && f.gas_litres === '') set('gas_litres', String(gasCompteur))
   }, [essCompteur, gasCompteur])
+  // Litres/Prix/Bon/Espèces sont 4 champs saisis indépendamment — rien ne garantit que
+  // Bon + Espèces corresponde à Litres × Prix/L. Vérification en temps réel, non bloquante
+  // (juste un repère visuel), pour repérer une saisie incohérente avant l'envoi.
+  const essAttendu = N(f.ess_litres) * N(f.ess_pu)
+  const essDeclare = N(f.ess_bon) + N(f.ess_espece)
+  const gasAttendu = N(f.gas_litres) * N(f.gas_pu)
+  const gasDeclare = N(f.gas_bon) + N(f.gas_espece)
   const achatsOpen = openAchats ?? (deliveries.length > 0)
   const depensesOpen = openDepenses ?? (expenses.length > 0)
   const versementsOpen = openVersements ?? (deposits.length > 0)
@@ -653,6 +660,12 @@ export default function Submit() {
               <Field label="Vente à bon" style={{ flex: '1 1 140px' }}><Input type="text" inputMode="decimal" numeric {...numProps('ess_bon')} /></Field>
             </div>
             <Field label="Vente en espèces" style={{ marginTop: 'var(--sp-3)' }}><Input type="text" inputMode="decimal" numeric {...numProps('ess_espece')} /></Field>
+            {essAttendu > 0 && (
+              <p style={{ font: '400 11px/1.4 var(--font-ui)', color: Math.abs(essAttendu - essDeclare) > 1 ? 'var(--state-alarm)' : 'var(--state-ok)', margin: 'var(--sp-2) 0 0' }}>
+                {Math.round(essAttendu).toLocaleString('fr-FR')} L × {N(f.ess_pu)} F = {Math.round(essAttendu).toLocaleString('fr-FR')} F attendu — bon + espèces = {Math.round(essDeclare).toLocaleString('fr-FR')} F
+                {Math.abs(essAttendu - essDeclare) > 1 ? ` (écart ${Math.round(essAttendu - essDeclare).toLocaleString('fr-FR')} F)` : ' ✓'}
+              </p>
+            )}
           </FormSection>
           <FormSection title={`Gasoil — ${settings.gasoil_pv} F/L`} style={{ marginTop: 'var(--sp-4)' }}>
             <div style={{ display: 'flex', gap: 'var(--sp-4)', flexWrap: 'wrap' }}>
@@ -661,6 +674,12 @@ export default function Submit() {
               <Field label="Vente à bon" style={{ flex: '1 1 140px' }}><Input type="text" inputMode="decimal" numeric {...numProps('gas_bon')} /></Field>
             </div>
             <Field label="Vente en espèces" style={{ marginTop: 'var(--sp-3)' }}><Input type="text" inputMode="decimal" numeric {...numProps('gas_espece')} /></Field>
+            {gasAttendu > 0 && (
+              <p style={{ font: '400 11px/1.4 var(--font-ui)', color: Math.abs(gasAttendu - gasDeclare) > 1 ? 'var(--state-alarm)' : 'var(--state-ok)', margin: 'var(--sp-2) 0 0' }}>
+                {Math.round(gasAttendu).toLocaleString('fr-FR')} L × {N(f.gas_pu)} F = {Math.round(gasAttendu).toLocaleString('fr-FR')} F attendu — bon + espèces = {Math.round(gasDeclare).toLocaleString('fr-FR')} F
+                {Math.abs(gasAttendu - gasDeclare) > 1 ? ` (écart ${Math.round(gasAttendu - gasDeclare).toLocaleString('fr-FR')} F)` : ' ✓'}
+              </p>
+            )}
           </FormSection>
           <AlertBanner tone="ok" title="Marge" style={{ marginTop: 'var(--sp-4)' }}>Marge carburant estimée : <b>{fcfa(marge)}</b> ({settings.marge_unitaire} F/L)</AlertBanner>
         </Panel>}
