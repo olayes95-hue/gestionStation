@@ -430,6 +430,51 @@ export default function Finance() {
   ]
   const annualRows = LEDGER_LINES.map(l => ({ id: l.key, label: l.bold ? <b>{l.label}</b> : l.label, key: l.key }))
 
+  // Résumé en clair, pour quelqu'un qui ne connaît pas la compta : l'essentiel des chiffres
+  // déjà calculés ci-dessus, mis en phrases, + des pistes concrètes pour le mois suivant.
+  // Purement dérivé des données existantes (pas d'IA/appel externe) — mêmes seuils que les KPIs.
+  function genererResume() {
+    const periode = mois ? `en ${ML[mois.slice(5, 7)]} ${mois.slice(0, 4)}` : `sur l'année ${annee}`
+    const lignes = []
+
+    if (resultat > 0) lignes.push(`La station a fait un bénéfice de ${fcfa(resultat)} ${periode}.`)
+    else if (resultat < 0) lignes.push(`La station est en perte de ${fcfa(Math.abs(resultat))} ${periode}.`)
+    else lignes.push(`La station est à l'équilibre ${periode} : ni gain ni perte.`)
+
+    if (prevLabel && resultatPrev != null) {
+      const diff = resultat - resultatPrev
+      if (Math.abs(diff) > 1000) {
+        lignes.push(diff > 0
+          ? `C'est mieux que la période précédente, +${fcfa(diff)}.`
+          : `C'est moins bien que la période précédente, ${fcfa(diff)}.`)
+      } else {
+        lignes.push("C'est stable par rapport à la période précédente.")
+      }
+    }
+
+    const poles = [
+      { nom: 'le carburant', montant: commCarb },
+      { nom: 'le gaz et le lubrifiant', montant: commGazLub },
+      { nom: 'la supérette', montant: commSuperette },
+    ].sort((a, b) => b.montant - a.montant)
+    if (poles[0].montant > 0) lignes.push(`La plus grosse partie des revenus vient de ${poles[0].nom} (${fcfa(poles[0].montant)}).`)
+
+    if (totCharges > 0) lignes.push(`Les charges (tout ce qui a été dépensé) s'élèvent à ${fcfa(totCharges)}.`)
+    if (perteMontant > 1000) lignes.push(`Sur ce total, ${fcfa(perteMontant)} viennent de carburant manquant à la livraison (pertes).`)
+    if (chargesAPayer > 0) lignes.push(`Il reste ${fcfa(chargesAPayer)} de charges pas encore payées.`)
+
+    const conseils = []
+    if (resultat < 0) conseils.push('réduire les charges ou augmenter les ventes pour repasser en bénéfice')
+    if (perteMontant > 1000) conseils.push('vérifier avec le gérant pourquoi les livraisons de carburant arrivent incomplètes — ça coûte cher')
+    if (chargesAPayer > 0) conseils.push('prévoir de régler les charges encore impayées')
+    const plusFaible = poles[poles.length - 1]
+    if (poles[0].montant > 0 && plusFaible.montant < poles[0].montant * 0.3) conseils.push(`essayer de développer ${plusFaible.nom}, qui rapporte peu comparé aux autres`)
+    lignes.push(conseils.length ? `Pour le mois prochain : ${conseils.join(' ; ')}.` : "Rien d'alarmant : continue sur cette lancée le mois prochain.")
+
+    return lignes
+  }
+  const resume = genererResume()
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-6)' }}>
       {msg && <AlertBanner tone="ok" title="Succès">{msg}</AlertBanner>}
@@ -450,6 +495,14 @@ export default function Finance() {
       <Tabs items={TABS} value={tab} onChange={setTab} />
 
       {tab === 'apercu' && <>
+      <Panel title="En clair" meta={mois || annee} status={resultat < 0 ? 'alarm' : 'ok'}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-2)' }}>
+          {resume.map((ligne, i) => (
+            <p key={i} style={{ font: i === resume.length - 1 ? 'var(--fw-semibold) 13px/1.5 var(--font-ui)' : '400 13px/1.5 var(--font-ui)', color: 'var(--text-body)', margin: 0 }}>{ligne}</p>
+          ))}
+        </div>
+      </Panel>
+
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 'var(--sp-4)' }}>
         <Kpi label="Litres carburant" value={Math.round(sum('litres_carburant')).toLocaleString('fr-FR')} unit="L" />
         <Kpi label="Commission carburant" value={fcfa(commCarb)} sub="litres × marge" {...cmp(commCarb, commCarbPrev)} />
