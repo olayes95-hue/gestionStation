@@ -157,6 +157,14 @@ export default function Finance() {
   const produits = commCarb + commGazLub + commSuperette + autresProduits
   const resultat = produits - totCharges
 
+  // Seuil de rentabilité en litres : combien de litres de carburant (essence + gasoil — même
+  // marge/L pour les deux, l'app ne distingue pas) faut-il vendre pour couvrir les charges,
+  // les autres pôles restant à leur niveau actuel ? litres × marge = charges − (autres produits).
+  const litresActuels = sum('litres_carburant')
+  const litresSeuilRentabilite = N(settings.marge_unitaire) > 0
+    ? Math.max(0, (totCharges - commGazLub - commSuperette - autresProduits) / N(settings.marge_unitaire))
+    : null
+
   // Comparaison à la période précédente (mois précédent si un mois précis est sélectionné,
   // sinon année précédente) — repère les anomalies comme le ferait un comptable.
   const prevLabel = mois
@@ -463,6 +471,13 @@ export default function Finance() {
     if (perteMontant > 1000) lignes.push(`Sur ce total, ${fcfa(perteMontant)} viennent de carburant manquant à la livraison (pertes).`)
     if (chargesAPayer > 0) lignes.push(`Il reste ${fcfa(chargesAPayer)} de charges pas encore payées.`)
 
+    if (litresSeuilRentabilite != null) {
+      const ecartLitres = Math.round(litresSeuilRentabilite - litresActuels)
+      lignes.push(ecartLitres > 0
+        ? `Pour couvrir toutes les charges (si elles restent stables), il faut vendre au moins ${Math.round(litresSeuilRentabilite).toLocaleString('fr-FR')} L de carburant — soit ${ecartLitres.toLocaleString('fr-FR')} L de plus que les ${Math.round(litresActuels).toLocaleString('fr-FR')} L déjà vendus.`
+        : `Les ${Math.round(litresActuels).toLocaleString('fr-FR')} L de carburant déjà vendus suffisent à couvrir toutes les charges (il en fallait ${Math.round(litresSeuilRentabilite).toLocaleString('fr-FR')} L).`)
+    }
+
     const conseils = []
     if (resultat < 0) conseils.push('réduire les charges ou augmenter les ventes pour repasser en bénéfice')
     if (perteMontant > 1000) conseils.push('vérifier avec le gérant pourquoi les livraisons de carburant arrivent incomplètes — ça coûte cher')
@@ -505,6 +520,10 @@ export default function Finance() {
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 'var(--sp-4)' }}>
         <Kpi label="Litres carburant" value={Math.round(sum('litres_carburant')).toLocaleString('fr-FR')} unit="L" />
+        {litresSeuilRentabilite != null && (
+          <Kpi label="Seuil de rentabilité" value={Math.round(litresSeuilRentabilite).toLocaleString('fr-FR')} unit="L"
+            sub="litres de carburant à vendre pour couvrir les charges" status={litresActuels >= litresSeuilRentabilite ? 'ok' : 'warn'} />
+        )}
         <Kpi label="Commission carburant" value={fcfa(commCarb)} sub="litres × marge" {...cmp(commCarb, commCarbPrev)} />
         <Kpi label="Ventes gaz + lubrifiant" value={fcfa(sum('ventes_gaz') + sum('ventes_lubrifiant'))} />
         <Kpi label="Ventes supérette" value={fcfa(sum('ventes_superette'))} />
