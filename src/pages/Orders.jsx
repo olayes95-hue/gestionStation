@@ -43,6 +43,7 @@ export default function Orders() {
   const [year, setYear] = useState(String(now.getFullYear())); const [month, setMonth] = useState(String(now.getMonth() + 1).padStart(2, '0'))
   const [dateFrom, setDateFrom] = useState(''); const [dateTo, setDateTo] = useState('')
   const [err, setErr] = useState(''); const [msg, setMsg] = useState('')
+  const [matinWarn, setMatinWarn] = useState('')
   const [bonsRestant, setBonsRestant] = useState(0)
   const [openCombos, setOpenCombos] = useState(false)
   const [detailId, setDetailId] = useState(null)   // id de la commande ouverte dans le panneau de détail
@@ -153,13 +154,14 @@ export default function Orders() {
   // pour n'avoir qu'un seul endroit à maintenir pour le garde-fou d'écart et les écritures en base.
   async function receptionner(o) {
     const r = recv[o.id] || {}
-    setErr('')
+    setErr(''); setMatinWarn('')
     try {
       const deja = N(recvTotals[o.id]?.quantite_recue_total)
       const result = await receptionnerCommande({ supabase, bucket: BORDEREAUX_BUCKET, stationId, session, order: o, recv: r, settings, deja })
       if (result.warnEcart) { setRecv(p => ({ ...p, [o.id]: { ...r, warnEcart: result.warnEcart } })); return }
       setRecv(p => ({ ...p, [o.id]: undefined }))
       flash(result.complet ? 'Commande soldée — stock mis à jour' : `Réception partielle (${result.total.toLocaleString('fr-FR')}/${N(o.quantite_commandee).toLocaleString('fr-FR')})`)
+      if (result.matinManquant) setMatinWarn("Le relevé du matin de ce jour n'est pas encore saisi — fais-le dès que possible : sans ça, il risque de capter le niveau APRÈS cette livraison au lieu d'avant, et de fausser le contrôle anti-coulage.")
       load()
     } catch (e) { setErr(e.message || String(e)) }
   }
@@ -250,6 +252,7 @@ export default function Orders() {
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-6)' }}>
       {msg && <AlertBanner tone="ok" title="Succès">{msg}</AlertBanner>}
       {err && <AlertBanner tone="alarm" title="Erreur">{err}</AlertBanner>}
+      {matinWarn && <AlertBanner tone="warn" title="Pense au relevé du matin">{matinWarn}</AlertBanner>}
 
       {/* ===== À TRAITER — résumé cliquable, filtre directement le tableau ===== */}
       {(nbAValider > 0 || nbALancer > 0 || nbAReceptionner > 0) && (

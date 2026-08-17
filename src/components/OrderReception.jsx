@@ -25,6 +25,7 @@ export default function OrderReception({ stationId, date, settings = {}, onDone,
   const [totals, setTotals] = useState({})
   const [recv, setRecv] = useState({})
   const [err, setErr] = useState(''); const [msg, setMsg] = useState('')
+  const [matinWarn, setMatinWarn] = useState('')
 
   async function load() {
     if (!stationId) return
@@ -42,13 +43,14 @@ export default function OrderReception({ stationId, date, settings = {}, onDone,
   async function receptionner(o) {
     const raw = recv[o.id] || {}
     const r = raw.date ? raw : { ...raw, date: date || today() }
-    setErr('')
+    setErr(''); setMatinWarn('')
     try {
       const deja = N(totals[o.id]?.quantite_recue_total)
       const result = await receptionnerCommande({ supabase, bucket: BORDEREAUX_BUCKET, stationId, session, order: o, recv: r, settings, deja })
       if (result.warnEcart) { setRecv(p => ({ ...p, [o.id]: { ...r, warnEcart: result.warnEcart } })); return }
       setRecv(p => ({ ...p, [o.id]: undefined }))
       flash(result.complet ? 'Commande soldée — stock mis à jour' : `Réception partielle (${result.total.toLocaleString('fr-FR')}/${N(o.quantite_commandee).toLocaleString('fr-FR')})`)
+      if (result.matinManquant) setMatinWarn("Le relevé du matin de ce jour n'est pas encore saisi — fais-le dès que possible : sans ça, il risque de capter le niveau APRÈS cette livraison au lieu d'avant, et de fausser le contrôle anti-coulage.")
       await load(); onDone && onDone()
     } catch (e) { setErr(e.message || String(e)) }
   }
@@ -61,6 +63,7 @@ export default function OrderReception({ stationId, date, settings = {}, onDone,
       bodyStyle={open ? undefined : { display: 'none' }}>
       {err && <AlertBanner tone="alarm" title="Erreur" style={{ marginBottom: 'var(--sp-4)' }}>{err}</AlertBanner>}
       {msg && <AlertBanner tone="ok" title="Succès" style={{ marginBottom: 'var(--sp-4)' }}>{msg}</AlertBanner>}
+      {matinWarn && <AlertBanner tone="warn" title="Pense au relevé du matin" style={{ marginBottom: 'var(--sp-4)' }}>{matinWarn}</AlertBanner>}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-4)' }}>
         {orders.map(o => {
           const cat = o.categorie || 'carburant'

@@ -46,9 +46,16 @@ export async function receptionner({ supabase, bucket, stationId, session, order
   if (cat === 'carburant' && (recv.cuve_avant === '' || recv.cuve_avant == null || recv.cuve_apres === '' || recv.cuve_apres == null)) {
     throw new Error('Renseigne cuve AVANT et APRÈS.')
   }
+  let matinManquant = false
   if (cat === 'carburant') {
     const warn = ecartWarning({ recu, cuveAvant: recv.cuve_avant, cuveApres: recv.cuve_apres, tauxPerteAcceptable: settings.taux_perte_acceptable, force: recv.forceEcart })
     if (warn) return { warnEcart: warn }
+    // Si le relevé du matin de ce jour n'a pas encore été saisi, il risque de capter le niveau
+    // APRÈS cette livraison plutôt que celui d'avant (le relevé du matin doit précéder toute
+    // réception pour que l'anti-coulage reste fiable — cf. migration v53).
+    const champMatin = order.produit === 'gasoil' ? 'gas_stock_matin' : 'ess_stock_matin'
+    const { data: dr } = await supabase.from('daily_reports').select(champMatin).eq('station_id', stationId).eq('report_date', day).maybeSingle()
+    matinManquant = !dr || dr[champMatin] == null
   }
   const total = N(deja) + recu
   const marge = N(order.quantite_commandee) * (N(settings.taux_perte_acceptable) || 5) / 100
@@ -77,5 +84,5 @@ export async function receptionner({ supabase, bucket, stationId, session, order
   }
   if (photo_path) await supabase.from('attachments').insert({ station_id: stationId, report_date: day, categorie: 'reception', note: `${order.produit || cat} — reçu ${recu} / ${N(order.quantite_commandee)}`, photo_path, created_by: session.user.id })
 
-  return { complet, total }
+  return { complet, total, matinManquant }
 }
