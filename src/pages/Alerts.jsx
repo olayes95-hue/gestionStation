@@ -18,7 +18,7 @@ const ML = { '01':'Janv','02':'Févr','03':'Mars','04':'Avril','05':'Mai','06':'
 const key = (a) => `${a.report_date}|${a.type}`
 
 export default function AlertsPage() {
-  const { session } = useAuth()
+  const { session, isAdmin } = useAuth()
   const { stationId } = useStation()
   const nav = useNavigate()
   const [alerts, setAlerts] = useState([])
@@ -42,14 +42,19 @@ export default function AlertsPage() {
   }
   useEffect(() => { load() }, [stationId])
 
+  // Marquer/rétablir réservé à l'admin (RLS le bloque aussi côté base — migration v55).
+  // Erreur vérifiée explicitement : avant, un échec RLS silencieux faisait croire que
+  // l'alerte était traitée (état local optimiste) alors que rien n'était enregistré.
   async function dismiss(a) {
-    await supabase.from('alert_dismissals').upsert(
+    const { error } = await supabase.from('alert_dismissals').upsert(
       { station_id: stationId, report_date: a.report_date, type: a.type, dismissed_by: session.user.id },
       { onConflict: 'station_id,report_date,type' })
+    if (error) { console.error(error); return }
     setDismissed(p => new Set(p).add(key(a)))
   }
   async function restore(a) {
-    await supabase.from('alert_dismissals').delete().eq('station_id', stationId).eq('report_date', a.report_date).eq('type', a.type)
+    const { error } = await supabase.from('alert_dismissals').delete().eq('station_id', stationId).eq('report_date', a.report_date).eq('type', a.type)
+    if (error) { console.error(error); return }
     setDismissed(p => { const n = new Set(p); n.delete(key(a)); return n })
   }
 
@@ -125,9 +130,9 @@ export default function AlertsPage() {
                     </div>
                     <div style={{ display: 'flex', gap: 'var(--sp-2)', flexShrink: 0 }}>
                       {a.report_date && <Button size="sm" onClick={() => nav(`/saisie?date=${a.report_date}`)}>Traiter</Button>}
-                      {showDismissed
+                      {isAdmin && (showDismissed
                         ? <Button size="sm" onClick={() => restore(a)}>Rétablir</Button>
-                        : <Button size="sm" tone="primary" onClick={() => dismiss(a)}>Marquer traité</Button>}
+                        : <Button size="sm" tone="primary" onClick={() => dismiss(a)}>Marquer traité</Button>)}
                     </div>
                   </div>
                 )
