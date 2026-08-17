@@ -106,6 +106,20 @@ export default function Finance() {
     setMouvementsBanque(mb.data || [])
   }
   useEffect(() => { load() }, [stationId])
+  // Rafraîchit automatiquement si une saisie change pendant que la page est ouverte (ex. une
+  // livraison réceptionnée plus tard dans la journée) — sinon le résumé/KPIs restent figés sur
+  // l'état du chargement initial jusqu'à ce que quelqu'un rouvre la page ou change le mois.
+  useEffect(() => {
+    if (!stationId) return
+    const ch = supabase.channel('finance-' + stationId)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'daily_reports', filter: `station_id=eq.${stationId}` }, load)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'fuel_orders', filter: `station_id=eq.${stationId}` }, load)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'charges', filter: `station_id=eq.${stationId}` }, load)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'expenses', filter: `station_id=eq.${stationId}` }, load)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'deposits', filter: `station_id=eq.${stationId}` }, load)
+      .subscribe()
+    return () => { supabase.removeChannel(ch) }
+  }, [stationId])
 
   const annees = useMemo(() => [...new Set([...ventes.map(v => v.mois.slice(0, 4)), today().slice(0, 4)])].sort(), [ventes])
 
