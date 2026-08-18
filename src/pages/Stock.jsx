@@ -42,6 +42,7 @@ export default function Stock() {
   const [sorties, setSorties] = useState([])
   const [theorique, setTheorique] = useState([])
   const [snapshots, setSnapshots] = useState([])
+  const [reorderLub, setReorderLub] = useState([])
   const [products, setProducts] = useState([])
   const [openEcart, setOpenEcart] = useState(true)
   const [openHistorique, setOpenHistorique] = useState(false)
@@ -67,7 +68,7 @@ export default function Stock() {
 
   async function load() {
     if (!stationId) return
-    const [sp, sv, mv, so, pr, th, sn] = await Promise.all([
+    const [sp, sv, mv, so, pr, th, sn, ro] = await Promise.all([
       supabase.from('v_stock_produits').select('*').eq('station_id', stationId),
       supabase.from('v_stock_valeur').select('*').eq('station_id', stationId),
       supabase.from('stock_movements').select('*').eq('station_id', stationId).order('date_mouvement', { ascending: false }).limit(400),
@@ -75,9 +76,10 @@ export default function Stock() {
       supabase.from('products').select('*').eq('actif', true).order('ordre'),
       supabase.from('v_stock_theorique').select('*').eq('station_id', stationId),
       supabase.from('stock_declarations_snapshot').select('*').eq('station_id', stationId).order('report_date', { ascending: false }).limit(200),
+      supabase.from('v_reorder_lubrifiant').select('*').eq('station_id', stationId),
     ])
     setStock(sp.data || []); setValeur(sv.data || []); setMvts(mv.data || []); setSorties(so.data || []); setProducts(pr.data || [])
-    setTheorique(th.data || []); setSnapshots(sn.data || [])
+    setTheorique(th.data || []); setSnapshots(sn.data || []); setReorderLub(ro.data || [])
   }
   useEffect(() => { load() }, [stationId])
   const flash = (m) => { setMsg(m); setErr(''); setTimeout(() => setMsg(''), 2500) }
@@ -169,6 +171,19 @@ export default function Stock() {
     { key: 'actions', header: '', align: 'right', render: t => Math.abs(t.ecart) >= 0.5 && !isVendeuse ? (
       <Button size="sm" tone="alarm" onClick={() => openAction('sortie', { categorie: 'lubrifiant', produit: t.produit })}>Expliquer l'écart</Button>
     ) : null },
+  ]
+
+  const reorderColumns = [
+    { key: 'produit', header: 'Produit' },
+    { key: 'stock_theorique_actuel', header: 'Stock', numeric: true, align: 'right', render: r => N(r.stock_theorique_actuel) },
+    { key: 'conso_moy_jour', header: 'Conso/jour', numeric: true, align: 'right', muted: true, render: r => N(r.conso_moy_jour).toFixed(1) },
+    { key: 'stock_cible', header: 'Cible', numeric: true, align: 'right', muted: true, render: r => N(r.stock_cible) },
+    { key: 'quantite_a_commander', header: 'À commander', numeric: true, align: 'right', render: r => {
+      if (r.commande_en_cours) return <Badge tone="info">Déjà en cours</Badge>
+      if (N(r.quantite_a_commander) <= 0) return <span style={{ color: 'var(--state-ok)' }}>—</span>
+      return <span style={{ fontWeight: 600, color: 'var(--state-alarm)' }}>{N(r.quantite_a_commander)} {r.conditionnement_qte ? '(' + N(r.cartons_a_commander) + ' ' + (r.conditionnement_nom || 'carton') + '(s))' : ''}</span>
+    } },
+    { key: 'cout_estimatif', header: 'Coût estimé', numeric: true, align: 'right', muted: true, render: r => r.quantite_a_commander > 0 && !r.commande_en_cours ? fcfa(r.cout_estimatif) : '—' },
   ]
 
   const histColumns = [
@@ -387,6 +402,18 @@ export default function Stock() {
           </div>
           <div style={{ marginTop: 'var(--sp-4)' }}>
             {histRows.length ? <DataTable columns={histColumns} rows={histRows} /> : <PanelEmpty icon="calendar-days" label="Aucune déclaration figée pour l'instant" />}
+          </div>
+        </Panel>
+      )}
+
+      {/* ===== RÉAPPRO LUBRIFIANT — gérant/pompiste/admin ===== */}
+      {!isVendeuse && reorderLub.length > 0 && (
+        <Panel title="Lubrifiant — suggestions de commande" flush>
+          <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', margin: 'var(--sp-4) var(--gutter-panel) 0' }}>
+            Cible = seuil ou consommation moyenne × (délai livraison + jours de sécurité), selon le plus élevé. Le nombre de cartons est calculé automatiquement.
+          </p>
+          <div style={{ marginTop: 'var(--sp-4)' }}>
+            <DataTable columns={reorderColumns} rows={reorderLub.map((r, i) => ({ ...r, id: i }))} />
           </div>
         </Panel>
       )}
