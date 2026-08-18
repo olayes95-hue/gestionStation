@@ -3,7 +3,7 @@ import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/auth.jsx'
 import { useStation } from '../lib/station.jsx'
 import { fcfa, frDate, numFR, today } from '../lib/format'
-import { STOCK_MOVEMENT_TONES } from '../lib/tones'
+import { STOCK_MOVEMENT_TONES, STOCK_SOURCE_TONES } from '../lib/tones'
 import { Panel, PanelEmpty } from '../ds/octane/components/core/Panel.jsx'
 import { Button } from '../ds/octane/components/core/Button.jsx'
 import { IconButton } from '../ds/octane/components/core/IconButton.jsx'
@@ -21,6 +21,17 @@ const N = (v) => (v ? (numFR(v) ?? 0) : 0)
 const MONTHS = ['01','02','03','04','05','06','07','08','09','10','11','12']
 const CATS = [['gaz', 'Gaz'], ['lubrifiant', 'Lubrifiant'], ['superette', 'Supérette']]
 const MOVEMENT_LABEL = { entree: 'Livraison', sortie: 'Sortie', ajustement: 'Inventaire' }
+
+// Raisons proposées dans la tuile "Autre mouvement" — le sens (+/-) est dérivé
+// automatiquement du type associé, l'utilisateur ne choisit jamais de signe.
+const AUTRE_MOUVEMENT_SOURCES = [
+  { source: 'casse', type: 'sortie' },
+  { source: 'perte', type: 'sortie' },
+  { source: 'consommation_interne', type: 'sortie' },
+  { source: 'retour_fournisseur', type: 'sortie' },
+  { source: 'retour_client', type: 'entree' },
+  { source: 'vente', type: 'sortie' },
+]
 
 export default function Stock() {
   const { session, isAdmin, isVendeuse, isPompiste } = useAuth()
@@ -40,10 +51,14 @@ export default function Stock() {
   const [msg, setMsg] = useState(''); const [err, setErr] = useState('')
   const toggleCat = (c) => setShowCats(p => p.includes(c) ? p.filter(x => x !== c) : [...p, c])
 
-  function blank(type) {
-    return { categorie: isVendeuse ? 'superette' : 'gaz', produit: '', type, quantite: '', valeur: '', source: type === 'entree' ? 'achat' : 'inventaire', note: '', date_mouvement: today() }
+  function blank(action) {
+    const base = { categorie: isVendeuse ? 'superette' : 'gaz', produit: '', quantite: '', qteCartons: '', qteUnites: '', valeur: '', note: '', date_mouvement: today() }
+    if (action === 'sortie') return { ...base, type: 'sortie', source: 'casse' }
+    if (action === 'ajustement') return { ...base, type: 'ajustement', source: 'inventaire' }
+    if (action === 'correction') return { ...base, type: 'ajustement', source: 'correction_inventaire' }
+    return { ...base, type: 'entree', source: 'achat' }
   }
-  function openAction(type) { setNm(blank(type)); setAction(type); setErr('') }
+  function openAction(action) { setNm(blank(action)); setAction(action); setErr('') }
 
   async function load() {
     if (!stationId) return
@@ -61,12 +76,40 @@ export default function Stock() {
 
   async function addMvt(e) {
     e.preventDefault(); setErr('')
+    if (action === 'correction' && !nm.note.trim()) { setErr("Motif obligatoire pour une correction d'inventaire."); return }
     const row = { station_id: stationId, categorie: nm.categorie, type: nm.type, source: nm.source || null, note: nm.note || null, date_mouvement: nm.date_mouvement, created_by: session.user.id }
-    if (nm.categorie === 'superette') { if (!nm.valeur) { setErr('Renseigne le montant (F).'); return } row.valeur = numFR(nm.valeur) }
-    else { if (!nm.produit || !nm.quantite) { setErr('Choisis un produit et une quantité.'); return } row.produit = nm.produit; row.quantite = numFR(nm.quantite) }
+    if (nm.categorie === 'superette') {
+      if (!nm.valeur) { setErr('Renseigne le montant (F).'); return }
+      row.valeur = numFR(nm.valeur)
+    } else {
+      if (!nm.produit) { setErr('Choisis un produit.'); return }
+      const pr = products.find(p => p.categorie === nm.categorie && p.nom === nm.produit)
+      const hasCondit = pr && N(pr.conditionnement_qte) > 0
+      row.produit = nm.produit
+      if (hasCondit) {
+        const cartons = N(nm.qteCartons), unites = N(nm.qteUnites)
+        const total = cartons * N(pr.conditionnement_qte) + unites
+        if (!total) { setErr('Renseigne une quantité.'); return }
+        row.quantite = total
+        row.facteur_conversion = N(pr.conditionnement_qte)
+        if (cartons && unites) {
+          row.unite_saisie = 'mixte'; row.qte_saisie = total
+          row.detail_saisie = `${cartons} ${pr.conditionnement_nom || 'carton'}${cartons > 1 ? 's' : ''} + ${unites} ${pr.unite || 'unité'}${unites > 1 ? 's' : ''}`
+        } else if (cartons) { row.unite_saisie = pr.conditionnement_nom || 'carton'; row.qte_saisie = cartons }
+        else { row.unite_saisie = pr.unite || 'unite'; row.qte_saisie = unites }
+      } else {
+        if (!nm.quantite) { setErr('Renseigne une quantité.'); return }
+        row.quantite = numFR(nm.quantite)
+        row.unite_saisie = pr?.unite || 'unite'; row.qte_saisie = row.quantite
+      }
+    }
     const { error } = await supabase.from('stock_movements').insert(row)
     if (error) setErr(error.message)
-    else { setAction(null); flash(nm.type === 'entree' ? 'Livraison enregistrée' : 'Inventaire corrigé'); load() }
+    else {
+      setAction(null)
+      flash({ entree: 'Livraison enregistrée', sortie: 'Mouvement enregistré', ajustement: 'Inventaire corrigé', correction: "Correction d'inventaire enregistrée" }[action] || 'Mouvement enregistré')
+      load()
+    }
   }
   async function delMvt(id) { await supabase.from('stock_movements').delete().eq('id', id); load() }
 
@@ -124,7 +167,7 @@ export default function Stock() {
     { key: 'categorie', header: 'Catégorie' },
     { key: 'produit', header: 'Produit', render: m => m.produit || '—' },
     { key: 'type', header: 'Type', render: m => <Badge tone={STOCK_MOVEMENT_TONES[m.type] || 'idle'}>{m.type}</Badge> },
-    { key: 'source', header: 'Source', muted: true, render: m => m.source || '—' },
+    { key: 'source', header: 'Source', render: m => m.source ? <Badge tone={STOCK_SOURCE_TONES[m.source]?.tone || 'idle'}>{STOCK_SOURCE_TONES[m.source]?.label || m.source}</Badge> : '—' },
     { key: 'valeur', header: 'Qté / Valeur', numeric: true, align: 'right', render: m => m.valeur != null ? fcfa(m.valeur) : N(m.quantite) },
     { key: 'actions', header: '', align: 'right', render: m => <Button size="sm" tone="danger" onClick={() => delMvt(m.id)}>✕</Button> },
   ]
@@ -132,7 +175,7 @@ export default function Stock() {
   const recentColumns = [
     { key: 'date_mouvement', header: 'Date', render: m => frDate(m.date_mouvement) },
     { key: 'produit', header: 'Produit', render: m => m.produit || m.categorie },
-    { key: 'type', header: 'Type', render: m => <Badge tone={STOCK_MOVEMENT_TONES[m.type] || 'idle'}>{MOVEMENT_LABEL[m.type] || m.type}</Badge> },
+    { key: 'type', header: 'Type', render: m => <Badge tone={STOCK_MOVEMENT_TONES[m.type] || 'idle'}>{STOCK_SOURCE_TONES[m.source]?.label || MOVEMENT_LABEL[m.type] || m.type}</Badge> },
     { key: 'valeur', header: 'Qté / Montant', numeric: true, align: 'right', render: m => m.valeur != null ? fcfa(m.valeur) : N(m.quantite) },
   ]
 
@@ -146,18 +189,31 @@ export default function Stock() {
         {!action ? (
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--sp-4)' }}>
             <ActionTile icon="download" title="J'ai reçu une livraison" desc="Ajouter au stock ce qui vient d'arriver" onClick={() => openAction('entree')} />
+            <ActionTile icon="rotate-ccw" title="Autre mouvement" desc="Casse, perte, consommation interne, retour…" onClick={() => openAction('sortie')} />
             <ActionTile icon="wrench" title="Corriger après inventaire" desc="Ajuster si le compte réel diffère" onClick={() => openAction('ajustement')} />
+            {isAdmin && <ActionTile icon="shield-alert" title="Correction d'inventaire" desc="Dernier recours — écart inexpliqué, motif obligatoire" onClick={() => openAction('correction')} />}
           </div>
         ) : (
           <form onSubmit={addMvt} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-4)' }}>
-            <AlertBanner tone={action === 'entree' ? 'ok' : 'warn'} title={action === 'entree' ? 'Livraison' : 'Correction'}>
-              {action === 'entree'
-                ? 'Livraison reçue — indique ce qui est entré en stock.'
-                : "Correction d'inventaire — indique la quantité (ou le montant) réellement constaté."}
+            <AlertBanner tone={action === 'entree' ? 'ok' : action === 'correction' ? 'alarm' : 'warn'} title={{ entree: 'Livraison', sortie: 'Autre mouvement', ajustement: 'Correction', correction: "Correction d'inventaire" }[action]}>
+              {{
+                entree: 'Livraison reçue — indique ce qui est entré en stock.',
+                sortie: 'Choisis la raison : le sens (+/-) est appliqué automatiquement.',
+                ajustement: "Correction d'inventaire — indique la quantité (ou le montant) réellement constaté.",
+                correction: "Dernier recours si l'écart ne s'explique par aucun mouvement normal — motif obligatoire, mouvement identifié distinctement.",
+              }[action]}
             </AlertBanner>
             {!isVendeuse && (
               <Field label="Type de produit">
-                <Select value={nm.categorie} onChange={e => setNm({ ...nm, categorie: e.target.value, produit: '' })} options={cats.map(([v, l]) => ({ value: v, label: l }))} style={{ width: '100%' }} />
+                <Select value={nm.categorie} onChange={e => setNm({ ...nm, categorie: e.target.value, produit: '', quantite: '', qteCartons: '', qteUnites: '' })} options={cats.map(([v, l]) => ({ value: v, label: l }))} style={{ width: '100%' }} />
+              </Field>
+            )}
+            {action === 'sortie' && (
+              <Field label="Raison">
+                <Select value={nm.source} onChange={e => {
+                  const s = AUTRE_MOUVEMENT_SOURCES.find(s => s.source === e.target.value)
+                  setNm({ ...nm, source: e.target.value, type: s?.type || 'sortie' })
+                }} options={AUTRE_MOUVEMENT_SOURCES.map(s => ({ value: s.source, label: STOCK_SOURCE_TONES[s.source]?.label || s.source }))} style={{ width: '100%' }} />
               </Field>
             )}
             {nm.categorie === 'superette' ? (
@@ -172,19 +228,41 @@ export default function Stock() {
             ) : (
               <div style={{ display: 'flex', gap: 'var(--sp-4)', flexWrap: 'wrap' }}>
                 <Field label="Produit" style={{ flex: '2 1 200px' }}>
-                  <Select value={nm.produit} onChange={e => setNm({ ...nm, produit: e.target.value })}
+                  <Select value={nm.produit} onChange={e => setNm({ ...nm, produit: e.target.value, quantite: '', qteCartons: '', qteUnites: '' })}
                     options={[{ value: '', label: '— choisir —' }, ...products.filter(p => p.categorie === nm.categorie).map(p => ({ value: p.nom, label: p.nom }))]} style={{ width: '100%' }} />
                 </Field>
-                <Field label={`Quantité${action === 'ajustement' ? ' (écart)' : ''}`} style={{ flex: '1 1 140px' }}>
-                  <Input type="text" inputMode="decimal" numeric value={nm.quantite} onChange={e => setNm({ ...nm, quantite: e.target.value })} />
-                </Field>
+                {(() => {
+                  const pr = products.find(p => p.categorie === nm.categorie && p.nom === nm.produit)
+                  const hasCondit = pr && N(pr.conditionnement_qte) > 0
+                  if (!hasCondit) {
+                    return (
+                      <Field label={`Quantité${action === 'ajustement' ? ' (écart)' : ''}`} style={{ flex: '1 1 140px' }}>
+                        <Input type="text" inputMode="decimal" numeric value={nm.quantite} onChange={e => setNm({ ...nm, quantite: e.target.value })} />
+                      </Field>
+                    )
+                  }
+                  const total = N(nm.qteCartons) * N(pr.conditionnement_qte) + N(nm.qteUnites)
+                  return (
+                    <>
+                      <Field label={`Nb. ${pr.conditionnement_nom || 'carton'}s`} style={{ flex: '1 1 120px' }}>
+                        <Input type="text" inputMode="decimal" numeric value={nm.qteCartons} onChange={e => setNm({ ...nm, qteCartons: e.target.value })} />
+                      </Field>
+                      <Field label={`Nb. ${pr.unite || 'unité'}s`} style={{ flex: '1 1 120px' }}>
+                        <Input type="text" inputMode="decimal" numeric value={nm.qteUnites} onChange={e => setNm({ ...nm, qteUnites: e.target.value })} />
+                      </Field>
+                      <div style={{ flex: '1 1 140px', display: 'flex', alignItems: 'flex-end', paddingBottom: 6 }}>
+                        <Tag>= {total} {pr.unite || 'unité'}{total > 1 ? 's' : ''}</Tag>
+                      </div>
+                    </>
+                  )
+                })()}
                 <Field label="Date" style={{ flex: '1 1 160px' }}>
                   <Input type="date" value={nm.date_mouvement} max={today()} onChange={e => setNm({ ...nm, date_mouvement: e.target.value })} />
                 </Field>
               </div>
             )}
-            <Field label="Note (facultatif)">
-              <Input value={nm.note} onChange={e => setNm({ ...nm, note: e.target.value })} placeholder={action === 'entree' ? 'ex. bon de livraison n°…' : 'ex. casse, écart constaté…'} />
+            <Field label={action === 'correction' ? 'Motif (obligatoire)' : 'Note (facultatif)'}>
+              <Input value={nm.note} onChange={e => setNm({ ...nm, note: e.target.value })} placeholder={action === 'entree' ? 'ex. bon de livraison n°…' : action === 'correction' ? "ex. écart d'inventaire du 18/08/2026" : 'ex. casse, écart constaté…'} />
             </Field>
             <div style={{ display: 'flex', gap: 'var(--sp-3)' }}>
               <Button type="submit" tone="primary">Enregistrer</Button>

@@ -26,6 +26,22 @@ export const STOCK_MOVEMENT_TONES = {
   ajustement: 'warn',
 }
 
+// Vocabulaire métier de `stock_movements.source` (texte libre) → label + ton d'affichage.
+// `type` (ci-dessus) reste le seul champ qui pilote le signe +/- ; `source` précise juste
+// la raison, choisie par l'utilisateur, jamais un signe.
+export const STOCK_SOURCE_TONES = {
+  achat: { label: 'Achat / livraison', tone: 'ok' },
+  reception: { label: 'Réception commande', tone: 'ok' },
+  retour_client: { label: 'Retour client', tone: 'ok' },
+  vente: { label: 'Vente', tone: 'idle' },
+  casse: { label: 'Casse', tone: 'alarm' },
+  perte: { label: 'Perte', tone: 'alarm' },
+  consommation_interne: { label: 'Consommation interne', tone: 'warn' },
+  retour_fournisseur: { label: 'Retour fournisseur', tone: 'warn' },
+  inventaire: { label: 'Correction (inventaire)', tone: 'warn' },
+  correction_inventaire: { label: "Correction d'inventaire (motif)", tone: 'alarm' },
+}
+
 // Orders.jsx a 6 statuts ; Badge OCTANE expose exactement 6 tons (ok/warn/alarm/info/idle/accent) — mapping direct, un ton par statut.
 export const ORDER_STATUS_TONES = {
   proposee: { label: 'Proposée', tone: 'warn' },
