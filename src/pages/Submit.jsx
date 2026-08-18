@@ -22,6 +22,7 @@ import { MetricTile } from '../ds/octane/components/data/MetricTile.jsx'
 
 const N = (v) => (v === '' || v === null || v === undefined ? 0 : (numFR(v) ?? 0))
 const LUB_TYPES = ['5W30 1L','5W30 5L','20W50 5L','15W40 5L','80W90 1L','50 SAE 5L','Dexron 1L','Dot4 1L','10W40 5L','5W40 5L','Graisse','Liquide refroid.','Nettoyant injecteur','Nettoyant essence']
+  .map(nom => ({ nom, conditionnement_nom: null, conditionnement_qte: null, unite: 'bidon' }))
 const GAZ = [['3','3 kg'],['6','6 kg'],['12','12 kg'],['38','38 kg']]
 // Jusqu'à 10 machines par station (chacune : une pompe essence + une gasoil) — voir
 // stations.nombre_machines (Stations & équipe). Les colonnes au-delà du nombre réellement
@@ -53,6 +54,8 @@ export default function Submit() {
   const [showAll, setShowAll] = useState(!!params.get('date'))
   const [f, setF] = useState(EMPTY)
   const [lub, setLub] = useState({})
+  const [lubSplit, setLubSplit] = useState({})   // {nom: {cartons, unites}} — édition assistée carton/bidon, purement local
+  const [lubTheorique, setLubTheorique] = useState({})   // {nom: stock_theorique} — v_stock_theorique, pour l'écart en direct
   const [expenses, setExpenses] = useState([])
   const [deposits, setDeposits] = useState([])
   const [deliveries, setDeliveries] = useState([])
@@ -97,7 +100,8 @@ export default function Submit() {
 
   useEffect(() => { supabase.from('settings').select('*').eq('id', 1).maybeSingle().then(({ data }) => data && setSettings(data)) }, [])
   useEffect(() => { supabase.from('suppliers').select('id,nom,categorie').order('nom').then(({ data }) => setSuppliers(data || [])) }, [])
-  useEffect(() => { supabase.from('products').select('nom').eq('categorie', 'lubrifiant').eq('actif', true).order('ordre').then(({ data }) => { if (data && data.length) setLubTypes(data.map(x => x.nom)) }) }, [])
+  useEffect(() => { supabase.from('products').select('nom, unite, conditionnement_nom, conditionnement_qte').eq('categorie', 'lubrifiant').eq('actif', true).order('ordre').then(({ data }) => { if (data && data.length) setLubTypes(data) }) }, [])
+  useEffect(() => { if (!stationId) return; supabase.from('v_stock_theorique').select('produit, stock_theorique').eq('station_id', stationId).eq('categorie', 'lubrifiant').then(({ data }) => { const m = {}; (data || []).forEach(r => m[r.produit] = N(r.stock_theorique)); setLubTheorique(m) }) }, [stationId])
   useEffect(() => { if (stationId) load(date) }, [date, stationId])
 
   // Index compteur MATIN du dernier jour saisi avant `date` — sert de garde-fou
@@ -153,6 +157,7 @@ export default function Submit() {
       setF(c); setLub(r.data.lubrifiant_stock || {})
     }
     else { setF({ ...EMPTY, ess_pu: settings.essence_pv, gas_pu: settings.gasoil_pv }); setLub({}) }
+    setLubSplit({})
     setExpenses(ex.data || [])
     setDeposits(dep.data || [])
     setDeliveries(dl.data || [])
@@ -354,6 +359,18 @@ export default function Submit() {
       }
       const { error: e1 } = await supabase.from('daily_reports').upsert(payload, { onConflict: 'station_id,report_date' })
       if (e1) throw e1
+
+      // Fige théorique + écart au moment de la déclaration (sinon "écart initial" n'est plus
+      // reconstructible une fois que des mouvements de régularisation sont ajoutés ensuite).
+      if (moment === 'matin' || showAll) {
+        const snapRows = Object.keys(lub)
+          .filter(t => lub[t] != null && lubTheorique[t] != null)
+          .map(t => ({
+            station_id: sid, categorie: 'lubrifiant', produit: t, report_date: date,
+            stock_theorique_a_la_declaration: lubTheorique[t], stock_declare: N(lub[t]), ecart_initial: N(lub[t]) - lubTheorique[t],
+          }))
+        if (snapRows.length) await supabase.from('stock_declarations_snapshot').upsert(snapRows, { onConflict: 'station_id,categorie,produit,report_date' })
+      }
 
       await supabase.from('expenses').delete().eq('report_date', date).eq('station_id', sid)
       const exRows = []
@@ -637,14 +654,46 @@ export default function Submit() {
             </div>
           </FormSection>
           <FormSection title="Lubrifiants en stock" style={{ marginTop: 'var(--sp-4)' }}>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 'var(--sp-3)' }}>
-              {lubTypes.map(t => (
-                <div key={t} style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-3)' }}>
-                  <span style={{ flex: 1, font: '400 12px/1.2 var(--font-ui)', color: 'var(--text-body)' }}>{t}</span>
-                  <Input size="sm" type="text" inputMode="numeric" numeric value={lub[t] ?? ''} placeholder="0" style={{ width: 70 }}
-                    onChange={e => setLub(p => ({ ...p, [t]: e.target.value === '' ? undefined : Number(e.target.value) }))} />
-                </div>
-              ))}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 'var(--sp-4)' }}>
+              {lubTypes.map(pr => {
+                const t = pr.nom
+                const hasCondit = N(pr.conditionnement_qte) > 0
+                const th = lubTheorique[t]
+                const declare = N(lub[t])
+                const ecart = (th != null && lub[t] != null) ? declare - th : null
+                return (
+                  <div key={t} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-2)' }}>
+                    <span style={{ font: '400 12px/1.2 var(--font-ui)', color: 'var(--text-body)' }}>{t}</span>
+                    {!hasCondit ? (
+                      <Input size="sm" type="text" inputMode="numeric" numeric value={lub[t] ?? ''} placeholder="0" style={{ width: 90 }}
+                        onChange={e => setLub(p => ({ ...p, [t]: e.target.value === '' ? undefined : Number(e.target.value) }))} />
+                    ) : (() => {
+                      const split = lubSplit[t] || { cartons: '', unites: '' }
+                      const updateSplit = (patch) => {
+                        const next = { ...split, ...patch }
+                        setLubSplit(p => ({ ...p, [t]: next }))
+                        const total = N(next.cartons) * N(pr.conditionnement_qte) + N(next.unites)
+                        setLub(p => ({ ...p, [t]: total || undefined }))
+                      }
+                      return (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-2)' }}>
+                          <Input size="sm" type="text" inputMode="numeric" numeric value={split.cartons} placeholder="0" style={{ width: 55 }}
+                            onChange={e => updateSplit({ cartons: e.target.value })} />
+                          <span style={{ font: '400 10px/1 var(--font-ui)', color: 'var(--text-muted)' }}>{pr.conditionnement_nom || 'carton'}(s) +</span>
+                          <Input size="sm" type="text" inputMode="numeric" numeric value={split.unites} placeholder="0" style={{ width: 55 }}
+                            onChange={e => updateSplit({ unites: e.target.value })} />
+                          <span style={{ font: '400 10px/1 var(--font-ui)', color: 'var(--text-muted)' }}>{pr.unite || 'unité'}(s) = {declare}</span>
+                        </div>
+                      )
+                    })()}
+                    {ecart != null && (
+                      <span style={{ font: '400 10px/1.3 var(--font-ui)', color: Math.abs(ecart) < 0.5 ? 'var(--state-ok)' : 'var(--state-alarm)' }}>
+                        Théorique {th} — écart {ecart > 0 ? '+' : ''}{ecart}{Math.abs(ecart) >= 0.5 ? ' à justifier' : ''}
+                      </span>
+                    )}
+                  </div>
+                )
+              })}
             </div>
           </FormSection>
         </Panel>

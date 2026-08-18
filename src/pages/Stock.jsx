@@ -40,7 +40,12 @@ export default function Stock() {
   const [valeur, setValeur] = useState([])
   const [mvts, setMvts] = useState([])
   const [sorties, setSorties] = useState([])
+  const [theorique, setTheorique] = useState([])
+  const [snapshots, setSnapshots] = useState([])
   const [products, setProducts] = useState([])
+  const [openEcart, setOpenEcart] = useState(true)
+  const [openHistorique, setOpenHistorique] = useState(false)
+  const [histProduit, setHistProduit] = useState('')
   const [action, setAction] = useState(null)   // null | 'entree' | 'ajustement'
   const [nm, setNm] = useState(blank('entree'))
   const [fYear, setFYear] = useState('all'); const [fMonth, setFMonth] = useState('all')
@@ -51,6 +56,7 @@ export default function Stock() {
   const [msg, setMsg] = useState(''); const [err, setErr] = useState('')
   const toggleCat = (c) => setShowCats(p => p.includes(c) ? p.filter(x => x !== c) : [...p, c])
 
+  function openAction(action, overrides) { setNm({ ...blank(action), ...overrides }); setAction(action); setErr('') }
   function blank(action) {
     const base = { categorie: isVendeuse ? 'superette' : 'gaz', produit: '', quantite: '', qteCartons: '', qteUnites: '', valeur: '', note: '', date_mouvement: today() }
     if (action === 'sortie') return { ...base, type: 'sortie', source: 'casse' }
@@ -58,18 +64,20 @@ export default function Stock() {
     if (action === 'correction') return { ...base, type: 'ajustement', source: 'correction_inventaire' }
     return { ...base, type: 'entree', source: 'achat' }
   }
-  function openAction(action) { setNm(blank(action)); setAction(action); setErr('') }
 
   async function load() {
     if (!stationId) return
-    const [sp, sv, mv, so, pr] = await Promise.all([
+    const [sp, sv, mv, so, pr, th, sn] = await Promise.all([
       supabase.from('v_stock_produits').select('*').eq('station_id', stationId),
       supabase.from('v_stock_valeur').select('*').eq('station_id', stationId),
       supabase.from('stock_movements').select('*').eq('station_id', stationId).order('date_mouvement', { ascending: false }).limit(400),
       supabase.from('v_sorties_deduites').select('*').eq('station_id', stationId).order('report_date', { ascending: false }).limit(400),
       supabase.from('products').select('*').eq('actif', true).order('ordre'),
+      supabase.from('v_stock_theorique').select('*').eq('station_id', stationId),
+      supabase.from('stock_declarations_snapshot').select('*').eq('station_id', stationId).order('report_date', { ascending: false }).limit(200),
     ])
     setStock(sp.data || []); setValeur(sv.data || []); setMvts(mv.data || []); setSorties(so.data || []); setProducts(pr.data || [])
+    setTheorique(th.data || []); setSnapshots(sn.data || [])
   }
   useEffect(() => { load() }, [stationId])
   const flash = (m) => { setMsg(m); setErr(''); setTimeout(() => setMsg(''), 2500) }
@@ -133,6 +141,45 @@ export default function Stock() {
     }
     return o
   }, [sorties])
+
+  // Théorique vs déclaré (points 7-9 du cahier des charges lubrifiant) : le stock déclaré
+  // reste la référence affichée ailleurs (Stock restant) — ce panneau compare en plus au
+  // stock reconstruit depuis les mouvements, pour faire apparaître un écart à justifier.
+  const ecartRows = useMemo(() => theorique
+    .filter(t => t.categorie === 'lubrifiant')
+    .map(t => ({ ...t, ecart: N(t.stock_declare) - N(t.stock_theorique) })), [theorique])
+
+  const REGUL_SOURCES = ['casse', 'perte', 'consommation_interne', 'retour_fournisseur', 'retour_client', 'vente', 'correction_inventaire']
+  const histRows = useMemo(() => snapshots
+    .filter(s => s.categorie === 'lubrifiant' && (!histProduit || s.produit === histProduit))
+    .map(s => {
+      const regularisations = mvts.filter(m => m.categorie === s.categorie && m.produit === s.produit && m.date_mouvement === s.report_date && REGUL_SOURCES.includes(m.source)).length
+      const cur = theorique.find(t => t.categorie === s.categorie && t.produit === s.produit)
+      const isLatest = cur && cur.date_declare === s.report_date
+      return { ...s, id: s.id, regularisations, ecartFinal: isLatest ? N(cur.stock_declare) - N(cur.stock_theorique) : null }
+    }), [snapshots, mvts, theorique, histProduit])
+
+  const ecartColumns = [
+    { key: 'produit', header: 'Produit' },
+    { key: 'stock_declare', header: 'Déclaré', numeric: true, align: 'right', render: t => N(t.stock_declare) },
+    { key: 'stock_theorique', header: 'Théorique', numeric: true, align: 'right', muted: true, render: t => N(t.stock_theorique) },
+    { key: 'ecart', header: 'Écart', numeric: true, align: 'right', render: t => (
+      <span style={{ fontWeight: 600, color: Math.abs(t.ecart) < 0.5 ? 'var(--state-ok)' : 'var(--state-alarm)' }}>{t.ecart > 0 ? '+' : ''}{t.ecart}</span>
+    ) },
+    { key: 'actions', header: '', align: 'right', render: t => Math.abs(t.ecart) >= 0.5 && !isVendeuse ? (
+      <Button size="sm" tone="alarm" onClick={() => openAction('sortie', { categorie: 'lubrifiant', produit: t.produit })}>Expliquer l'écart</Button>
+    ) : null },
+  ]
+
+  const histColumns = [
+    { key: 'report_date', header: 'Date', render: s => frDate(s.report_date) },
+    { key: 'produit', header: 'Produit' },
+    { key: 'stock_theorique_a_la_declaration', header: 'Théorique', numeric: true, align: 'right', muted: true, render: s => N(s.stock_theorique_a_la_declaration) },
+    { key: 'stock_declare', header: 'Déclaré', numeric: true, align: 'right', render: s => N(s.stock_declare) },
+    { key: 'ecart_initial', header: 'Écart initial', numeric: true, align: 'right', render: s => <span style={{ color: Math.abs(N(s.ecart_initial)) < 0.5 ? 'var(--state-ok)' : 'var(--state-alarm)' }}>{N(s.ecart_initial) > 0 ? '+' : ''}{N(s.ecart_initial)}</span> },
+    { key: 'regularisations', header: 'Mvts régul.', numeric: true, align: 'right', muted: true, render: s => s.regularisations || '—' },
+    { key: 'ecartFinal', header: 'Écart final', numeric: true, align: 'right', render: s => s.ecartFinal == null ? <span style={{ color: 'var(--text-muted)' }}>figé</span> : <span style={{ fontWeight: 600, color: Math.abs(s.ecartFinal) < 0.5 ? 'var(--state-ok)' : 'var(--state-alarm)' }}>{s.ecartFinal > 0 ? '+' : ''}{s.ecartFinal}</span> },
+  ]
 
   const productColumns = (cat) => [
     { key: 'produit', header: 'Produit' },
@@ -309,6 +356,37 @@ export default function Stock() {
                   : <p style={{ font: '400 12px/1 var(--font-ui)', color: 'var(--text-muted)', margin: 0 }}>Aucun comptage encore.</p>}
               </div>
             ))}
+          </div>
+        </Panel>
+      )}
+
+      {/* ===== ÉCART THÉORIQUE / DÉCLARÉ (lubrifiant) — gérant/pompiste/admin ===== */}
+      {!isVendeuse && ecartRows.length > 0 && (
+        <Panel title="Lubrifiant — théorique vs déclaré" meta="mouvements depuis le dernier comptage" flush
+          bodyStyle={openEcart ? undefined : { display: 'none' }}
+          actions={<IconButton icon="chevron-down" size="sm" title={openEcart ? 'Masquer' : 'Afficher'}
+            onClick={() => setOpenEcart(v => !v)} style={{ transform: openEcart ? 'rotate(180deg)' : 'none' }} />}>
+          <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', margin: 'var(--sp-4) var(--gutter-panel) 0' }}>
+            Théorique = dernier stock déclaré + mouvements enregistrés depuis. Si l'écart n'est pas nul, cherche la cause (casse, perte…) avant de recourir à une correction d'inventaire.
+          </p>
+          <div style={{ marginTop: 'var(--sp-4)' }}>
+            <DataTable columns={ecartColumns} rows={ecartRows.map((r, i) => ({ ...r, id: i }))} />
+          </div>
+        </Panel>
+      )}
+
+      {/* ===== HISTORIQUE QUOTIDIEN (lubrifiant) — admin seulement, replié par défaut ===== */}
+      {isAdmin && snapshots.length > 0 && (
+        <Panel title="Historique quotidien (lubrifiant)" flush
+          bodyStyle={openHistorique ? undefined : { display: 'none' }}
+          actions={<IconButton icon="chevron-down" size="sm" title={openHistorique ? 'Masquer' : 'Afficher'}
+            onClick={() => setOpenHistorique(v => !v)} style={{ transform: openHistorique ? 'rotate(180deg)' : 'none' }} />}>
+          <div style={{ display: 'flex', gap: 'var(--sp-3)', padding: 'var(--gutter-panel)', paddingBottom: 0 }}>
+            <Select size="sm" value={histProduit} onChange={e => setHistProduit(e.target.value)}
+              options={[{ value: '', label: 'Tous les produits' }, ...products.filter(p => p.categorie === 'lubrifiant').map(p => ({ value: p.nom, label: p.nom }))]} />
+          </div>
+          <div style={{ marginTop: 'var(--sp-4)' }}>
+            {histRows.length ? <DataTable columns={histColumns} rows={histRows} /> : <PanelEmpty icon="calendar-days" label="Aucune déclaration figée pour l'instant" />}
           </div>
         </Panel>
       )}
