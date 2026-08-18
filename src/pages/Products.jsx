@@ -11,7 +11,7 @@ import { AlertBanner } from '../ds/octane/components/feedback/AlertBanner.jsx'
 import { DataTable } from '../ds/octane/components/data/DataTable.jsx'
 
 const CATS = ['gaz', 'lubrifiant', 'superette', 'autre']
-const UNITES = ['bouteille', 'bidon', 'carton', 'unité', 'litre', 'valeur']
+const UNITES = ['bouteille', 'bidon', 'carton', 'fût', 'unité', 'litre', 'valeur']
 const UNITE_OPTIONS = UNITES.map(u => ({ value: u, label: u }))
 const CAT_OPTIONS = CATS.map(c => ({ value: c, label: c }))
 
