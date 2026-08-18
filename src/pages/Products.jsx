@@ -37,7 +37,9 @@ export default function Products() {
   async function save(p) {
     const { error } = await supabase.from('products').update({
       nom: p.nom, unite: p.unite, prix_achat: numFR(p.prix_achat), prix_vente: numFR(p.prix_vente),
-      seuil: numFR(p.seuil) ?? 0, actif: p.actif, ordre: numFR(p.ordre) }).eq('id', p.id)
+      seuil: numFR(p.seuil) ?? 0, actif: p.actif, ordre: numFR(p.ordre),
+      unite_stock: p.unite_stock || null, conditionnement_nom: p.conditionnement_nom || null,
+      conditionnement_qte: numFR(p.conditionnement_qte) }).eq('id', p.id)
     error ? setErr(error.message) : flash('Enregistré')
   }
   async function del(id) { await supabase.from('products').delete().eq('id', id); load() }
@@ -72,6 +74,10 @@ export default function Products() {
   const columns = [
     { key: 'nom', header: 'Nom', render: p => <Input size="sm" value={p.nom || ''} onChange={e => up(p.id, 'nom', e.target.value)} /> },
     { key: 'unite', header: 'Unité', render: p => <Select size="sm" value={p.unite || 'unité'} onChange={e => up(p.id, 'unite', e.target.value)} options={UNITE_OPTIONS} style={{ width: '100%' }} /> },
+    ...(cat === 'lubrifiant' ? [
+      { key: 'conditionnement_nom', header: 'Conditionnement', render: p => <Input size="sm" value={p.conditionnement_nom || ''} onChange={e => up(p.id, 'conditionnement_nom', e.target.value)} placeholder="ex : carton" style={{ width: 100 }} /> },
+      { key: 'conditionnement_qte', header: 'Qté/condit.', align: 'right', render: p => <Input size="sm" numeric value={p.conditionnement_qte ?? ''} onChange={e => up(p.id, 'conditionnement_qte', e.target.value)} placeholder="ex : 12" style={{ width: 70 }} /> },
+    ] : []),
     { key: 'prix_achat', header: 'Prix achat', align: 'right', render: p => <Input size="sm" numeric value={p.prix_achat ?? ''} onChange={e => up(p.id, 'prix_achat', e.target.value)} style={{ width: 90 }} /> },
     { key: 'prix_vente', header: 'Prix vente', align: 'right', render: p => <Input size="sm" numeric value={p.prix_vente ?? ''} onChange={e => up(p.id, 'prix_vente', e.target.value)} style={{ width: 90 }} /> },
     { key: 'seuil', header: 'Seuil', align: 'right', render: p => <Input size="sm" numeric value={p.seuil ?? ''} onChange={e => up(p.id, 'seuil', e.target.value)} style={{ width: 70 }} /> },

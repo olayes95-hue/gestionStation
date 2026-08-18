@@ -21,27 +21,23 @@ const TABS = [
   { value: 'stations', label: 'Stations' },
   { value: 'equipe', label: 'Équipe' },
   { value: 'parametres', label: 'Paramètres' },
-  { value: 'lubrifiants', label: 'Lubrifiants' },
 ]
 
 export default function Stations() {
   const [stations, setStations] = useState([])
   const [users, setUsers] = useState([])
   const [settings, setSettings] = useState(null)
-  const [lubTypes, setLubTypes] = useState([])
-  const [newLub, setNewLub] = useState('')
   const [msg, setMsg] = useState(''); const [err, setErr] = useState('')
   const [newName, setNewName] = useState('')
   const [tab, setTab] = useState('stations')
 
   async function load() {
-    const [s, u, st, lt] = await Promise.all([
+    const [s, u, st] = await Promise.all([
       supabase.from('stations').select('*').order('id'),
       supabase.from('profiles').select('id, full_name, role, station_id').order('full_name'),
       supabase.from('settings').select('*').eq('id', 1).maybeSingle(),
-      supabase.from('lubrifiant_types').select('*').order('ordre'),
     ])
-    setStations(s.data || []); setUsers(u.data || []); setSettings(st.data || null); setLubTypes(lt.data || [])
+    setStations(s.data || []); setUsers(u.data || []); setSettings(st.data || null)
   }
   useEffect(() => { load() }, [])
 
@@ -86,10 +82,6 @@ export default function Stations() {
 
   const upS = (id, k, v) => setStations(p => p.map(s => s.id === id ? { ...s, [k]: v } : s))
   const upU = (id, k, v) => setUsers(p => p.map(u => u.id === id ? { ...u, [k]: v } : u))
-  const upL = (id, k, v) => setLubTypes(p => p.map(l => l.id === id ? { ...l, [k]: v } : l))
-  async function addLub(e) { e.preventDefault(); if (!newLub) return; const { error } = await supabase.from('lubrifiant_types').insert({ nom: newLub, ordre: (lubTypes.length + 1) * 10 }); error ? fail(error) : (setNewLub(''), load(), flash('Référence ajoutée')) }
-  async function saveLub(l) { const { error } = await supabase.from('lubrifiant_types').update({ nom: l.nom, actif: l.actif, ordre: num(l.ordre) }).eq('id', l.id); error ? fail(error) : flash('Référence enregistrée') }
-  async function delLub(id) { await supabase.from('lubrifiant_types').delete().eq('id', id); load() }
 
   const stationOptions = [{ value: '', label: '— toutes / aucune —' }, ...stations.map(s => ({ value: s.id, label: s.nom }))]
 
@@ -98,18 +90,6 @@ export default function Stations() {
     { key: 'role', header: 'Rôle', render: u => <Select size="sm" value={u.role} onChange={e => upU(u.id, 'role', e.target.value)} options={ROLE_OPTIONS} style={{ width: '100%' }} /> },
     { key: 'station_id', header: 'Station', render: u => <Select size="sm" value={u.station_id || ''} onChange={e => upU(u.id, 'station_id', e.target.value)} options={stationOptions} style={{ width: '100%' }} /> },
     { key: 'actions', header: '', align: 'right', render: u => <Button size="sm" tone="primary" onClick={() => saveUser(u)}>OK</Button> },
-  ]
-
-  const lubColumns = [
-    { key: 'nom', header: 'Nom', render: l => <Input size="sm" value={l.nom || ''} onChange={e => upL(l.id, 'nom', e.target.value)} /> },
-    { key: 'ordre', header: 'Ordre', align: 'right', render: l => <Input size="sm" numeric type="number" value={l.ordre ?? ''} onChange={e => upL(l.id, 'ordre', e.target.value)} style={{ width: 80 }} /> },
-    { key: 'actif', header: 'Actif', render: l => <Checkbox checked={!!l.actif} onChange={v => upL(l.id, 'actif', v)} /> },
-    { key: 'actions', header: '', align: 'right', render: l => (
-      <div style={{ display: 'flex', gap: 'var(--sp-2)', justifyContent: 'flex-end' }}>
-        <Button size="sm" tone="primary" onClick={() => saveLub(l)}>OK</Button>
-        <Button size="sm" tone="danger" onClick={() => delLub(l.id)}>Suppr.</Button>
-      </div>
-    ) },
   ]
 
   return (
@@ -165,21 +145,6 @@ export default function Stations() {
         <div style={{ marginTop: 'var(--sp-4)' }}>
           <DataTable columns={userColumns} rows={users} />
         </div>
-      </Panel>
-      )}
-
-      {tab === 'lubrifiants' && (
-      <Panel title="Références lubrifiant" flush>
-        <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', margin: 'var(--sp-4) var(--gutter-panel) 0' }}>
-          Ajoute, renomme, désactive ou supprime les références proposées à la saisie.
-        </p>
-        <div style={{ marginTop: 'var(--sp-4)' }}>
-          <DataTable columns={lubColumns} rows={lubTypes} />
-        </div>
-        <form onSubmit={addLub} style={{ display: 'flex', gap: 'var(--sp-3)', padding: 'var(--gutter-panel)', borderTop: '1px solid var(--border-hairline)' }}>
-          <Input value={newLub} onChange={e => setNewLub(e.target.value)} placeholder="Nouvelle référence (ex : 20W50 1L)" style={{ flex: 1 }} />
-          <Button type="submit" tone="primary">+ Ajouter</Button>
-        </form>
       </Panel>
       )}
 
