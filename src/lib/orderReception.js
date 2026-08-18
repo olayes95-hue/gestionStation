@@ -35,6 +35,21 @@ export function cumulStatus({ quantiteCommandee, deja, recuSaisi, tauxPerteAccep
   return { commande, cumul, seuil, perteNa, dansLaNorme: perteNa <= 0 }
 }
 
+// Calcule les champs de traçabilité conditionnement (carton/bidon → unité canonique) à partir
+// d'une saisie scindée, pour la réception d'une commande gaz/lubrifiant — utilisé par les deux
+// écrans de réception (OrderReception, Orders) pour rester identiques sur ce point aussi.
+export function packagingSplit({ pr, qteCartons, qteUnites }) {
+  const cartons = N(qteCartons), unites = N(qteUnites)
+  const total = cartons * N(pr.conditionnement_qte) + unites
+  const out = { quantite_recue: total ? String(total) : '', facteur_conversion: N(pr.conditionnement_qte) }
+  if (cartons && unites) {
+    out.unite_saisie = 'mixte'; out.qte_saisie = total
+    out.detail_saisie = `${cartons} ${pr.conditionnement_nom || 'carton'}${cartons > 1 ? 's' : ''} + ${unites} ${pr.unite || 'unité'}${unites > 1 ? 's' : ''}`
+  } else if (cartons) { out.unite_saisie = pr.conditionnement_nom || 'carton'; out.qte_saisie = cartons }
+  else { out.unite_saisie = pr.unite || 'unite'; out.qte_saisie = unites }
+  return out
+}
+
 // Valide + écrit en base une réception (partielle ou soldante). Lève une Error pour les
 // erreurs de saisie bloquantes ; renvoie { warnEcart } pour un écart à confirmer (non bloquant,
 // l'appelant réaffiche le formulaire avec la case « forcer ») ; renvoie { complet, total } au succès.
@@ -79,7 +94,13 @@ export async function receptionner({ supabase, bucket, stationId, session, order
     await supabase.from('fuel_orders').update({ statut: complet ? 'recue' : 'partielle', report_date: day, recu_by: session.user.id, recu_at: new Date().toISOString() }).eq('id', order.id)
     const mvt = { station_id: stationId, categorie: cat, type: 'entree', source: 'reception', ref: 'CMD#' + order.id, date_mouvement: day, created_by: session.user.id }
     if (cat === 'superette') mvt.valeur = N(order.montant_paiement)
-    else { mvt.produit = order.produit; mvt.quantite = recu }
+    else {
+      mvt.produit = order.produit; mvt.quantite = recu
+      if (recv.qte_saisie != null) mvt.qte_saisie = recv.qte_saisie
+      if (recv.unite_saisie) mvt.unite_saisie = recv.unite_saisie
+      if (recv.facteur_conversion != null) mvt.facteur_conversion = recv.facteur_conversion
+      if (recv.detail_saisie) mvt.detail_saisie = recv.detail_saisie
+    }
     await supabase.from('stock_movements').insert(mvt)
   }
   if (photo_path) await supabase.from('attachments').insert({ station_id: stationId, report_date: day, categorie: 'reception', note: `${order.produit || cat} — reçu ${recu} / ${N(order.quantite_commandee)}`, photo_path, created_by: session.user.id })

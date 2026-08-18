@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { supabase, BORDEREAUX_BUCKET } from '../lib/supabase'
 import { useAuth } from '../lib/auth.jsx'
 import { today } from '../lib/format'
-import { N, receptionner as receptionnerCommande, cumulStatus } from '../lib/orderReception'
+import { N, receptionner as receptionnerCommande, cumulStatus, packagingSplit } from '../lib/orderReception'
 import { ORDER_STATUS_TONES } from '../lib/tones'
 import { Panel } from '../ds/octane/components/core/Panel.jsx'
 import { Button } from '../ds/octane/components/core/Button.jsx'
@@ -23,18 +23,21 @@ export default function OrderReception({ stationId, date, settings = {}, onDone,
   const { session } = useAuth()
   const [orders, setOrders] = useState([])
   const [totals, setTotals] = useState({})
+  const [products, setProducts] = useState([])
   const [recv, setRecv] = useState({})
   const [err, setErr] = useState(''); const [msg, setMsg] = useState('')
   const [matinWarn, setMatinWarn] = useState('')
 
   async function load() {
     if (!stationId) return
-    const [o, rt] = await Promise.all([
+    const [o, rt, pr] = await Promise.all([
       supabase.from('fuel_orders').select('*').eq('station_id', stationId).in('statut', ['lancee', 'partielle']).order('created_at'),
       supabase.from('v_order_reception').select('*').eq('station_id', stationId),
+      supabase.from('products').select('categorie, nom, unite, conditionnement_nom, conditionnement_qte').eq('actif', true),
     ])
     setOrders(o.data || [])
     const m = {}; for (const x of (rt.data || [])) m[x.order_id] = x; setTotals(m)
+    setProducts(pr.data || [])
   }
   useEffect(() => { load() }, [stationId])
 
@@ -84,9 +87,29 @@ export default function OrderReception({ stationId, date, settings = {}, onDone,
               {!r
                 ? <Button size="sm" style={{ marginTop: 'var(--sp-3)' }} onClick={() => setRecv(p => ({ ...p, [o.id]: { cuve_avant: '', cuve_apres: '', date: date || today(), quantite_recue: reste ? String(reste) : '' } }))}>Réceptionner{deja > 0 ? ' (suite)' : ''}</Button>
                 : <div style={{ marginTop: 'var(--sp-3)', display: 'flex', flexDirection: 'column', gap: 'var(--sp-3)' }}>
-                    <Field label="Quantité reçue cette fois *">
-                      <Input type="text" inputMode="decimal" numeric value={r.quantite_recue || ''} onChange={e => setRecv(p => ({ ...p, [o.id]: { ...r, quantite_recue: e.target.value } }))} />
-                    </Field>
+                    {(() => {
+                      const pr = products.find(p => p.categorie === cat && p.nom === o.produit)
+                      const hasCondit = pr && N(pr.conditionnement_qte) > 0
+                      if (!hasCondit) return (
+                        <Field label="Quantité reçue cette fois *">
+                          <Input type="text" inputMode="decimal" numeric value={r.quantite_recue || ''} onChange={e => setRecv(p => ({ ...p, [o.id]: { ...r, quantite_recue: e.target.value } }))} />
+                        </Field>
+                      )
+                      const updateSplit = (patch) => {
+                        const next = { ...r, ...patch }
+                        setRecv(p => ({ ...p, [o.id]: { ...next, ...packagingSplit({ pr, qteCartons: next.qteCartons, qteUnites: next.qteUnites }) } }))
+                      }
+                      return (
+                        <Field label="Quantité reçue cette fois *">
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-2)' }}>
+                            <Input size="sm" type="text" inputMode="numeric" numeric value={r.qteCartons || ''} placeholder="0" style={{ width: 60 }} onChange={e => updateSplit({ qteCartons: e.target.value })} />
+                            <span style={{ font: '400 11px/1 var(--font-ui)', color: 'var(--text-muted)' }}>{pr.conditionnement_nom || 'carton'}(s) +</span>
+                            <Input size="sm" type="text" inputMode="numeric" numeric value={r.qteUnites || ''} placeholder="0" style={{ width: 60 }} onChange={e => updateSplit({ qteUnites: e.target.value })} />
+                            <span style={{ font: '400 11px/1 var(--font-ui)', color: 'var(--text-muted)' }}>{pr.unite || 'unité'}(s) = {r.quantite_recue || 0}</span>
+                          </div>
+                        </Field>
+                      )
+                    })()}
                     {cat === 'carburant' && <div style={{ display: 'flex', gap: 'var(--sp-3)' }}>
                       <Field label="Cuve AVANT (L)"><Input type="text" inputMode="decimal" numeric value={r.cuve_avant} onChange={e => setRecv(p => ({ ...p, [o.id]: { ...r, cuve_avant: e.target.value } }))} /></Field>
                       <Field label="Cuve APRÈS (L)"><Input type="text" inputMode="decimal" numeric value={r.cuve_apres} onChange={e => setRecv(p => ({ ...p, [o.id]: { ...r, cuve_apres: e.target.value } }))} /></Field>

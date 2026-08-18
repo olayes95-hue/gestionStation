@@ -4,7 +4,7 @@ import { useAuth } from '../lib/auth.jsx'
 import { useStation } from '../lib/station.jsx'
 import { fcfa, frDate, numFR, today } from '../lib/format'
 import { ORDER_STATUS_TONES } from '../lib/tones'
-import { N, receptionner as receptionnerCommande, cumulStatus } from '../lib/orderReception'
+import { N, receptionner as receptionnerCommande, cumulStatus, packagingSplit } from '../lib/orderReception'
 import { Panel } from '../ds/octane/components/core/Panel.jsx'
 import { Button } from '../ds/octane/components/core/Button.jsx'
 import { Badge } from '../ds/octane/components/core/Badge.jsx'
@@ -478,7 +478,28 @@ export default function Orders() {
               {(o.statut === 'lancee' || o.statut === 'partielle') && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-3)' }}>
                   <div style={{ font: 'var(--fw-semibold) 11px/1 var(--font-ui)', textTransform: 'uppercase', letterSpacing: 'var(--ls-label)', color: 'var(--text-muted)' }}>Réceptionner</div>
-                  <Field label="Qté reçue *"><Input type="text" inputMode="decimal" numeric value={r?.quantite_recue ?? (reste ? String(reste) : '')} onChange={e => setRecv(p => ({ ...p, [o.id]: { ...(p[o.id] || { cuve_avant: '', cuve_apres: '', date: today() }), quantite_recue: e.target.value } }))} /></Field>
+                  {(() => {
+                    const pr = products.find(p => p.categorie === cat && p.nom === o.produit)
+                    const hasCondit = pr && N(pr.conditionnement_qte) > 0
+                    if (!hasCondit) return (
+                      <Field label="Qté reçue *"><Input type="text" inputMode="decimal" numeric value={r?.quantite_recue ?? (reste ? String(reste) : '')} onChange={e => setRecv(p => ({ ...p, [o.id]: { ...(p[o.id] || { cuve_avant: '', cuve_apres: '', date: today() }), quantite_recue: e.target.value } }))} /></Field>
+                    )
+                    const updateSplit = (patch) => {
+                      const base = r || { cuve_avant: '', cuve_apres: '', date: today() }
+                      const next = { ...base, ...patch }
+                      setRecv(p => ({ ...p, [o.id]: { ...next, ...packagingSplit({ pr, qteCartons: next.qteCartons, qteUnites: next.qteUnites }) } }))
+                    }
+                    return (
+                      <Field label="Qté reçue *">
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-2)' }}>
+                          <Input size="sm" type="text" inputMode="numeric" numeric value={r?.qteCartons || ''} placeholder="0" style={{ width: 60 }} onChange={e => updateSplit({ qteCartons: e.target.value })} />
+                          <span style={{ font: '400 11px/1 var(--font-ui)', color: 'var(--text-muted)' }}>{pr.conditionnement_nom || 'carton'}(s) +</span>
+                          <Input size="sm" type="text" inputMode="numeric" numeric value={r?.qteUnites || ''} placeholder="0" style={{ width: 60 }} onChange={e => updateSplit({ qteUnites: e.target.value })} />
+                          <span style={{ font: '400 11px/1 var(--font-ui)', color: 'var(--text-muted)' }}>{pr.unite || 'unité'}(s) = {r?.quantite_recue || 0}</span>
+                        </div>
+                      </Field>
+                    )
+                  })()}
                   {cat === 'carburant' && <div style={{ display: 'flex', gap: 'var(--sp-3)' }}>
                     <Field label="Cuve avant"><Input type="text" inputMode="decimal" numeric value={r?.cuve_avant ?? ''} onChange={e => setRecv(p => ({ ...p, [o.id]: { ...(p[o.id] || {}), cuve_avant: e.target.value } }))} /></Field>
                     <Field label="Cuve après"><Input type="text" inputMode="decimal" numeric value={r?.cuve_apres ?? ''} onChange={e => setRecv(p => ({ ...p, [o.id]: { ...(p[o.id] || {}), cuve_apres: e.target.value } }))} /></Field>
