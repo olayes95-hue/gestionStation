@@ -10,13 +10,24 @@ const DECONNEXION_DEFAUT_HEURES = 24
 export function AuthProvider({ children }) {
   const [session, setSession] = useState(null)
   const [profile, setProfile] = useState(null)
+  const [permissions, setPermissions] = useState(new Set())
+  const [roleLabel, setRoleLabel] = useState('')
   const [loading, setLoading] = useState(true)
   const [deconnexionHeures, setDeconnexionHeures] = useState(DECONNEXION_DEFAUT_HEURES)
 
   async function loadProfile(userId) {
-    if (!userId) { setProfile(null); return }
+    if (!userId) { setProfile(null); setPermissions(new Set()); return }
     const { data } = await supabase.from('profiles').select('*').eq('id', userId).single()
     setProfile(data || null)
+    // L'admin n'a jamais de ligne dans role_permissions (son accès passe toujours par
+    // is_admin() côté RLS / isAdmin côté front, jamais par la matrice) — inutile de la
+    // charger pour lui, et ça évite qu'une matrice mal configurée le concerne un jour.
+    if (data && data.role !== 'admin') {
+      const { data: rp } = await supabase.from('role_permissions').select('permission_key').eq('role_key', data.role)
+      setPermissions(new Set((rp || []).map(r => r.permission_key)))
+    } else {
+      setPermissions(new Set())
+    }
   }
 
   useEffect(() => {
@@ -40,6 +51,14 @@ export function AuthProvider({ children }) {
     })
     return () => { clearTimeout(timeout); sub.subscription.unsubscribe() }
   }, [])
+
+  // Libellé du rôle affiché dans la barre du haut — lu depuis la table roles (plutôt que
+  // codé en dur) pour que les futurs rôles créés depuis l'écran Rôles s'affichent correctement.
+  useEffect(() => {
+    if (!profile?.role) { setRoleLabel(''); return }
+    supabase.from('roles').select('label').eq('key', profile.role).maybeSingle()
+      .then(({ data }) => setRoleLabel(data?.label || profile.role))
+  }, [profile?.role])
 
   // Seuil de déconnexion auto, réglable par l'admin (Stations & équipe) — utile sur les
   // téléphones partagés en station, pour ne pas rester connecté indéfiniment.
@@ -70,9 +89,13 @@ export function AuthProvider({ children }) {
     profile,
     loading,
     role: profile?.role,
+    roleLabel,
     isAdmin: profile?.role === 'admin',
     isPompiste: profile?.role === 'pompiste',
     isVendeuse: profile?.role === 'vendeuse',
+    // Raccourci en dur, indépendant de la matrice — ne peut jamais être cassé par une
+    // mauvaise manipulation dans l'écran Rôles (voir garde-fous du RBAC).
+    can: (key) => profile?.role === 'admin' || permissions.has(key),
     signIn: (email, password) => supabase.auth.signInWithPassword({ email, password }),
     signUp: (email, password, full_name) =>
       supabase.auth.signUp({ email, password, options: { data: { full_name } } }),

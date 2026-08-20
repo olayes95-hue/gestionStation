@@ -36,7 +36,7 @@ const ML = { '01':'Janv','02':'Févr','03':'Mars','04':'Avril','05':'Mai','06':'
 const blankCharge = () => ({ categorie: 'LOYER', montant: '', note: '', statut: 'a_payer', date_paiement: '', code_comptable: '', _file: null })
 
 export default function Finance() {
-  const { session } = useAuth()
+  const { session, can } = useAuth()
   const { stationId } = useStation()
   const [ventes, setVentes] = useState([])
   const [charges, setCharges] = useState([])
@@ -402,12 +402,12 @@ export default function Finance() {
     { key: 'statut', header: 'Statut', render: c => c.categorie === REVENU_CAT ? '—' : (
       <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-2)' }}>
         <Badge tone={c.statut === 'paye' ? 'ok' : 'idle'}>{c.statut === 'paye' ? `Payé${c.date_paiement ? ' ' + frDate(c.date_paiement) : ''}` : 'À payer'}</Badge>
-        <Button size="sm" onClick={() => togglePaye(c)} disabled={locked.has(c.mois)}>{c.statut === 'paye' ? 'Marquer à payer' : 'Marquer payé'}</Button>
+        {can('manage_finance') && <Button size="sm" onClick={() => togglePaye(c)} disabled={locked.has(c.mois)}>{c.statut === 'paye' ? 'Marquer à payer' : 'Marquer payé'}</Button>}
       </div>) },
     { key: 'photo', header: 'Justif.', render: c => c.photo_path ? <a href={photoUrl(c.photo_path)} target="_blank" rel="noreferrer">Voir</a> : <span style={{ color: 'var(--text-muted)' }}>—</span> },
     { key: 'par', header: 'Saisi par', muted: true, render: c => <span title={c.created_at ? frDate(c.created_at) : ''}>{profiles[c.created_by] || '—'}</span> },
     { key: 'montant', header: 'Montant', numeric: true, align: 'right', render: c => <span style={{ color: c.categorie === REVENU_CAT ? 'var(--state-ok)' : 'inherit' }}>{fcfa(c.montant)}</span> },
-    { key: 'actions', header: '', align: 'right', render: c => <Button size="sm" tone="danger" onClick={() => delCharge(c)} disabled={locked.has(c.mois)}>Suppr.</Button> },
+    { key: 'actions', header: '', align: 'right', render: c => can('manage_finance') && <Button size="sm" tone="danger" onClick={() => delCharge(c)} disabled={locked.has(c.mois)}>Suppr.</Button> },
   ]
 
   // Compte de résultat annuel ventilé par mois — pivot type "grand livre", lourd (12 × tout
@@ -512,7 +512,7 @@ export default function Finance() {
       <Panel title="Point financier" bodyStyle={{ display: 'none' }} actions={<>
         <Select size="sm" value={annee} onChange={e => { setAnnee(e.target.value); setMois('') }} options={anneeOptions} />
         <Select size="sm" value={mois} onChange={e => setMois(e.target.value)} options={moisOptions} />
-        {mois && <Button size="sm" tone={isLocked ? 'danger' : 'outline'} onClick={toggleLock}>{isLocked ? 'Déverrouiller le mois' : 'Verrouiller le mois'}</Button>}
+        {mois && can('manage_finance') && <Button size="sm" tone={isLocked ? 'danger' : 'outline'} onClick={toggleLock}>{isLocked ? 'Déverrouiller le mois' : 'Verrouiller le mois'}</Button>}
       </>} />
 
       {isLocked && (
@@ -594,7 +594,7 @@ export default function Finance() {
 
       <Panel title="Rapprochement des bons" meta={mois || annee}
         status={bonsEcart != null ? (Math.abs(bonsEcart) > 0.5 ? 'alarm' : 'ok') : undefined}
-        actions={mois && <Button size="sm" onClick={openBonReconForm}>{bonRecon ? 'Modifier' : 'Renseigner'} le relevé direction</Button>}>
+        actions={mois && can('manage_finance') && <Button size="sm" onClick={openBonReconForm}>{bonRecon ? 'Modifier' : 'Renseigner'} le relevé direction</Button>}>
         <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', marginTop: 0 }}>
           Les ventes à bon sont déclarées au jour le jour par le gérant, sans preuve ni recoupement interne — c'est le seul montant qui confronte cette déclaration à une source externe (le relevé mensuel de la direction).
         </p>
@@ -624,7 +624,7 @@ export default function Finance() {
 
       {tab === 'tresorerie' && <>
       <Panel title="Compte bancaire" meta={soldeBanque ? `depuis ${frDate(soldeBanque.date_solde)}` : undefined}
-        actions={<Button size="sm" onClick={openSoldeBanqueForm}>{soldeBanque ? 'Modifier' : 'Définir'} le solde initial</Button>}>
+        actions={can('manage_finance') && <Button size="sm" onClick={openSoldeBanqueForm}>{soldeBanque ? 'Modifier' : 'Définir'} le solde initial</Button>}>
         <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', marginTop: 0 }}>
           Suivi du compte, calculé depuis un solde initial : + dépôts (déjà saisis dans les versements) − chèques de commandes − frais bancaires + virements reçus (remboursement des bons).
         </p>
@@ -651,7 +651,7 @@ export default function Finance() {
             <Kpi label="Virements bons reçus" value={fcfa(N(compteBancaire?.total_virements))} />
             <Kpi label="Frais bancaires" value={fcfa(N(compteBancaire?.total_frais))} />
           </div>
-          <form onSubmit={addMouvementBanque} style={{ display: 'flex', gap: 'var(--sp-4)', flexWrap: 'wrap', alignItems: 'end', marginBottom: 'var(--sp-4)' }}>
+          {can('manage_finance') && <form onSubmit={addMouvementBanque} style={{ display: 'flex', gap: 'var(--sp-4)', flexWrap: 'wrap', alignItems: 'end', marginBottom: 'var(--sp-4)' }}>
             <Field label="Type" style={{ flex: '1 1 180px' }}>
               <Select value={nm.type} onChange={e => setNm({ ...nm, type: e.target.value })} style={{ width: '100%' }}
                 options={[{ value: 'virement_bons', label: 'Virement reçu (bons)' }, { value: 'frais_bancaire', label: 'Frais bancaire' }]} />
@@ -669,7 +669,7 @@ export default function Finance() {
               <EvidenceUpload label={nm._file ? nm._file.name : 'Déposer la photo'} multiple={false} onFiles={files => setNm({ ...nm, _file: files[0] })} />
             </Field>
             <Button type="submit" tone="primary" size="sm">Ajouter</Button>
-          </form>
+          </form>}
           {mouvementsBanque.length > 0 && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-2)' }}>
               {mouvementsBanque.map(m => (
@@ -681,7 +681,7 @@ export default function Finance() {
                   <span style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-3)' }}>
                     <b style={{ color: m.type === 'virement_bons' ? 'var(--state-ok)' : 'var(--state-alarm)' }}>{m.type === 'virement_bons' ? '+' : '−'}{fcfa(m.montant)}</b>
                     {m.photo_path && <a href={photoUrl(m.photo_path)} target="_blank" rel="noreferrer">Photo</a>}
-                    <Button size="sm" tone="danger" onClick={() => delMouvementBanque(m)}>Suppr.</Button>
+                    {can('manage_finance') && <Button size="sm" tone="danger" onClick={() => delMouvementBanque(m)}>Suppr.</Button>}
                   </span>
                 </div>
               ))}
@@ -691,7 +691,7 @@ export default function Finance() {
       </Panel>
 
       <Panel title="Bilan simplifié" meta={`au ${periodeFinBilan || '—'}`}
-        actions={<Button size="sm" onClick={openOuvertureForm}>{ouverture ? "Modifier le solde d'ouverture" : "Définir le solde d'ouverture"}</Button>}>
+        actions={can('manage_finance') && <Button size="sm" onClick={openOuvertureForm}>{ouverture ? "Modifier le solde d'ouverture" : "Définir le solde d'ouverture"}</Button>}>
         <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', marginTop: 0 }}>
           Ce que la station possède / doit, cumulé {ouvertureMoisDebut ? `depuis ${ouvertureMoisDebut} (solde d'ouverture — les mois antérieurs sont exclus)` : 'depuis le début des données'} jusqu'à la fin de la période — pas un flux du mois comme le compte de résultat ci-dessus.
         </p>
@@ -746,8 +746,8 @@ export default function Finance() {
       <Panel title="Charges fixes" meta={mois || undefined} flush
         actions={chP.length > 0 && <Button size="sm" onClick={exportChargesFixes}>Exporter (CSV)</Button>}>
         <div style={{ padding: 'var(--gutter-panel)', display: 'flex', flexDirection: 'column', gap: 'var(--sp-4)' }}>
-          {!mois && <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', margin: 0 }}>Sélectionne un <b>mois précis</b> pour saisir/reporter les charges.</p>}
-          {mois && !isLocked && <>
+          {!mois && can('manage_finance') && <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', margin: 0 }}>Sélectionne un <b>mois précis</b> pour saisir/reporter les charges.</p>}
+          {mois && !isLocked && can('manage_finance') && <>
             <Button size="sm" onClick={reporterMoisPrecedent} style={{ alignSelf: 'flex-start' }}>Reporter le mois précédent</Button>
             <form onSubmit={addCharge} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-4)' }}>
               <div style={{ display: 'flex', gap: 'var(--sp-4)', flexWrap: 'wrap' }}>

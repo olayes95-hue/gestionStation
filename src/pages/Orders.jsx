@@ -26,7 +26,7 @@ const carbRows = () => [{ produit: 'essence', qte: '', bons: '', cheque: '', ref
 const blankNf = () => ({ categorie: 'carburant', mode_paiement: 'cheque', rows: carbRows(), lignes: [{ article: '', qte: '' }], montant_paiement: '', date_proposition: today(), note: '' })
 
 export default function Orders() {
-  const { session, isAdmin, isPompiste } = useAuth()
+  const { session, isAdmin, isPompiste, can } = useAuth()
   const { stationId } = useStation()
   const [orders, setOrders] = useState([])
   const [products, setProducts] = useState([])
@@ -263,11 +263,11 @@ export default function Orders() {
         </div>
       )}
 
-      {!isPompiste && !showPropose && (
+      {can('manage_orders') && !showPropose && (
         <Button tone="primary" onClick={() => setShowPropose(true)} style={{ alignSelf: 'flex-start' }}>+ Proposer une nouvelle commande</Button>
       )}
 
-      {!isPompiste && showPropose && (
+      {can('manage_orders') && showPropose && (
         <Panel title="Proposer une commande" actions={<Button size="sm" onClick={() => setShowPropose(false)}>Fermer</Button>}>
           <form onSubmit={propose} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-4)' }}>
             <div style={{ display: 'flex', gap: 'var(--sp-4)', flexWrap: 'wrap' }}>
@@ -460,22 +460,22 @@ export default function Orders() {
                 </div>
               )}
 
-              {o.statut === 'proposee' && isAdmin && (
+              {o.statut === 'proposee' && (can('validate_orders') || can('manage_orders')) && (
                 <div style={{ display: 'flex', gap: 'var(--sp-3)' }}>
                   <Button tone="primary" onClick={() => { valider(o); setDetailId(null) }}>Valider</Button>
                   <Button tone="danger" onClick={() => { refuser(o); setDetailId(null) }}>Refuser</Button>
                 </div>
               )}
-              {o.statut === 'proposee' && !isAdmin && <AlertBanner tone="info" title="En attente">En attente de validation par l'administrateur.</AlertBanner>}
+              {o.statut === 'proposee' && !can('validate_orders') && !can('manage_orders') && <AlertBanner tone="info" title="En attente">En attente de validation par l'administrateur.</AlertBanner>}
 
-              {o.statut === 'validee' && (
+              {o.statut === 'validee' && can('manage_orders') && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-3)' }}>
                   <Field label="Date de lancement"><Input type="date" value={launch[o.id] || today()} max={today()} onChange={e => setLaunch(p => ({ ...p, [o.id]: e.target.value }))} /></Field>
                   <Button tone="primary" onClick={() => { lancer(o); setDetailId(null) }} style={{ alignSelf: 'flex-start' }}>Lancer la commande</Button>
                 </div>
               )}
 
-              {(o.statut === 'lancee' || o.statut === 'partielle') && (
+              {(o.statut === 'lancee' || o.statut === 'partielle') && can('manage_orders') && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-3)' }}>
                   <div style={{ font: 'var(--fw-semibold) 11px/1 var(--font-ui)', textTransform: 'uppercase', letterSpacing: 'var(--ls-label)', color: 'var(--text-muted)' }}>Réceptionner</div>
                   {(() => {

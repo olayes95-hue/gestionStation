@@ -31,8 +31,8 @@ const Aide = lazy(() => import('./pages/Aide.jsx'))
 const Journal = lazy(() => import('./pages/Journal.jsx'))
 
 function StationPicker() {
-  const { stations, stationId, setStationId, isAdmin, current } = useStation()
-  if (!isAdmin) return <Tag><Icon name="map-pin" size={11} /> {current?.nom || 'Ma station'}</Tag>
+  const { stations, stationId, setStationId, current } = useStation()
+  if (stations.length <= 1) return <Tag><Icon name="map-pin" size={11} /> {current?.nom || 'Ma station'}</Tag>
   return (
     <Select size="sm" value={stationId || ''} onChange={e => setStationId(Number(e.target.value))}
       options={stations.map(s => ({ value: s.id, label: s.nom }))} />
@@ -40,35 +40,45 @@ function StationPicker() {
 }
 
 function Shell({ children }) {
-  const { profile, isAdmin, isPompiste, isVendeuse, signOut } = useAuth()
+  const { profile, roleLabel, isAdmin, isPompiste, isVendeuse, can, signOut } = useAuth()
   const nav = useNavigate()
   const [open, setOpen] = useState(false)
   const close = () => setOpen(false)
-  const roleLabel = isAdmin ? 'Administrateur' : isPompiste ? 'Pompiste' : 'Gérant'
+
+  // Rôles historiques (gérant/pompiste/vendeuse/admin) gardent l'accès opérationnel qu'ils
+  // ont toujours eu ; tout autre rôle (directeur/comptable, ou un futur rôle créé depuis
+  // l'écran Rôles) ne le reçoit que via la permission manage_orders — pas de Saisie du jour /
+  // Stock / Journal / Contrôles pour un profil purement analytique ou financier.
+  const hasOperationalAccess = isAdmin || profile?.role === 'gerant' || isPompiste || isVendeuse || can('manage_orders')
+
+  const pilotage = [
+    can('view_dashboard') && { to: '/tableau', icon: 'layout-dashboard', label: 'Tableau de bord' },
+    can('view_history') && { to: '/historique', icon: 'calendar-days', label: 'Historique' },
+    can('view_alerts') && { to: '/alertes', icon: 'bell', label: 'Alertes' },
+  ].filter(Boolean)
+  const finance = [
+    can('view_finance') && { to: '/finance', icon: 'chart-column', label: 'Point financier' },
+    can('view_bank_recon') && { to: '/rapprochement', icon: 'landmark', label: 'Rapprochement' },
+    can('view_ocr_check') && { to: '/verif-photos', icon: 'camera', label: 'Vérif bordereaux' },
+  ].filter(Boolean)
+  const administration = [
+    can('view_audit_log') && { to: '/audit', icon: 'search', label: "Journal d'audit" },
+    can('manage_products') && { to: '/produits', icon: 'book-open', label: 'Produits & prix' },
+    can('manage_suppliers') && { to: '/fournisseurs', icon: 'factory', label: 'Fournisseurs' },
+    (can('manage_stations_config') || can('manage_team')) && { to: '/stations', icon: 'building-2', label: 'Stations & équipe' },
+  ].filter(Boolean)
 
   const items = [
     { section: 'Exploitation' },
-    ...(!isVendeuse && !isPompiste ? [{ to: '/journal', icon: 'clipboard-list', label: 'Journal de bord' }] : []),
-    { to: '/saisie', icon: 'file-pen-line', label: isVendeuse ? 'Saisie supérette' : 'Saisie du jour' },
+    ...(hasOperationalAccess ? [{ to: '/journal', icon: 'clipboard-list', label: 'Journal de bord' }] : []),
+    ...(hasOperationalAccess ? [{ to: '/saisie', icon: 'file-pen-line', label: isVendeuse ? 'Saisie supérette' : 'Saisie du jour' }] : []),
     { to: '/aide', icon: 'circle-question-mark', label: 'Aide' },
-    { to: '/stock', icon: isVendeuse ? 'shopping-cart' : 'package', label: isVendeuse ? 'Supérette' : 'Stock & mouvements' },
-    ...(!isVendeuse && !isPompiste ? [{ to: '/commandes', icon: 'truck', label: 'Commandes' }] : []),
-    ...(!isPompiste && !isVendeuse ? [{ to: '/controles', icon: 'shield-check', label: 'Contrôles ANM' }] : []),
-    ...(isAdmin ? [
-      { section: 'Pilotage' },
-      { to: '/tableau', icon: 'layout-dashboard', label: 'Tableau de bord' },
-      { to: '/historique', icon: 'calendar-days', label: 'Historique' },
-      { to: '/alertes', icon: 'bell', label: 'Alertes' },
-      { section: 'Finance' },
-      { to: '/finance', icon: 'chart-column', label: 'Point financier' },
-      { to: '/rapprochement', icon: 'landmark', label: 'Rapprochement' },
-      { to: '/verif-photos', icon: 'camera', label: 'Vérif bordereaux' },
-      { section: 'Administration' },
-      { to: '/audit', icon: 'search', label: "Journal d'audit" },
-      { to: '/produits', icon: 'book-open', label: 'Produits & prix' },
-      { to: '/fournisseurs', icon: 'factory', label: 'Fournisseurs' },
-      { to: '/stations', icon: 'building-2', label: 'Stations & équipe' },
-    ] : []),
+    ...(hasOperationalAccess ? [{ to: '/stock', icon: isVendeuse ? 'shopping-cart' : 'package', label: isVendeuse ? 'Supérette' : 'Stock & mouvements' }] : []),
+    ...((hasOperationalAccess || can('validate_orders')) ? [{ to: '/commandes', icon: 'truck', label: 'Commandes' }] : []),
+    ...(hasOperationalAccess ? [{ to: '/controles', icon: 'shield-check', label: 'Contrôles ANM' }] : []),
+    ...(pilotage.length ? [{ section: 'Pilotage' }, ...pilotage] : []),
+    ...(finance.length ? [{ section: 'Finance' }, ...finance] : []),
+    ...(administration.length ? [{ section: 'Administration' }, ...administration] : []),
   ]
 
   return (
@@ -99,32 +109,46 @@ function Shell({ children }) {
 }
 
 export default function App() {
-  const { session, loading, isAdmin, isVendeuse, isPompiste } = useAuth()
+  const { session, loading, profile, isAdmin, isVendeuse, isPompiste, can } = useAuth()
   if (loading) return <div className="center">Chargement…</div>
   if (!session) return <Login />
+
+  const hasOperationalAccess = isAdmin || profile?.role === 'gerant' || isPompiste || isVendeuse || can('manage_orders')
+  const opRoute = (el) => hasOperationalAccess ? el : <Navigate to={defaultRoute()} />
+  // Première page visible dans l'ordre de priorité "Exploitation > Pilotage > Finance" —
+  // utilisée pour toute route à laquelle le profil courant n'a pas accès.
+  function defaultRoute() {
+    if (hasOperationalAccess) return isVendeuse ? '/stock' : '/saisie'
+    if (can('validate_orders')) return '/commandes'
+    if (can('view_dashboard')) return '/tableau'
+    if (can('view_finance')) return '/finance'
+    if (can('view_history')) return '/historique'
+    return '/aide'
+  }
+
   return (
     <StationProvider>
       <Shell>
         <Suspense fallback={<div className="center">Chargement…</div>}>
         <Routes>
-          <Route path="/saisie" element={<Submit />} />
-          <Route path="/journal" element={isVendeuse || isPompiste ? <Navigate to="/saisie" /> : <Journal />} />
+          <Route path="/saisie" element={opRoute(<Submit />)} />
+          <Route path="/journal" element={opRoute(<Journal />)} />
           <Route path="/aide" element={<Aide />} />
-          <Route path="/commandes" element={isPompiste ? <Navigate to="/saisie" /> : <Orders />} />
-          <Route path="/controles" element={<Inspections />} />
-          <Route path="/historique" element={isAdmin ? <History /> : <Navigate to="/saisie" />} />
-          <Route path="/tableau" element={isAdmin ? <Dashboard /> : <Navigate to="/saisie" />} />
+          <Route path="/commandes" element={(hasOperationalAccess || can('validate_orders')) ? <Orders /> : <Navigate to={defaultRoute()} />} />
+          <Route path="/controles" element={opRoute(<Inspections />)} />
+          <Route path="/historique" element={can('view_history') ? <History /> : <Navigate to={defaultRoute()} />} />
+          <Route path="/tableau" element={can('view_dashboard') ? <Dashboard /> : <Navigate to={defaultRoute()} />} />
           <Route path="/saisies" element={<Navigate to="/historique" />} />
-          <Route path="/stock" element={<Stock />} />
-          <Route path="/alertes" element={isAdmin ? <AlertsPage /> : <Navigate to="/saisie" />} />
-          <Route path="/rapprochement" element={isAdmin ? <BankRecon /> : <Navigate to="/saisie" />} />
-          <Route path="/verif-photos" element={isAdmin ? <OcrCheck /> : <Navigate to="/saisie" />} />
-          <Route path="/audit" element={isAdmin ? <AuditLog /> : <Navigate to="/saisie" />} />
-          <Route path="/finance" element={isAdmin ? <Finance /> : <Navigate to="/saisie" />} />
-          <Route path="/produits" element={isAdmin ? <Products /> : <Navigate to="/saisie" />} />
-          <Route path="/fournisseurs" element={isAdmin ? <Suppliers /> : <Navigate to="/saisie" />} />
-          <Route path="/stations" element={isAdmin ? <Stations /> : <Navigate to="/saisie" />} />
-          <Route path="*" element={<Navigate to={isAdmin ? '/tableau' : isVendeuse ? '/stock' : '/saisie'} />} />
+          <Route path="/stock" element={opRoute(<Stock />)} />
+          <Route path="/alertes" element={can('view_alerts') ? <AlertsPage /> : <Navigate to={defaultRoute()} />} />
+          <Route path="/rapprochement" element={can('view_bank_recon') ? <BankRecon /> : <Navigate to={defaultRoute()} />} />
+          <Route path="/verif-photos" element={can('view_ocr_check') ? <OcrCheck /> : <Navigate to={defaultRoute()} />} />
+          <Route path="/audit" element={can('view_audit_log') ? <AuditLog /> : <Navigate to={defaultRoute()} />} />
+          <Route path="/finance" element={can('view_finance') ? <Finance /> : <Navigate to={defaultRoute()} />} />
+          <Route path="/produits" element={can('manage_products') ? <Products /> : <Navigate to={defaultRoute()} />} />
+          <Route path="/fournisseurs" element={can('manage_suppliers') ? <Suppliers /> : <Navigate to={defaultRoute()} />} />
+          <Route path="/stations" element={(can('manage_stations_config') || can('manage_team')) ? <Stations /> : <Navigate to={defaultRoute()} />} />
+          <Route path="*" element={<Navigate to={defaultRoute()} />} />
         </Routes>
         </Suspense>
       </Shell>
