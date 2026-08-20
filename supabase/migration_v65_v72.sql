@@ -153,7 +153,7 @@ insert into permissions (key, label, category) values
   ('view_bank_recon', 'Rapprochement (lecture)', 'Finance'),
   ('manage_bank_recon', 'Rapprochement (écriture)', 'Finance'),
   ('view_ocr_check', 'Vérif bordereaux', 'Finance'),
-  ('view_audit_log', "Journal d'audit", 'Administration'),
+  ('view_audit_log', 'Journal d''audit', 'Administration'),
   ('validate_orders', 'Valider/refuser commandes', 'Commandes'),
   ('manage_orders', 'Gérer commandes (proposer/lancer/réceptionner)', 'Commandes'),
   ('manage_products', 'Produits & prix', 'Administration'),
