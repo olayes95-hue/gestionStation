@@ -70,7 +70,7 @@ function Shell({ children }) {
 
   const items = [
     { section: 'Exploitation' },
-    ...(hasOperationalAccess ? [{ to: '/journal', icon: 'clipboard-list', label: 'Journal de bord' }] : []),
+    ...((hasOperationalAccess || can('view_journal')) ? [{ to: '/journal', icon: 'clipboard-list', label: 'Journal de bord' }] : []),
     ...(hasOperationalAccess ? [{ to: '/saisie', icon: 'file-pen-line', label: isVendeuse ? 'Saisie supérette' : 'Saisie du jour' }] : []),
     { to: '/aide', icon: 'circle-question-mark', label: 'Aide' },
     ...(hasOperationalAccess ? [{ to: '/stock', icon: isVendeuse ? 'shopping-cart' : 'package', label: isVendeuse ? 'Supérette' : 'Stock & mouvements' }] : []),
@@ -132,7 +132,7 @@ export default function App() {
         <Suspense fallback={<div className="center">Chargement…</div>}>
         <Routes>
           <Route path="/saisie" element={opRoute(<Submit />)} />
-          <Route path="/journal" element={opRoute(<Journal />)} />
+          <Route path="/journal" element={(hasOperationalAccess || can('view_journal')) ? <Journal /> : <Navigate to={defaultRoute()} />} />
           <Route path="/aide" element={<Aide />} />
           <Route path="/commandes" element={(hasOperationalAccess || can('validate_orders')) ? <Orders /> : <Navigate to={defaultRoute()} />} />
           <Route path="/controles" element={opRoute(<Inspections />)} />
