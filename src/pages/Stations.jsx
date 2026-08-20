@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
+import { useAuth } from '../lib/auth.jsx'
 import { Panel } from '../ds/octane/components/core/Panel.jsx'
 import { Button } from '../ds/octane/components/core/Button.jsx'
 import { Field } from '../ds/octane/components/forms/Field.jsx'
@@ -10,34 +11,51 @@ import { AlertBanner } from '../ds/octane/components/feedback/AlertBanner.jsx'
 import { DataTable } from '../ds/octane/components/data/DataTable.jsx'
 import { Tabs } from '../ds/octane/components/navigation/Tabs.jsx'
 
-const ROLE_OPTIONS = [
-  { value: 'pompiste', label: 'Pompiste' },
-  { value: 'vendeuse', label: 'Vendeuse' },
-  { value: 'gerant', label: 'Gérant' },
-  { value: 'admin', label: 'Admin' },
-]
+// Rôles historiques : une seule station (profiles.station_id), non modifiables/supprimables
+// (gelés par trigger côté base — voir migration_v65). Tout autre rôle (directeur/comptable,
+// ou un rôle créé ici) est rattachable à plusieurs stations via profile_stations.
+const SINGLE_STATION_ROLES = ['gerant', 'pompiste', 'vendeuse', 'admin']
 
-const TABS = [
-  { value: 'stations', label: 'Stations' },
-  { value: 'equipe', label: 'Équipe' },
-  { value: 'parametres', label: 'Paramètres' },
-]
+const groupBy = (rows, key) => rows.reduce((m, r) => { (m[r[key] || '—'] = m[r[key] || '—'] || []).push(r); return m }, {})
 
 export default function Stations() {
+  const { isAdmin, can } = useAuth()
   const [stations, setStations] = useState([])
   const [users, setUsers] = useState([])
   const [settings, setSettings] = useState(null)
+  const [roles, setRoles] = useState([])
+  const [permissions, setPermissions] = useState([])
+  const [rolePerms, setRolePerms] = useState([])
+  const [profileStations, setProfileStations] = useState({})   // {profileId: [stationId,...]}
+  const [selectedRole, setSelectedRole] = useState(null)
+  const [newRole, setNewRole] = useState({ key: '', label: '' })
   const [msg, setMsg] = useState(''); const [err, setErr] = useState('')
   const [newName, setNewName] = useState('')
-  const [tab, setTab] = useState('stations')
+  // Onglets visibles selon les permissions du profil courant — Rôles/Paramètres restent
+  // strictement admin, Stations/Équipe deviennent délégables via manage_stations_config/manage_team.
+  const TABS = [
+    (isAdmin || can('manage_stations_config')) && { value: 'stations', label: 'Stations' },
+    (isAdmin || can('manage_team')) && { value: 'equipe', label: 'Équipe' },
+    isAdmin && { value: 'roles', label: 'Rôles' },
+    isAdmin && { value: 'parametres', label: 'Paramètres' },
+  ].filter(Boolean)
+  const [tab, setTab] = useState(() => TABS[0]?.value || 'stations')
 
   async function load() {
-    const [s, u, st] = await Promise.all([
+    const [s, u, st, r, p, rp, ps] = await Promise.all([
       supabase.from('stations').select('*').order('id'),
       supabase.from('profiles').select('id, full_name, role, station_id').order('full_name'),
       supabase.from('settings').select('*').eq('id', 1).maybeSingle(),
+      supabase.from('roles').select('*').order('created_at'),
+      supabase.from('permissions').select('*').order('category').order('label'),
+      supabase.from('role_permissions').select('*'),
+      supabase.from('profile_stations').select('*'),
     ])
     setStations(s.data || []); setUsers(u.data || []); setSettings(st.data || null)
+    setRoles(r.data || []); setPermissions(p.data || []); setRolePerms(rp.data || [])
+    const psm = {}; for (const x of (ps.data || [])) (psm[x.profile_id] = psm[x.profile_id] || []).push(x.station_id)
+    setProfileStations(psm)
+    setSelectedRole(prev => prev || (r.data || [])[0]?.key || null)
   }
   useEffect(() => { load() }, [])
 
@@ -60,10 +78,42 @@ export default function Stations() {
     if (error) fail(error); else { setNewName(''); load(); flash('Station ajoutée') }
   }
   async function saveUser(u) {
+    const isMulti = !SINGLE_STATION_ROLES.includes(u.role)
     const { error } = await supabase.from('profiles').update({
-      role: u.role, station_id: u.station_id ? Number(u.station_id) : null,
+      role: u.role, station_id: isMulti ? null : (u.station_id ? Number(u.station_id) : null),
     }).eq('id', u.id)
-    error ? fail(error) : flash('Membre mis à jour')
+    if (error) { fail(error); return }
+    if (isMulti) {
+      const selected = profileStations[u.id] || []
+      await supabase.from('profile_stations').delete().eq('profile_id', u.id)
+      if (selected.length) await supabase.from('profile_stations').insert(selected.map(sid => ({ profile_id: u.id, station_id: sid })))
+    }
+    flash('Membre mis à jour'); load()
+  }
+  function toggleUserStation(userId, stationId, checked) {
+    setProfileStations(p => {
+      const cur = p[userId] || []
+      return { ...p, [userId]: checked ? [...cur, stationId] : cur.filter(id => id !== stationId) }
+    })
+  }
+
+  async function addRole(e) {
+    e.preventDefault()
+    const key = (newRole.key || '').trim().toLowerCase().replace(/[^a-z0-9_]/g, '_')
+    if (!key || !newRole.label.trim()) { setErr('Renseigne une clé et un libellé.'); return }
+    const { error } = await supabase.from('roles').insert({ key, label: newRole.label.trim(), is_system: false })
+    if (error) fail(error); else { setNewRole({ key: '', label: '' }); setSelectedRole(key); load(); flash('Rôle créé') }
+  }
+  async function deleteRole(r) {
+    const { error } = await supabase.from('roles').delete().eq('key', r.key)
+    if (error) fail(error); else { if (selectedRole === r.key) setSelectedRole(null); load(); flash('Rôle supprimé') }
+  }
+  const hasPerm = (roleKey, permKey) => rolePerms.some(rp => rp.role_key === roleKey && rp.permission_key === permKey)
+  async function togglePerm(roleKey, permKey, checked) {
+    const { error } = checked
+      ? await supabase.from('role_permissions').insert({ role_key: roleKey, permission_key: permKey })
+      : await supabase.from('role_permissions').delete().eq('role_key', roleKey).eq('permission_key', permKey)
+    error ? fail(error) : load()
   }
   async function savePrices(e) {
     e.preventDefault()
@@ -87,8 +137,15 @@ export default function Stations() {
 
   const userColumns = [
     { key: 'full_name', header: 'Nom' },
-    { key: 'role', header: 'Rôle', render: u => <Select size="sm" value={u.role} onChange={e => upU(u.id, 'role', e.target.value)} options={ROLE_OPTIONS} style={{ width: '100%' }} /> },
-    { key: 'station_id', header: 'Station', render: u => <Select size="sm" value={u.station_id || ''} onChange={e => upU(u.id, 'station_id', e.target.value)} options={stationOptions} style={{ width: '100%' }} /> },
+    { key: 'role', header: 'Rôle', render: u => <Select size="sm" value={u.role} onChange={e => upU(u.id, 'role', e.target.value)} options={roles.map(r => ({ value: r.key, label: r.label }))} style={{ width: '100%' }} /> },
+    { key: 'station_id', header: 'Station(s)', render: u => SINGLE_STATION_ROLES.includes(u.role)
+      ? <Select size="sm" value={u.station_id || ''} onChange={e => upU(u.id, 'station_id', e.target.value)} options={stationOptions} style={{ width: '100%' }} />
+      : <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--sp-3)' }}>
+          {stations.map(s => (
+            <Checkbox key={s.id} label={s.nom} checked={(profileStations[u.id] || []).includes(s.id)}
+              onChange={v => toggleUserStation(u.id, s.id, v)} />
+          ))}
+        </div> },
     { key: 'actions', header: '', align: 'right', render: u => <Button size="sm" tone="primary" onClick={() => saveUser(u)}>OK</Button> },
   ]
 
@@ -140,12 +197,70 @@ export default function Stations() {
       {tab === 'equipe' && (
       <Panel title="Équipe" flush>
         <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', margin: 'var(--sp-4) var(--gutter-panel) 0' }}>
-          Rattache chaque gérant à sa station. Un admin voit toutes les stations.
+          Gérant/pompiste/vendeuse/admin : rattachés à une seule station. Tout autre rôle
+          (directeur, comptable, ou un rôle créé dans l'onglet Rôles) peut être rattaché à
+          une ou plusieurs stations — coche celles concernées puis « OK ».
         </p>
         <div style={{ marginTop: 'var(--sp-4)' }}>
           <DataTable columns={userColumns} rows={users} />
         </div>
       </Panel>
+      )}
+
+      {tab === 'roles' && (
+      <div style={{ display: 'flex', gap: 'var(--sp-5)', flexWrap: 'wrap', alignItems: 'flex-start' }}>
+        <Panel title="Rôles" flush style={{ flex: '1 1 260px' }}>
+          <div style={{ display: 'flex', flexDirection: 'column' }}>
+            {roles.map(r => (
+              <div key={r.key} onClick={() => setSelectedRole(r.key)}
+                style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 'var(--sp-3)', padding: 'var(--sp-3) var(--gutter-panel)', cursor: 'pointer',
+                  background: selectedRole === r.key ? 'var(--accent-quiet)' : 'transparent', borderBottom: '1px solid var(--border-hairline)' }}>
+                <span style={{ font: '400 13px/1.3 var(--font-ui)', color: 'var(--text-body)' }}>
+                  {r.label}
+                  {r.is_system && <span style={{ marginLeft: 6, color: 'var(--text-muted)', font: '400 10px/1 var(--font-ui)' }}>(système)</span>}
+                </span>
+                {!r.is_system && (
+                  <Button size="sm" tone="danger" onClick={(e) => { e.stopPropagation(); deleteRole(r) }}
+                    disabled={users.some(u => u.role === r.key)}
+                    title={users.some(u => u.role === r.key) ? 'Encore assigné à un compte' : undefined}>Suppr.</Button>
+                )}
+              </div>
+            ))}
+          </div>
+          <form onSubmit={addRole} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-3)', padding: 'var(--gutter-panel)', borderTop: '1px solid var(--border-hairline)' }}>
+            <Field label="Nouveau rôle — clé (unique, jamais modifiable ensuite)">
+              <Input value={newRole.key} onChange={e => setNewRole({ ...newRole, key: e.target.value })} placeholder="ex : responsable_achats" />
+            </Field>
+            <Field label="Libellé">
+              <Input value={newRole.label} onChange={e => setNewRole({ ...newRole, label: e.target.value })} placeholder="ex : Responsable achats" />
+            </Field>
+            <Button type="submit" tone="primary" size="sm">+ Créer le rôle</Button>
+          </form>
+        </Panel>
+
+        <Panel title={selectedRole ? `Permissions — ${roles.find(r => r.key === selectedRole)?.label || selectedRole}` : 'Permissions'} flush style={{ flex: '2 1 360px' }}>
+          {!selectedRole ? (
+            <p style={{ padding: 'var(--gutter-panel)', font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)' }}>Choisis un rôle à gauche.</p>
+          ) : selectedRole === 'admin' ? (
+            <div style={{ padding: 'var(--gutter-panel)' }}>
+              <AlertBanner tone="info" title="Administrateur">L'admin a toujours accès à tout, indépendamment de cette matrice — rien à cocher ici.</AlertBanner>
+            </div>
+          ) : (
+            <div style={{ padding: 'var(--gutter-panel)', display: 'flex', flexDirection: 'column', gap: 'var(--sp-4)' }}>
+              {Object.entries(groupBy(permissions, 'category')).map(([cat, perms]) => (
+                <div key={cat}>
+                  <div style={{ font: 'var(--fw-semibold) 11px/1 var(--font-ui)', textTransform: 'uppercase', letterSpacing: 'var(--ls-label)', color: 'var(--text-muted)', marginBottom: 'var(--sp-2)' }}>{cat}</div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-2)' }}>
+                    {perms.map(p => (
+                      <Checkbox key={p.key} label={p.label} checked={hasPerm(selectedRole, p.key)} onChange={v => togglePerm(selectedRole, p.key, v)} />
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </Panel>
+      </div>
       )}
 
       {tab === 'parametres' && settings && (
