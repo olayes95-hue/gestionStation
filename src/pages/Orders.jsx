@@ -54,6 +54,7 @@ export default function Orders() {
   const [page, setPage] = useState(1); const [pageSize, setPageSize] = useState(25)
   const [allReceptions, setAllReceptions] = useState([])   // toutes les réceptions carburant, toutes commandes confondues — voir "Réceptions carburant récentes"
   const [recProduit, setRecProduit] = useState('essence')
+  const [mainTab, setMainTab] = useState('historique')   // onglet actif : historique des commandes / réceptions récentes
 
   // Historique des réceptions (order_receptions) de la commande ouverte — jusqu'ici invisible dans
   // l'app une fois la commande soldée : seul le cumul (v_order_reception) et le dernier cuve_avant/
@@ -77,7 +78,7 @@ export default function Orders() {
       // d'œil si deux commandes du même produit se chevauchent (cause d'un vrai bug repéré :
       // une réception mal attribuée créait un doublon de plage de cuve, invisible commande par
       // commande). fuel_orders(...) : embedding PostgREST via la FK order_receptions.order_id.
-      supabase.from('order_receptions').select('*, fuel_orders(produit,categorie,statut)').eq('station_id', stationId).order('report_date', { ascending: false }).order('id', { ascending: false }).limit(200),
+      supabase.from('order_receptions').select('*, fuel_orders(produit,categorie,statut,date_proposition,quantite_commandee)').eq('station_id', stationId).order('report_date', { ascending: false }).order('id', { ascending: false }).limit(200),
     ])
     setOrders(o.data || [])
     const m = {}; for (const x of (rt.data || [])) m[x.order_id] = x; setRecvTotals(m)
@@ -289,17 +290,17 @@ export default function Orders() {
     const parEtape = {}
     for (const o of os) parEtape[ETAPE_LABEL[o.statut]] = (parEtape[ETAPE_LABEL[o.statut]] || 0) + orderMontant(o)
     const detail = Object.entries(parEtape).map(([etape, v]) => `${fcfa(v)} ${etape}`).join(' · ')
-    // Litres en cours de livraison vs déjà livrés — carburant uniquement (seul pôle compté
-    // en litres avec une notion physique de cuve avant/après ; gaz/lubrifiant/supérette se
-    // comptent en unités ou en valeur).
-    let litres = null
-    if (key === 'carburant') {
-      const deja = (o) => N(recvTotals[o.id]?.quantite_recue_total)
-      const livres = os.reduce((s, o) => s + deja(o), 0)
-      const restant = os.reduce((s, o) => s + Math.max(0, N(o.quantite_commandee) - deja(o)), 0)
-      litres = { livres, restant }
-    }
-    return { key, label, value: os.reduce((s, o) => s + orderMontant(o), 0), nb: os.length, detail, litres }
+    return { key, label, value: os.reduce((s, o) => s + orderMontant(o), 0), nb: os.length, detail }
+  })
+  // Litres en cours de livraison vs déjà livrés — essence et gasoil séparément (un litre
+  // d'essence et un litre de gasoil ne se mélangent pas), carburant uniquement (seul pôle
+  // compté en litres avec une notion physique de cuve avant/après).
+  const litresParProduit = ['essence', 'gasoil'].map(produit => {
+    const os = orders.filter(o => (o.categorie || 'carburant') === 'carburant' && o.produit === produit && EN_COURS_STATUTS.includes(o.statut))
+    const deja = (o) => N(recvTotals[o.id]?.quantite_recue_total)
+    const livres = os.reduce((s, o) => s + deja(o), 0)
+    const restant = os.reduce((s, o) => s + Math.max(0, N(o.quantite_commandee) - deja(o)), 0)
+    return { produit, label: produit === 'essence' ? 'Essence' : 'Gasoil', livres, restant, nb: os.length }
   })
 
   const columns = [
@@ -365,15 +366,12 @@ export default function Orders() {
               <Kpi label={p.label} value={fcfa(p.value)} sub={p.detail} status="info" />
             </div>
           ))}
-          {commandesEnCoursParPole.find(p => p.key === 'carburant' && p.litres && (p.litres.restant > 0 || p.litres.livres > 0)) && (() => {
-            const l = commandesEnCoursParPole.find(p => p.key === 'carburant').litres
-            return (
-              <div onClick={() => { setFCat('carburant'); setFStatut('tous') }} style={{ cursor: 'pointer' }}>
-                <Kpi label="Litres carburant en cours" value={`${Math.round(l.restant).toLocaleString('fr-FR')} L`}
-                  sub={`${Math.round(l.livres).toLocaleString('fr-FR')} L déjà livrés`} status="info" />
-              </div>
-            )
-          })()}
+          {litresParProduit.map(l => (l.restant > 0 || l.livres > 0) && (
+            <div key={l.produit} onClick={() => { setFCat('carburant'); setFStatut('tous') }} style={{ cursor: 'pointer' }}>
+              <Kpi label={`Litres ${l.label} en cours`} value={`${Math.round(l.restant).toLocaleString('fr-FR')} L`}
+                sub={`${Math.round(l.livres).toLocaleString('fr-FR')} L déjà livrés`} status="info" />
+            </div>
+          ))}
         </div>
       )}
 
@@ -498,58 +496,67 @@ export default function Orders() {
         </Panel>
       )}
 
-      {/* ===== RÉCEPTIONS CARBURANT RÉCENTES — toutes commandes confondues, par produit =====
-          Quand deux commandes du même produit sont en cours en même temps, chaque tiroir de
-          détail ne montre que SES propres réceptions — impossible de voir si deux commandes se
-          chevauchent (bug réel repéré : une réception mal attribuée dupliquait une plage de
-          cuve déjà couverte par une autre commande, invisible commande par commande). Cette vue
-          rassemble tout, dans l'ordre, pour repérer ça d'un coup d'œil. */}
-      {!isPompiste && allReceptions.length > 0 && (() => {
-        const rows = allReceptions.filter(r => (r.fuel_orders?.produit || '') === recProduit).slice(0, 20)
-        const recColumns = [
-          { key: 'report_date', header: 'Date', render: r => frDate(r.report_date) },
-          { key: 'order_id', header: 'Commande', render: r => <Tag>#{r.order_id}</Tag> },
-          { key: 'cuve', header: 'Cuve avant → après', render: r => r.cuve_avant != null && r.cuve_apres != null
-            ? `${N(r.cuve_avant).toLocaleString('fr-FR')} → ${N(r.cuve_apres).toLocaleString('fr-FR')} L` : '—' },
-          { key: 'quantite_recue', header: 'Quantité', numeric: true, align: 'right', render: r => N(r.quantite_recue).toLocaleString('fr-FR') + ' L' },
-          { key: 'statut', header: 'Statut commande', render: r => { const st = ORDER_STATUS_TONES[r.fuel_orders?.statut] || {}; return <Badge tone={st.tone || 'idle'}>{st.label || r.fuel_orders?.statut}</Badge> } },
-        ]
-        return (
-          <Panel title="Réceptions carburant récentes" meta="toutes commandes confondues" flush>
-            <Tabs items={[{ value: 'essence', label: 'Essence' }, { value: 'gasoil', label: 'Gasoil' }]} value={recProduit} onChange={setRecProduit} />
+      {/* ===== HISTORIQUE DES COMMANDES + RÉCEPTIONS RÉCENTES — un seul panneau à onglets =====
+          Réceptions récentes : quand deux commandes du même produit sont en cours en même temps,
+          chaque tiroir de détail ne montre que SES propres réceptions — impossible de voir si
+          deux commandes se chevauchent (bug réel repéré : une réception mal attribuée dupliquait
+          une plage de cuve déjà couverte par une autre commande, invisible commande par commande).
+          Cette vue rassemble tout, dans l'ordre, pour repérer ça d'un coup d'œil. La commande est
+          identifiée par sa date de proposition + quantité (un simple "#24" ne veut rien dire),
+          pas par son id technique. */}
+      <Panel flush>
+        <Tabs items={[
+          { value: 'historique', label: 'Historique des commandes' },
+          ...(!isPompiste ? [{ value: 'receptions', label: 'Réceptions récentes' }] : []),
+        ]} value={mainTab === 'receptions' && isPompiste ? 'historique' : mainTab} onChange={setMainTab} />
+
+        {mainTab === 'historique' && (<>
+          <div style={{ padding: 'var(--gutter-panel)', display: 'flex', flexDirection: 'column', gap: 'var(--sp-3)' }}>
+            <div style={{ font: '400 12px/1 var(--font-ui)', color: 'var(--text-muted)' }}>{shown.length} commande(s) · total {fcfa(totalMontant)}</div>
+            <div style={{ display: 'flex', gap: 'var(--sp-3)', flexWrap: 'wrap', alignItems: 'center' }}>
+              <Select size="sm" value={year} onChange={e => { setYear(e.target.value); setDateFrom(''); setDateTo('') }} options={[{ value: 'all', label: 'Toutes années' }, ...orderYears.map(y => ({ value: y, label: y }))]} />
+              <Select size="sm" value={month} onChange={e => { setMonth(e.target.value); setDateFrom(''); setDateTo('') }} options={[{ value: 'all', label: 'Tous mois' }, ...['01','02','03','04','05','06','07','08','09','10','11','12'].map(m => ({ value: m, label: m }))]} />
+              <span style={{ font: '400 12px/1 var(--font-ui)', color: 'var(--text-muted)' }}>ou période :</span>
+              <Input type="date" size="sm" value={dateFrom} onChange={e => setDateFrom(e.target.value)} style={{ width: 150 }} />
+              <span style={{ color: 'var(--text-muted)' }}>→</span>
+              <Input type="date" size="sm" value={dateTo} onChange={e => setDateTo(e.target.value)} style={{ width: 150 }} />
+              {filtersActive && <Button size="sm" onClick={resetFilters}>Réinitialiser</Button>}
+            </div>
+            <div style={{ display: 'flex', gap: 'var(--sp-2)', flexWrap: 'wrap' }}>
+              <Button size="sm" tone={fCat === 'tous' ? 'primary' : 'outline'} onClick={() => setFCat('tous')}>Toutes catégories</Button>
+              {CATS.map(([k, l]) => <Button key={k} size="sm" tone={fCat === k ? 'primary' : 'outline'} onClick={() => setFCat(k)}>{l}</Button>)}
+            </div>
+            <div style={{ display: 'flex', gap: 'var(--sp-2)', flexWrap: 'wrap', alignItems: 'center' }}>
+              <Select size="sm" value={fStatut} onChange={e => setFStatut(e.target.value)}
+                options={[['tous', 'Tous statuts'], ['proposee', `Proposées (${count('proposee')})`], ['validee', `Validées (${count('validee')})`], ['a_receptionner', `À réceptionner (${nbAReceptionner})`], ['lancee', `Lancées (${count('lancee')})`], ['partielle', `Partielles (${count('partielle')})`], ['recue', `Reçues (${count('recue')})`], ['annulee', `Refusées (${count('annulee')})`]].map(([k, l]) => ({ value: k, label: l }))} />
+            </div>
+          </div>
+          <DataTable columns={columns} rows={pageRows} onRowClick={o => setDetailId(o.id)} />
+          <Pagination page={pageClamped} pageCount={pageCount} total={shown.length} pageSize={pageSize}
+            onPage={setPage} onPageSize={s => { setPageSize(s); setPage(1) }} />
+        </>)}
+
+        {mainTab === 'receptions' && !isPompiste && (() => {
+          const rows = allReceptions.filter(r => (r.fuel_orders?.produit || '') === recProduit).slice(0, 20)
+          const recColumns = [
+            { key: 'report_date', header: 'Date', render: r => frDate(r.report_date) },
+            { key: 'order_id', header: 'Commande', render: r => r.fuel_orders?.date_proposition
+              ? <span title={`id ${r.order_id}`}>{frDate(r.fuel_orders.date_proposition)} · {N(r.fuel_orders.quantite_commandee).toLocaleString('fr-FR')} L</span>
+              : <Tag>#{r.order_id}</Tag> },
+            { key: 'cuve', header: 'Cuve avant → après', render: r => r.cuve_avant != null && r.cuve_apres != null
+              ? `${N(r.cuve_avant).toLocaleString('fr-FR')} → ${N(r.cuve_apres).toLocaleString('fr-FR')} L` : '—' },
+            { key: 'quantite_recue', header: 'Quantité', numeric: true, align: 'right', render: r => N(r.quantite_recue).toLocaleString('fr-FR') + ' L' },
+            { key: 'statut', header: 'Statut commande', render: r => { const st = ORDER_STATUS_TONES[r.fuel_orders?.statut] || {}; return <Badge tone={st.tone || 'idle'}>{st.label || r.fuel_orders?.statut}</Badge> } },
+          ]
+          return (<>
+            <div style={{ padding: 'var(--gutter-panel)', paddingBottom: 0 }}>
+              <Tabs items={[{ value: 'essence', label: 'Essence' }, { value: 'gasoil', label: 'Gasoil' }]} value={recProduit} onChange={setRecProduit} />
+            </div>
             <div style={{ marginTop: 'var(--sp-4)' }}>
               {rows.length ? <DataTable columns={recColumns} rows={rows} /> : <PanelEmpty icon="fuel" label="Aucune réception récente pour ce produit" />}
             </div>
-          </Panel>
-        )
-      })()}
-
-      {/* Historique des commandes : tableau filtrable (mois OU période libre, catégorie, produit, statut).
-          Toutes les actions d'une commande (valider/refuser/lancer/réceptionner/supprimer) sont ici,
-          contextuelles au statut et au rôle — plus de section « à réceptionner » séparée. */}
-      <Panel title="Historique des commandes" meta={`${shown.length} commande(s) · total ${fcfa(totalMontant)}`} flush>
-        <div style={{ padding: 'var(--gutter-panel)', display: 'flex', flexDirection: 'column', gap: 'var(--sp-3)' }}>
-          <div style={{ display: 'flex', gap: 'var(--sp-3)', flexWrap: 'wrap', alignItems: 'center' }}>
-            <Select size="sm" value={year} onChange={e => { setYear(e.target.value); setDateFrom(''); setDateTo('') }} options={[{ value: 'all', label: 'Toutes années' }, ...orderYears.map(y => ({ value: y, label: y }))]} />
-            <Select size="sm" value={month} onChange={e => { setMonth(e.target.value); setDateFrom(''); setDateTo('') }} options={[{ value: 'all', label: 'Tous mois' }, ...['01','02','03','04','05','06','07','08','09','10','11','12'].map(m => ({ value: m, label: m }))]} />
-            <span style={{ font: '400 12px/1 var(--font-ui)', color: 'var(--text-muted)' }}>ou période :</span>
-            <Input type="date" size="sm" value={dateFrom} onChange={e => setDateFrom(e.target.value)} style={{ width: 150 }} />
-            <span style={{ color: 'var(--text-muted)' }}>→</span>
-            <Input type="date" size="sm" value={dateTo} onChange={e => setDateTo(e.target.value)} style={{ width: 150 }} />
-            {filtersActive && <Button size="sm" onClick={resetFilters}>Réinitialiser</Button>}
-          </div>
-          <div style={{ display: 'flex', gap: 'var(--sp-2)', flexWrap: 'wrap' }}>
-            <Button size="sm" tone={fCat === 'tous' ? 'primary' : 'outline'} onClick={() => setFCat('tous')}>Toutes catégories</Button>
-            {CATS.map(([k, l]) => <Button key={k} size="sm" tone={fCat === k ? 'primary' : 'outline'} onClick={() => setFCat(k)}>{l}</Button>)}
-          </div>
-          <div style={{ display: 'flex', gap: 'var(--sp-2)', flexWrap: 'wrap', alignItems: 'center' }}>
-            <Select size="sm" value={fStatut} onChange={e => setFStatut(e.target.value)}
-              options={[['tous', 'Tous statuts'], ['proposee', `Proposées (${count('proposee')})`], ['validee', `Validées (${count('validee')})`], ['a_receptionner', `À réceptionner (${nbAReceptionner})`], ['lancee', `Lancées (${count('lancee')})`], ['partielle', `Partielles (${count('partielle')})`], ['recue', `Reçues (${count('recue')})`], ['annulee', `Refusées (${count('annulee')})`]].map(([k, l]) => ({ value: k, label: l }))} />
-          </div>
-        </div>
-        <DataTable columns={columns} rows={pageRows} onRowClick={o => setDetailId(o.id)} />
-        <Pagination page={pageClamped} pageCount={pageCount} total={shown.length} pageSize={pageSize}
-          onPage={setPage} onPageSize={s => { setPageSize(s); setPage(1) }} />
+          </>)
+        })()}
       </Panel>
 
       {/* ===== PANNEAU DE DÉTAIL — délai/paiement/avancement/note + actions contextuelles ===== */}
