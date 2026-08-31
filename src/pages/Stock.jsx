@@ -6,7 +6,6 @@ import { fcfa, frDate, numFR, today } from '../lib/format'
 import { STOCK_MOVEMENT_TONES, STOCK_SOURCE_TONES } from '../lib/tones'
 import { Panel, PanelEmpty } from '../ds/octane/components/core/Panel.jsx'
 import { Button } from '../ds/octane/components/core/Button.jsx'
-import { IconButton } from '../ds/octane/components/core/IconButton.jsx'
 import { Badge } from '../ds/octane/components/core/Badge.jsx'
 import { Tag } from '../ds/octane/components/core/Tag.jsx'
 import { Icon } from '../ds/octane/components/core/Icon.jsx'
@@ -45,15 +44,12 @@ export default function Stock() {
   const [snapshots, setSnapshots] = useState([])
   const [reorder, setReorder] = useState([])   // v_reorder_produit — gaz + lubrifiant
   const [products, setProducts] = useState([])
-  const [lubTab, setLubTab] = useState('ecart')   // onglet actif du bloc "Lubrifiant — détail" (écart / historique / réappro)
   const [histProduit, setHistProduit] = useState('')
   const [action, setAction] = useState(null)   // null | 'entree' | 'ajustement'
   const [nm, setNm] = useState(blank('entree'))
   const [fYear, setFYear] = useState('all'); const [fMonth, setFMonth] = useState('all')
   const [fProduit, setFProduit] = useState('')
-  const [stockTab, setStockTab] = useState('gaz')   // onglet actif de "Stock restant" (détail par produit)
-  const [openSorties, setOpenSorties] = useState(false)
-  const [openJournal, setOpenJournal] = useState(false)
+  const [catTab, setCatTab] = useState('gaz')   // onglet de catégorie actif (Gaz / Lubrifiant / Supérette) — regroupe toutes les infos de cette catégorie
   const [msg, setMsg] = useState(''); const [err, setErr] = useState('')
 
   function openAction(action, overrides) { setNm({ ...blank(action), ...overrides }); setAction(action); setErr('') }
@@ -173,7 +169,6 @@ export default function Stock() {
   ]
 
   const reorderColumns = [
-    { key: 'categorie', header: 'Catégorie', render: r => (CATS.find(c => c[0] === r.categorie) || [, r.categorie])[1] },
     { key: 'produit', header: 'Produit' },
     { key: 'stock_theorique_actuel', header: 'Stock', numeric: true, align: 'right', render: r => N(r.stock_theorique_actuel) },
     { key: 'conso_moy_jour', header: 'Conso/jour', numeric: true, align: 'right', muted: true, render: r => (Number(r.conso_moy_jour) || 0).toFixed(1) },
@@ -216,7 +211,6 @@ export default function Stock() {
 
   const sortieColumns = [
     { key: 'report_date', header: 'Date', render: s => frDate(s.report_date) },
-    { key: 'categorie', header: 'Catégorie' },
     { key: 'produit', header: 'Produit' },
     { key: 'stock_veille', header: 'Veille', numeric: true, align: 'right', muted: true, render: s => N(s.stock_veille) },
     { key: 'entrees', header: 'Entrées', numeric: true, align: 'right', muted: true, render: s => N(s.entrees) },
@@ -226,7 +220,6 @@ export default function Stock() {
 
   const journalColumns = [
     { key: 'date_mouvement', header: 'Date', render: m => frDate(m.date_mouvement) },
-    { key: 'categorie', header: 'Catégorie' },
     { key: 'produit', header: 'Produit', render: m => m.produit || '—' },
     { key: 'type', header: 'Type', render: m => <Badge tone={STOCK_MOVEMENT_TONES[m.type] || 'idle'}>{m.type}</Badge> },
     { key: 'source', header: 'Source', render: m => m.source ? <Badge tone={STOCK_SOURCE_TONES[m.source]?.tone || 'idle'}>{STOCK_SOURCE_TONES[m.source]?.label || m.source}</Badge> : '—' },
@@ -348,114 +341,117 @@ export default function Stock() {
         </AlertBanner>
       )}
 
-      {/* ===== STOCK ACTUEL (gaz/lub) — détail par produit dans un onglet — gérant/pompiste/admin ===== */}
-      {!isVendeuse && (
-        <Panel title="Stock restant" flush>
-          <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', margin: 'var(--sp-4) var(--gutter-panel) 0' }}>
-            Ce qu'il reste, d'après le <b>dernier comptage déclaré dans la Saisie du jour</b>. Ici tu n'ajoutes que les <b>entrées</b> (livraisons) — les sorties/ventes sont calculées toutes seules.
-          </p>
-          <Tabs items={[{ value: 'gaz', label: 'Gaz' }, { value: 'lubrifiant', label: 'Lubrifiant' }]} value={stockTab} onChange={setStockTab} />
-          <div style={{ marginTop: 'var(--sp-4)' }}>
-            {(stockByCat[stockTab] || []).length
-              ? <DataTable columns={productColumns(stockTab)} rows={(stockByCat[stockTab] || []).map(s => ({ ...s, id: s.produit }))} />
-              : <p style={{ font: '400 12px/1 var(--font-ui)', color: 'var(--text-muted)', margin: 'var(--gutter-panel)' }}>Aucun comptage encore.</p>}
-          </div>
-        </Panel>
-      )}
-
-      {/* ===== SUGGESTIONS DE COMMANDE — gaz + lubrifiant, une seule liste — gérant/pompiste/admin ===== */}
-      {!isVendeuse && reorder.length > 0 && (
-        <Panel title="Suggestions de commande" meta="gaz + lubrifiant" flush>
-          <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', margin: 'var(--sp-4) var(--gutter-panel) 0' }}>
-            Cible = seuil ou consommation moyenne × (délai livraison + jours de sécurité), selon le plus élevé. Le nombre de cartons est calculé automatiquement.
-          </p>
-          <div style={{ marginTop: 'var(--sp-4)' }}>
-            <DataTable columns={reorderColumns} rows={reorder.map((r, i) => ({ ...r, id: i }))} />
-          </div>
-        </Panel>
-      )}
-
-      {/* ===== LUBRIFIANT — DÉTAIL — regroupe écart / historique en un seul bloc à onglets
-          (auparavant 2 panneaux séparés dispersés sur la page) — gérant/pompiste/admin ===== */}
-      {!isVendeuse && (ecartRows.length > 0 || (isAdmin && snapshots.length > 0)) && (() => {
-        const tabs = [
-          ecartRows.length > 0 && { value: 'ecart', label: 'Théorique vs déclaré' },
-          isAdmin && snapshots.length > 0 && { value: 'historique', label: 'Historique quotidien' },
-        ].filter(Boolean)
-        const active = tabs.some(t => t.value === lubTab) ? lubTab : tabs[0].value
-        return (
-          <Panel title="Lubrifiant — détail" flush>
-            <Tabs items={tabs} value={active} onChange={setLubTab} />
-            {active === 'ecart' && (<>
-              <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', margin: 'var(--sp-4) var(--gutter-panel) 0' }}>
-                Théorique = dernier stock déclaré + mouvements enregistrés depuis. Si l'écart n'est pas nul, cherche la cause (casse, perte…) avant de recourir à une correction d'inventaire.
-              </p>
-              <div style={{ marginTop: 'var(--sp-4)' }}>
-                <DataTable columns={ecartColumns} rows={ecartRows.map((r, i) => ({ ...r, id: i }))} />
-              </div>
-            </>)}
-            {active === 'historique' && (<>
-              <div style={{ display: 'flex', gap: 'var(--sp-3)', padding: 'var(--gutter-panel)', paddingBottom: 0 }}>
-                <Select size="sm" value={histProduit} onChange={e => setHistProduit(e.target.value)}
-                  options={[{ value: '', label: 'Tous les produits' }, ...products.filter(p => p.categorie === 'lubrifiant').map(p => ({ value: p.nom, label: p.nom }))]} />
-              </div>
-              <div style={{ marginTop: 'var(--sp-4)' }}>
-                {histRows.length ? <DataTable columns={histColumns} rows={histRows} /> : <PanelEmpty icon="calendar-days" label="Aucune déclaration figée pour l'instant" />}
-              </div>
-            </>)}
-          </Panel>
-        )
-      })()}
-
-      {/* ===== SORTIES DÉDUITES — admin seulement (analyse, repliée par défaut) ===== */}
-      {isAdmin && (() => {
-        const js = sorties.filter(s =>
-          (fYear === 'all' || (s.report_date || '').slice(0, 4) === fYear)
+      {/* ===== 3 ONGLETS PAR CATÉGORIE — chacun regroupe TOUTES les infos de son pôle
+          (stock, suggestions de commande, écarts, historique, sorties déduites, journal) —
+          au lieu de panneaux séparés dispersés sur la page. ===== */}
+      {!isVendeuse && (() => {
+        const catLabel = { gaz: 'Gaz', lubrifiant: 'Lubrifiant', superette: 'Supérette' }[catTab]
+        const reorderCat = reorder.filter(r => r.categorie === catTab)
+        const sortiesCat = sorties.filter(s => s.categorie === catTab
+          && (fYear === 'all' || (s.report_date || '').slice(0, 4) === fYear)
           && (fMonth === 'all' || (s.report_date || '').slice(5, 7) === fMonth))
-        return (
-          <Panel title="Sorties déduites (consommation)" meta="calculé automatiquement" flush
-            bodyStyle={openSorties ? undefined : { display: 'none' }}
-            actions={<IconButton icon="chevron-down" size="sm" title={openSorties ? 'Masquer' : 'Afficher'}
-              onClick={() => setOpenSorties(v => !v)} style={{ transform: openSorties ? 'rotate(180deg)' : 'none' }} />}>
-            <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', margin: 'var(--sp-4) var(--gutter-panel) 0' }}>
-              Sortie = stock déclaré la veille + entrées du jour − stock déclaré du jour. Négatif = entrée oubliée (à vérifier).
-            </p>
-            <div style={{ marginTop: 'var(--sp-4)' }}>
-              {js.length ? <DataTable columns={sortieColumns} rows={js.map((s, i) => ({ ...s, id: i }))} /> : <PanelEmpty icon="package" label="Rien à afficher (il faut au moins deux relevés consécutifs)" />}
-            </div>
-          </Panel>
-        )
-      })()}
-
-      {/* ===== JOURNAL — admin seulement (repliée par défaut) ===== */}
-      {isAdmin ? (() => {
-        const base = mvts
-        const years = [...new Set(base.map(m => (m.date_mouvement || '').slice(0, 4)).filter(Boolean))].sort()
-        const jm = base.filter(m =>
+        const mvtsCat = mvts.filter(m => m.categorie === catTab)
+        const years = [...new Set(mvtsCat.map(m => (m.date_mouvement || '').slice(0, 4)).filter(Boolean))].sort()
+        const jm = mvtsCat.filter(m =>
           (fYear === 'all' || (m.date_mouvement || '').slice(0, 4) === fYear)
           && (fMonth === 'all' || (m.date_mouvement || '').slice(5, 7) === fMonth)
           && (!fProduit || (m.produit || '').toLowerCase().includes(fProduit.toLowerCase())))
         const totVal = jm.reduce((s, m) => s + (m.valeur != null ? N(m.valeur) * (m.type === 'sortie' ? -1 : 1) : 0), 0)
+        const valeurCat = valeur.find(v => v.categorie === catTab)
+        const recent = mvtsCat.slice(0, 15)
+        const SectionLabel = ({ children }) => (
+          <div style={{ font: 'var(--fw-semibold) 11px/1 var(--font-ui)', textTransform: 'uppercase', letterSpacing: 'var(--ls-label)', color: 'var(--text-muted)', marginBottom: 'var(--sp-3)' }}>{children}</div>
+        )
+
         return (
-          <Panel title="Journal des mouvements" meta={`${jm.length}`} flush
-            bodyStyle={openJournal ? undefined : { display: 'none' }}
-            actions={<IconButton icon="chevron-down" size="sm" title={openJournal ? 'Masquer' : 'Afficher'}
-              onClick={() => setOpenJournal(v => !v)} style={{ transform: openJournal ? 'rotate(180deg)' : 'none' }} />}>
-            <div style={{ display: 'flex', gap: 'var(--sp-3)', flexWrap: 'wrap', alignItems: 'center', padding: 'var(--gutter-panel)', paddingBottom: 0 }}>
-              <Input size="sm" value={fProduit} onChange={e => setFProduit(e.target.value)} placeholder="Rechercher un produit…" style={{ flex: '1 1 180px' }} />
-              <Select size="sm" value={fYear} onChange={e => setFYear(e.target.value)} options={[{ value: 'all', label: 'Toutes années' }, ...years.map(y => ({ value: y, label: y }))]} />
-              <Select size="sm" value={fMonth} onChange={e => setFMonth(e.target.value)} options={[{ value: 'all', label: 'Tous mois' }, ...MONTHS.map(m => ({ value: m, label: m }))]} />
-              {(fYear !== 'all' || fMonth !== 'all' || fProduit) && <Button size="sm" onClick={() => { setFYear('all'); setFMonth('all'); setFProduit('') }}>Réinit.</Button>}
-              <Tag>Solde : {fcfa(totVal)}</Tag>
-            </div>
-            <div style={{ marginTop: 'var(--sp-4)' }}>
-              {jm.length ? <DataTable columns={journalColumns} rows={jm} /> : <PanelEmpty icon="calendar-days" label="Aucun mouvement sur cette période" />}
+          <Panel title={`${catLabel} — toutes les infos`} flush>
+            <Tabs items={[{ value: 'gaz', label: 'Gaz' }, { value: 'lubrifiant', label: 'Lubrifiant' }, { value: 'superette', label: 'Supérette' }]} value={catTab} onChange={setCatTab} />
+            <div style={{ padding: 'var(--gutter-panel)', display: 'flex', flexDirection: 'column', gap: 'var(--sp-6)' }}>
+
+              {catTab !== 'superette' ? (
+                <div>
+                  <SectionLabel>Stock restant</SectionLabel>
+                  <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', marginTop: 0 }}>
+                    Ce qu'il reste, d'après le <b>dernier comptage déclaré dans la Saisie du jour</b>. Ici tu n'ajoutes que les <b>entrées</b> (livraisons) — les sorties/ventes sont calculées toutes seules.
+                  </p>
+                  {(stockByCat[catTab] || []).length
+                    ? <DataTable columns={productColumns(catTab)} rows={(stockByCat[catTab] || []).map(s => ({ ...s, id: s.produit }))} />
+                    : <p style={{ font: '400 12px/1 var(--font-ui)', color: 'var(--text-muted)', margin: 0 }}>Aucun comptage encore.</p>}
+                </div>
+              ) : isAdmin && (
+                <div>
+                  <SectionLabel>Valorisation</SectionLabel>
+                  <Kpi label="Valeur stock supérette" value={fcfa(N(valeurCat?.valeur))} />
+                </div>
+              )}
+
+              {catTab !== 'superette' && reorderCat.length > 0 && (
+                <div>
+                  <SectionLabel>Suggestions de commande</SectionLabel>
+                  <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', marginTop: 0 }}>
+                    Cible = seuil ou consommation moyenne × (délai livraison + jours de sécurité), selon le plus élevé. Le nombre de cartons est calculé automatiquement.
+                  </p>
+                  <DataTable columns={reorderColumns} rows={reorderCat.map((r, i) => ({ ...r, id: i }))} />
+                </div>
+              )}
+
+              {catTab === 'lubrifiant' && ecartRows.length > 0 && (
+                <div>
+                  <SectionLabel>Théorique vs déclaré</SectionLabel>
+                  <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', marginTop: 0 }}>
+                    Théorique = dernier stock déclaré + mouvements enregistrés depuis. Si l'écart n'est pas nul, cherche la cause (casse, perte…) avant de recourir à une correction d'inventaire.
+                  </p>
+                  <DataTable columns={ecartColumns} rows={ecartRows.map((r, i) => ({ ...r, id: i }))} />
+                </div>
+              )}
+
+              {catTab === 'lubrifiant' && isAdmin && snapshots.length > 0 && (
+                <div>
+                  <SectionLabel>Historique quotidien</SectionLabel>
+                  <div style={{ marginBottom: 'var(--sp-3)' }}>
+                    <Select size="sm" value={histProduit} onChange={e => setHistProduit(e.target.value)}
+                      options={[{ value: '', label: 'Tous les produits' }, ...products.filter(p => p.categorie === 'lubrifiant').map(p => ({ value: p.nom, label: p.nom }))]} />
+                  </div>
+                  {histRows.length ? <DataTable columns={histColumns} rows={histRows} /> : <PanelEmpty icon="calendar-days" label="Aucune déclaration figée pour l'instant" />}
+                </div>
+              )}
+
+              {isAdmin && catTab !== 'superette' && (
+                <div>
+                  <SectionLabel>Sorties déduites (consommation)</SectionLabel>
+                  <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', marginTop: 0 }}>
+                    Sortie = stock déclaré la veille + entrées du jour − stock déclaré du jour. Négatif = entrée oubliée (à vérifier).
+                  </p>
+                  {sortiesCat.length ? <DataTable columns={sortieColumns} rows={sortiesCat.map((s, i) => ({ ...s, id: i }))} /> : <PanelEmpty icon="package" label="Rien à afficher (il faut au moins deux relevés consécutifs)" />}
+                </div>
+              )}
+
+              {isAdmin ? (
+                <div>
+                  <SectionLabel>Journal des mouvements</SectionLabel>
+                  <div style={{ display: 'flex', gap: 'var(--sp-3)', flexWrap: 'wrap', alignItems: 'center', marginBottom: 'var(--sp-3)' }}>
+                    <Input size="sm" value={fProduit} onChange={e => setFProduit(e.target.value)} placeholder="Rechercher un produit…" style={{ flex: '1 1 180px' }} />
+                    <Select size="sm" value={fYear} onChange={e => setFYear(e.target.value)} options={[{ value: 'all', label: 'Toutes années' }, ...years.map(y => ({ value: y, label: y }))]} />
+                    <Select size="sm" value={fMonth} onChange={e => setFMonth(e.target.value)} options={[{ value: 'all', label: 'Tous mois' }, ...MONTHS.map(m => ({ value: m, label: m }))]} />
+                    {(fYear !== 'all' || fMonth !== 'all' || fProduit) && <Button size="sm" onClick={() => { setFYear('all'); setFMonth('all'); setFProduit('') }}>Réinit.</Button>}
+                    <Tag>Solde : {fcfa(totVal)}</Tag>
+                  </div>
+                  {jm.length ? <DataTable columns={journalColumns} rows={jm} /> : <PanelEmpty icon="calendar-days" label="Aucun mouvement sur cette période" />}
+                </div>
+              ) : (
+                <div>
+                  <SectionLabel>Mes dernières entrées</SectionLabel>
+                  {recent.length ? <DataTable columns={recentColumns} rows={recent} /> : <PanelEmpty icon="calendar-days" label="Rien enregistré pour l'instant" />}
+                </div>
+              )}
             </div>
           </Panel>
         )
-      })() : (() => {
-        // gérant/pompiste/vendeuse : liste simple des dernières entrées (pas de filtres, pas de suppression)
-        const recent = mvts.filter(m => !isVendeuse || m.categorie === 'superette').slice(0, 15)
+      })()}
+
+      {/* ===== VENDEUSE — pas d'onglets par catégorie, juste ses dernières entrées supérette ===== */}
+      {isVendeuse && (() => {
+        const recent = mvts.filter(m => m.categorie === 'superette').slice(0, 15)
         return (
           <Panel title="Mes dernières entrées" flush>
             {recent.length ? <DataTable columns={recentColumns} rows={recent} /> : <PanelEmpty icon="calendar-days" label="Rien enregistré pour l'instant" />}
