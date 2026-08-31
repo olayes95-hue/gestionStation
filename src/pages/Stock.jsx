@@ -51,11 +51,10 @@ export default function Stock() {
   const [nm, setNm] = useState(blank('entree'))
   const [fYear, setFYear] = useState('all'); const [fMonth, setFMonth] = useState('all')
   const [fProduit, setFProduit] = useState('')
-  const [showCats, setShowCats] = useState(['gaz', 'lubrifiant'])  // pôles affichés dans "Stock restant" (admin)
+  const [stockTab, setStockTab] = useState('gaz')   // onglet actif de "Stock restant" (détail par produit)
   const [openSorties, setOpenSorties] = useState(false)
   const [openJournal, setOpenJournal] = useState(false)
   const [msg, setMsg] = useState(''); const [err, setErr] = useState('')
-  const toggleCat = (c) => setShowCats(p => p.includes(c) ? p.filter(x => x !== c) : [...p, c])
 
   function openAction(action, overrides) { setNm({ ...blank(action), ...overrides }); setAction(action); setErr('') }
   function blank(action) {
@@ -249,7 +248,7 @@ export default function Stock() {
       {/* ===== ACTIONS GUIDÉES — tout le monde, en premier ===== */}
       <Panel title={isVendeuse ? 'Supérette' : 'Que veux-tu faire ?'}>
         {!action ? (
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--sp-4)' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 'var(--sp-4)' }}>
             <ActionTile icon="download" title="J'ai reçu une livraison" desc="Ajouter au stock ce qui vient d'arriver" onClick={() => openAction('entree')} />
             <ActionTile icon="rotate-ccw" title="Autre mouvement" desc="Casse, perte, consommation interne, retour…" onClick={() => openAction('sortie')} />
             <ActionTile icon="wrench" title="Corriger après inventaire" desc="Ajuster si le compte réel diffère" onClick={() => openAction('ajustement')} />
@@ -334,10 +333,12 @@ export default function Stock() {
         )}
       </Panel>
 
-      {/* ===== STOCK BAS — résumé immédiat, gérant/pompiste/admin ===== */}
+      {/* ===== MÉTRIQUES — stock bas + valorisation, une seule ligne — gérant/pompiste/admin ===== */}
       {!isVendeuse && (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 'var(--sp-4)' }}>
           <Kpi label="Produits sous seuil" value={lowStockItems.length} status={lowStockItems.length > 0 ? 'alarm' : 'ok'} />
+          {isAdmin && valeur.map(v => <Kpi key={v.categorie} label={`Valeur stock ${v.categorie}`} value={fcfa(v.valeur)} />)}
+          {isAdmin && <Kpi label="VALEUR TOTALE" value={fcfa(valTotal)} status="accent" />}
         </div>
       )}
       {!isVendeuse && lowStockItems.length > 0 && (
@@ -346,31 +347,17 @@ export default function Stock() {
         </AlertBanner>
       )}
 
-      {/* ===== VALORISATION — admin ===== */}
-      {isAdmin && (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 'var(--sp-4)' }}>
-          {valeur.map(v => <Kpi key={v.categorie} label={`Valeur stock ${v.categorie}`} value={fcfa(v.valeur)} />)}
-          <Kpi label="VALEUR TOTALE" value={fcfa(valTotal)} status="accent" />
-        </div>
-      )}
-
-      {/* ===== STOCK ACTUEL (gaz/lub) — gérant/pompiste/admin ===== */}
+      {/* ===== STOCK ACTUEL (gaz/lub) — détail par produit dans un onglet — gérant/pompiste/admin ===== */}
       {!isVendeuse && (
-        <Panel title="Stock restant" actions={isAdmin && ['gaz', 'lubrifiant'].map(c => (
-          <Button key={c} size="sm" tone={showCats.includes(c) ? 'primary' : 'outline'} onClick={() => toggleCat(c)} style={{ textTransform: 'capitalize' }}>{c}</Button>
-        ))}>
-          <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', marginTop: 0 }}>
+        <Panel title="Stock restant" flush>
+          <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', margin: 'var(--sp-4) var(--gutter-panel) 0' }}>
             Ce qu'il reste, d'après le <b>dernier comptage déclaré dans la Saisie du jour</b>. Ici tu n'ajoutes que les <b>entrées</b> (livraisons) — les sorties/ventes sont calculées toutes seules.
           </p>
-          <div style={{ display: 'flex', gap: 'var(--sp-4)', flexWrap: 'wrap' }}>
-            {(isAdmin ? ['gaz', 'lubrifiant'].filter(c => showCats.includes(c)) : ['gaz', 'lubrifiant']).map(cat => (
-              <div key={cat} style={{ flex: '1 1 260px' }}>
-                <div style={{ font: 'var(--fw-semibold) 10px/1 var(--font-ui)', textTransform: 'uppercase', letterSpacing: 'var(--ls-micro)', color: 'var(--text-muted)', marginBottom: 'var(--sp-2)' }}>{cat}</div>
-                {(stockByCat[cat] || []).length
-                  ? <DataTable columns={productColumns(cat)} rows={(stockByCat[cat] || []).map(s => ({ ...s, id: s.produit }))} />
-                  : <p style={{ font: '400 12px/1 var(--font-ui)', color: 'var(--text-muted)', margin: 0 }}>Aucun comptage encore.</p>}
-              </div>
-            ))}
+          <Tabs items={[{ value: 'gaz', label: 'Gaz' }, { value: 'lubrifiant', label: 'Lubrifiant' }]} value={stockTab} onChange={setStockTab} />
+          <div style={{ marginTop: 'var(--sp-4)' }}>
+            {(stockByCat[stockTab] || []).length
+              ? <DataTable columns={productColumns(stockTab)} rows={(stockByCat[stockTab] || []).map(s => ({ ...s, id: s.produit }))} />
+              : <p style={{ font: '400 12px/1 var(--font-ui)', color: 'var(--text-muted)', margin: 'var(--gutter-panel)' }}>Aucun comptage encore.</p>}
           </div>
         </Panel>
       )}
