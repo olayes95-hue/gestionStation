@@ -328,11 +328,13 @@ export default function Stations() {
                 <Field label="Gasoil" style={{ flex: '1 1 140px' }}><Input type="number" numeric value={settings.gasoil_pa ?? ''} onChange={e => setSettings({ ...settings, gasoil_pa: e.target.value })} /></Field>
               </div>
             </FormSection>
-            <FormSection title="Taux de commission autres pôles (%)">
-              <div style={{ display: 'flex', gap: 'var(--sp-4)', flexWrap: 'wrap' }}>
-                <Field label="Gaz + lubrifiant" style={{ flex: '1 1 140px' }}><Input type="number" numeric value={settings.taux_gaz ?? ''} onChange={e => setSettings({ ...settings, taux_gaz: e.target.value })} /></Field>
-                <Field label="Supérette" style={{ flex: '1 1 140px' }}><Input type="number" numeric value={settings.taux_superette ?? ''} onChange={e => setSettings({ ...settings, taux_superette: e.target.value })} /></Field>
-              </div>
+            <FormSection title="Taux de commission supérette (%)">
+              <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', marginTop: 0 }}>
+                Gaz et lubrifiant ne sont plus estimés à un taux fixe : leur commission se
+                calcule désormais réellement à partir des prix de vente/d'achat renseignés
+                dans Produits &amp; prix et des quantités vendues déclarées chaque jour.
+              </p>
+              <Field label="Supérette" style={{ maxWidth: 160 }}><Input type="number" numeric value={settings.taux_superette ?? ''} onChange={e => setSettings({ ...settings, taux_superette: e.target.value })} /></Field>
             </FormSection>
             <FormSection title="Seuil de rupture cuve (L)">
               <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', marginTop: 0 }}>

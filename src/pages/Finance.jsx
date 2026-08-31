@@ -39,6 +39,7 @@ export default function Finance() {
   const { session, can } = useAuth()
   const { stationId } = useStation()
   const [ventes, setVentes] = useState([])
+  const [commissionReelle, setCommissionReelle] = useState([])   // v_commission_reelle_mensuelle — quantité vendue × (prix vente − prix achat), gaz + lubrifiant
   const [charges, setCharges] = useState([])
   const [expenses, setExpenses] = useState([])
   const [pertes, setPertes] = useState([])
@@ -72,7 +73,7 @@ export default function Finance() {
 
   async function load() {
     if (!stationId) return
-    const [v, c, e, st, p, sv, ls, pr, fv, ou, br, co, rt, cb, sb, mb] = await Promise.all([
+    const [v, c, e, st, p, sv, ls, pr, fv, ou, br, co, rt, cb, sb, mb, cr] = await Promise.all([
       supabase.from('v_ventes_mensuelles').select('*').eq('station_id', stationId).order('mois'),
       supabase.from('charges').select('*').eq('station_id', stationId),
       supabase.from('expenses').select('report_date,categorie,montant').eq('station_id', stationId),
@@ -89,8 +90,9 @@ export default function Finance() {
       supabase.from('v_compte_bancaire').select('*').eq('station_id', stationId).maybeSingle(),
       supabase.from('compte_bancaire_solde_initial').select('*').eq('station_id', stationId).maybeSingle(),
       supabase.from('compte_bancaire_mouvements').select('*').eq('station_id', stationId).order('date_mouvement', { ascending: false }),
+      supabase.from('v_commission_reelle_mensuelle').select('*').eq('station_id', stationId),
     ])
-    setVentes(v.data || []); setCharges(c.data || []); setExpenses(e.data || [])
+    setVentes(v.data || []); setCharges(c.data || []); setExpenses(e.data || []); setCommissionReelle(cr.data || [])
     if (st.data) setSettings(st.data)
     setPertes(p.data || []); setStockVal(sv.data || [])
     setBonsRestant(N(ls.data?.bons_restant))
@@ -127,8 +129,11 @@ export default function Finance() {
   const V = ventes.filter(v => inPeriod(v.mois))
   const sum = (k) => V.reduce((s, v) => s + N(v[k]), 0)
   const commCarb = sum('commission_carburant')
-  // commissions AUTO des autres pôles = ventes × taux
-  const commGazLub = (sum('ventes_gaz') + sum('ventes_lubrifiant')) * N(settings.taux_gaz) / 100
+  // Commission gaz + lubrifiant RÉELLE (quantité vendue déclarée × (prix vente − prix achat)),
+  // plus une estimation à taux fixe pour la supérette (pas de quantité par produit là-bas,
+  // suivie en valeur globale — hors périmètre du calcul réel).
+  const CR = commissionReelle.filter(c => inPeriod(c.mois))
+  const commGazLub = CR.reduce((s, c) => s + N(c.commission_gaz) + N(c.commission_lubrifiant), 0)
   const commSuperette = sum('ventes_superette') * N(settings.taux_superette) / 100
 
   // Rapprochement des bons : seul contrôle qui confronte le déclaratif du gérant (ventes_bon,
@@ -188,7 +193,8 @@ export default function Finance() {
   const Vprev = ventes.filter(v => prevInPeriod(v.mois))
   const sumPrev = (k) => Vprev.reduce((s, v) => s + N(v[k]), 0)
   const commCarbPrev = sumPrev('commission_carburant')
-  const commGazLubPrev = (sumPrev('ventes_gaz') + sumPrev('ventes_lubrifiant')) * N(settings.taux_gaz) / 100
+  const CRprev = commissionReelle.filter(c => prevInPeriod(c.mois))
+  const commGazLubPrev = CRprev.reduce((s, c) => s + N(c.commission_gaz) + N(c.commission_lubrifiant), 0)
   const commSuperettePrev = sumPrev('ventes_superette') * N(settings.taux_superette) / 100
   const autoChargesPrev = autoChargesFor(prevInPeriod)
   const totAutoPrev = Object.values(autoChargesPrev).reduce((s, v) => s + v, 0)
@@ -367,7 +373,7 @@ export default function Finance() {
     const columns = [['Poste', 'poste'], ['Montant', 'montant']]
     const data = [
       { poste: 'Commission carburant', montant: Math.round(commCarb) },
-      { poste: `Commission gaz + lubrifiant (${settings.taux_gaz}%)`, montant: Math.round(commGazLub) },
+      { poste: 'Commission gaz + lubrifiant (prix vente − prix achat)', montant: Math.round(commGazLub) },
       { poste: `Commission supérette (${settings.taux_superette}%)`, montant: Math.round(commSuperette) },
       { poste: 'Autres produits', montant: Math.round(autresProduits) },
       { poste: '= PRODUITS', montant: Math.round(produits) },
@@ -429,7 +435,8 @@ export default function Finance() {
     const Vm = ventes.filter(v => v.mois === m)
     const s = (k) => Vm.reduce((sum, v) => sum + N(v[k]), 0)
     const cCarb = s('commission_carburant')
-    const cGL = (s('ventes_gaz') + s('ventes_lubrifiant')) * N(settings.taux_gaz) / 100
+    const CRm = commissionReelle.filter(c => c.mois === m)
+    const cGL = CRm.reduce((sum, c) => sum + N(c.commission_gaz) + N(c.commission_lubrifiant), 0)
     const cSup = s('ventes_superette') * N(settings.taux_superette) / 100
     const auto = autoChargesFor(em => em === m)
     const totA = Object.values(auto).reduce((sum, v) => sum + v, 0)
@@ -551,7 +558,7 @@ export default function Finance() {
         <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-2)' }}>
           <LedgerHead>Produits (commissions, auto)</LedgerHead>
           <LedgerRow label="Commission carburant" value={fcfa(commCarb)} />
-          <LedgerRow label={`Commission gaz + lubrifiant (${settings.taux_gaz}%)`} value={fcfa(commGazLub)} />
+          <LedgerRow label="Commission gaz + lubrifiant (prix vente − prix achat)" value={fcfa(commGazLub)} />
           <LedgerRow label={`Commission supérette (${settings.taux_superette}%)`} value={fcfa(commSuperette)} />
           {autresProduits > 0 && <LedgerRow label="Autres produits (saisis)" value={fcfa(autresProduits)} />}
           <LedgerHead>Charges</LedgerHead>

@@ -55,6 +55,8 @@ export default function Submit() {
   const [f, setF] = useState(EMPTY)
   const [lub, setLub] = useState({})
   const [lubSplit, setLubSplit] = useState({})   // {nom: {cartons, unites}} — édition assistée carton/bidon, purement local
+  const [lubVendu, setLubVendu] = useState({})   // {nom: quantité vendue aujourd'hui} — pour la commission réelle (prix vente − prix achat), plus une estimation à %
+  const [lubVenduSplit, setLubVenduSplit] = useState({})
   const [lubTheorique, setLubTheorique] = useState({})   // {nom: stock_theorique} — v_stock_theorique, pour l'écart en direct
   const [expenses, setExpenses] = useState([])
   const [deposits, setDeposits] = useState([])
@@ -155,10 +157,10 @@ export default function Submit() {
       const c = { ...EMPTY }
       Object.keys(EMPTY).forEach(k => c[k] = r.data[k] ?? '')
       THOUSANDS_FIELDS.forEach(k => { if (c[k] !== '') c[k] = formatThousands(String(c[k])) })
-      setF(c); setLub(r.data.lubrifiant_stock || {})
+      setF(c); setLub(r.data.lubrifiant_stock || {}); setLubVendu(r.data.lubrifiant_vendu || {})
     }
-    else { setF({ ...EMPTY, ess_pu: settings.essence_pv, gas_pu: settings.gasoil_pv }); setLub({}) }
-    setLubSplit({})
+    else { setF({ ...EMPTY, ess_pu: settings.essence_pv, gas_pu: settings.gasoil_pv }); setLub({}); setLubVendu({}) }
+    setLubSplit({}); setLubVenduSplit({})
     setExpenses(ex.data || [])
     setDeposits(dep.data || [])
     setDeliveries(dl.data || [])
@@ -366,7 +368,7 @@ export default function Submit() {
     setBusy(true); setErr(''); setErrTarget('top'); setMsg('')
     const sid = stationId
     try {
-      const payload = { report_date: date, station_id: sid, created_by: session.user.id, lubrifiant_stock: Object.keys(lub).length ? lub : null }
+      const payload = { report_date: date, station_id: sid, created_by: session.user.id, lubrifiant_stock: Object.keys(lub).length ? lub : null, lubrifiant_vendu: Object.keys(lubVendu).length ? lubVendu : null }
       NUMFIELDS.forEach(k => payload[k] = f[k] === '' ? null : numFR(f[k]))
       payload.note = f.note || null
       // Relevé du matin FIGÉ, distinct de ess_stock/gas_stock (qui continuent de refléter le
@@ -779,6 +781,44 @@ export default function Submit() {
                   <NumericStepper value={Number(f['gaz_vendu_' + k]) || 0} onChange={v => set('gaz_vendu_' + k, String(v))} suffix="b." />
                 </div>
               ))}
+            </div>
+          </FormSection>
+          <FormSection title="Lubrifiants vendus" style={{ marginTop: 'var(--sp-4)' }}>
+            <p style={{ font: '400 11px/1.4 var(--font-ui)', color: 'var(--text-muted)', marginTop: 0 }}>
+              Quantité vendue par référence aujourd'hui — sert à calculer la vraie commission (prix de vente − prix d'achat), plus une estimation à %.
+            </p>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 'var(--sp-4)' }}>
+              {lubTypes.map(pr => {
+                const t = pr.nom
+                const hasCondit = N(pr.conditionnement_qte) > 0
+                return (
+                  <div key={t} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-2)' }}>
+                    <span style={{ font: '400 12px/1.2 var(--font-ui)', color: 'var(--text-body)' }}>{t}</span>
+                    {!hasCondit ? (
+                      <Input size="sm" type="text" inputMode="numeric" numeric value={lubVendu[t] ?? ''} placeholder="0" style={{ width: 90 }}
+                        onChange={e => setLubVendu(p => ({ ...p, [t]: e.target.value === '' ? undefined : Number(e.target.value) }))} />
+                    ) : (() => {
+                      const split = lubVenduSplit[t] || { cartons: '', unites: '' }
+                      const updateSplit = (patch) => {
+                        const next = { ...split, ...patch }
+                        setLubVenduSplit(p => ({ ...p, [t]: next }))
+                        const total = N(next.cartons) * N(pr.conditionnement_qte) + N(next.unites)
+                        setLubVendu(p => ({ ...p, [t]: total || undefined }))
+                      }
+                      return (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-2)' }}>
+                          <Input size="sm" type="text" inputMode="numeric" numeric value={split.cartons} placeholder="0" style={{ width: 55 }}
+                            onChange={e => updateSplit({ cartons: e.target.value })} />
+                          <span style={{ font: '400 10px/1 var(--font-ui)', color: 'var(--text-muted)' }}>{pr.conditionnement_nom || 'carton'}(s) +</span>
+                          <Input size="sm" type="text" inputMode="numeric" numeric value={split.unites} placeholder="0" style={{ width: 55 }}
+                            onChange={e => updateSplit({ unites: e.target.value })} />
+                          <span style={{ font: '400 10px/1 var(--font-ui)', color: 'var(--text-muted)' }}>{pr.unite || 'unité'}(s) = {N(lubVendu[t])}</span>
+                        </div>
+                      )
+                    })()}
+                  </div>
+                )
+              })}
             </div>
           </FormSection>
           <div style={{ display: 'flex', gap: 'var(--sp-4)', flexWrap: 'wrap', marginTop: 'var(--sp-4)' }}>
