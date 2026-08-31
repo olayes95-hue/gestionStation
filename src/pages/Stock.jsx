@@ -175,7 +175,7 @@ export default function Stock() {
   const reorderColumns = [
     { key: 'produit', header: 'Produit' },
     { key: 'stock_theorique_actuel', header: 'Stock', numeric: true, align: 'right', render: r => N(r.stock_theorique_actuel) },
-    { key: 'conso_moy_jour', header: 'Conso/jour', numeric: true, align: 'right', muted: true, render: r => N(r.conso_moy_jour).toFixed(1) },
+    { key: 'conso_moy_jour', header: 'Conso/jour', numeric: true, align: 'right', muted: true, render: r => (Number(r.conso_moy_jour) || 0).toFixed(1) },
     { key: 'stock_cible', header: 'Cible', numeric: true, align: 'right', muted: true, render: r => N(r.stock_cible) },
     { key: 'quantite_a_commander', header: 'À commander', numeric: true, align: 'right', render: r => {
       if (r.commande_en_cours) return <Badge tone="info">Déjà en cours</Badge>
