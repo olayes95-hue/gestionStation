@@ -18,6 +18,24 @@ import { Tabs } from '../ds/octane/components/navigation/Tabs.jsx'
 import { Kpi } from '../lib/Kpi.jsx'
 
 const N = (v) => (v ? (numFR(v) ?? 0) : 0)
+const PAGE_SIZE = 15
+
+// Pagination simple et fixe (15 lignes/page) pour les tableaux de journalisation
+// (Journal des mouvements, Sorties déduites, Historique quotidien) — pas de sélecteur
+// de taille, juste précédent/suivant, pour rester léger sur des tableaux déjà denses.
+function Pager({ page, setPage, total }) {
+  const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE))
+  const clamped = Math.min(Math.max(1, page), pageCount)
+  if (pageCount <= 1) return null
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 'var(--sp-3)', marginTop: 'var(--sp-3)', font: '400 11px/1 var(--font-data)', color: 'var(--text-muted)' }}>
+      <Button size="sm" disabled={clamped <= 1} onClick={() => setPage(clamped - 1)}>‹ Précédent</Button>
+      <span>Page {clamped} / {pageCount}</span>
+      <Button size="sm" disabled={clamped >= pageCount} onClick={() => setPage(clamped + 1)}>Suivant ›</Button>
+    </div>
+  )
+}
+const pageSlice = (rows, page) => { const pageCount = Math.max(1, Math.ceil(rows.length / PAGE_SIZE)); const p = Math.min(Math.max(1, page), pageCount); return rows.slice((p - 1) * PAGE_SIZE, p * PAGE_SIZE) }
 const MONTHS = ['01','02','03','04','05','06','07','08','09','10','11','12']
 const CATS = [['gaz', 'Gaz'], ['lubrifiant', 'Lubrifiant'], ['superette', 'Supérette']]
 const MOVEMENT_LABEL = { entree: 'Livraison', sortie: 'Sortie', ajustement: 'Inventaire' }
@@ -51,6 +69,10 @@ export default function Stock() {
   const [fProduit, setFProduit] = useState('')
   const [catTab, setCatTab] = useState('gaz')   // onglet de catégorie actif (Gaz / Lubrifiant / Supérette) — regroupe toutes les infos de cette catégorie
   const [msg, setMsg] = useState(''); const [err, setErr] = useState('')
+  const [sortiesPage, setSortiesPage] = useState(1)
+  const [histPage, setHistPage] = useState(1)
+  const [journalPage, setJournalPage] = useState(1)
+  useEffect(() => { setSortiesPage(1); setHistPage(1); setJournalPage(1) }, [catTab])
 
   function openAction(action, overrides) { setNm({ ...blank(action), ...overrides }); setAction(action); setErr('') }
   function blank(action) {
@@ -412,7 +434,10 @@ export default function Stock() {
                     <Select size="sm" value={histProduit} onChange={e => setHistProduit(e.target.value)}
                       options={[{ value: '', label: 'Tous les produits' }, ...products.filter(p => p.categorie === 'lubrifiant').map(p => ({ value: p.nom, label: p.nom }))]} />
                   </div>
-                  {histRows.length ? <DataTable columns={histColumns} rows={histRows} /> : <PanelEmpty icon="calendar-days" label="Aucune déclaration figée pour l'instant" />}
+                  {histRows.length ? (<>
+                    <DataTable columns={histColumns} rows={pageSlice(histRows, histPage)} />
+                    <Pager page={histPage} setPage={setHistPage} total={histRows.length} />
+                  </>) : <PanelEmpty icon="calendar-days" label="Aucune déclaration figée pour l'instant" />}
                 </div>
               )}
 
@@ -422,7 +447,10 @@ export default function Stock() {
                   <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', marginTop: 0 }}>
                     Sortie = stock déclaré la veille + entrées du jour − stock déclaré du jour. Négatif = entrée oubliée (à vérifier).
                   </p>
-                  {sortiesCat.length ? <DataTable columns={sortieColumns} rows={sortiesCat.map((s, i) => ({ ...s, id: i }))} /> : <PanelEmpty icon="package" label="Rien à afficher (il faut au moins deux relevés consécutifs)" />}
+                  {sortiesCat.length ? (<>
+                    <DataTable columns={sortieColumns} rows={pageSlice(sortiesCat.map((s, i) => ({ ...s, id: i })), sortiesPage)} />
+                    <Pager page={sortiesPage} setPage={setSortiesPage} total={sortiesCat.length} />
+                  </>) : <PanelEmpty icon="package" label="Rien à afficher (il faut au moins deux relevés consécutifs)" />}
                 </div>
               )}
 
@@ -436,7 +464,10 @@ export default function Stock() {
                     {(fYear !== 'all' || fMonth !== 'all' || fProduit) && <Button size="sm" onClick={() => { setFYear('all'); setFMonth('all'); setFProduit('') }}>Réinit.</Button>}
                     <Tag>Solde : {fcfa(totVal)}</Tag>
                   </div>
-                  {jm.length ? <DataTable columns={journalColumns} rows={jm} /> : <PanelEmpty icon="calendar-days" label="Aucun mouvement sur cette période" />}
+                  {jm.length ? (<>
+                    <DataTable columns={journalColumns} rows={pageSlice(jm, journalPage)} />
+                    <Pager page={journalPage} setPage={setJournalPage} total={jm.length} />
+                  </>) : <PanelEmpty icon="calendar-days" label="Aucun mouvement sur cette période" />}
                 </div>
               ) : (
                 <div>
