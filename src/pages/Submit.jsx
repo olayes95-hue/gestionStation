@@ -355,9 +355,9 @@ export default function Submit() {
       const parts = []
       for (const n of machineNums(nombreMachines)) {
         const essNow = N(f['e' + n + '_m']), essPrev = N(prevMorning.raw?.['e' + n + '_m'])
-        if (essNow > 0 && essPrev > 0 && essNow <= essPrev) parts.push(`essence pompe ${n} : ${Math.round(essNow)} ≤ ${Math.round(essPrev)}`)
+        if (essNow > 0 && essPrev > 0 && essNow < essPrev) parts.push(`essence pompe ${n} : ${Math.round(essNow)} < ${Math.round(essPrev)}`)
         const gasNow = N(f['g' + n + '_m']), gasPrev = N(prevMorning.raw?.['g' + n + '_m'])
-        if (gasNow > 0 && gasPrev > 0 && gasNow <= gasPrev) parts.push(`gasoil pompe ${n} : ${Math.round(gasNow)} ≤ ${Math.round(gasPrev)}`)
+        if (gasNow > 0 && gasPrev > 0 && gasNow < gasPrev) parts.push(`gasoil pompe ${n} : ${Math.round(gasNow)} < ${Math.round(gasPrev)}`)
       }
       if (parts.length) {
         setMeterWarn(`Index du matin incohérent — ${parts.join(', ')} — relevé du ${frDate(prevMorning.date)}. Un index de pompe ne peut que MONTER : sans ça, l'écart compteur sera décalé d'un jour.`)
