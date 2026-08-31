@@ -76,7 +76,7 @@ function Shell({ children }) {
     { to: '/aide', icon: 'circle-question-mark', label: 'Aide' },
     ...(hasOperationalAccess ? [{ to: '/stock', icon: isVendeuse ? 'shopping-cart' : 'package', label: isVendeuse ? 'Supérette' : 'Stock & mouvements' }] : []),
     ...((hasOperationalAccess || can('validate_orders')) ? [{ to: '/commandes', icon: 'truck', label: 'Commandes' }] : []),
-    ...(hasOperationalAccess ? [{ to: '/controles', icon: 'shield-check', label: 'Contrôles ANM' }] : []),
+    ...(hasOperationalAccess ? [{ to: '/controles', icon: 'shield-check', label: 'Contrôles & interventions' }] : []),
     ...(pilotage.length ? [{ section: 'Pilotage' }, ...pilotage] : []),
     ...(finance.length ? [{ section: 'Finance' }, ...finance] : []),
     ...(administration.length ? [{ section: 'Administration' }, ...administration] : []),
