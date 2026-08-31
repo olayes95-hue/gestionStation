@@ -323,26 +323,18 @@ export default function Orders() {
       {err && <AlertBanner tone="alarm" title="Erreur">{err}</AlertBanner>}
       {matinWarn && <AlertBanner tone="warn" title="Pense au relevé du matin">{matinWarn}</AlertBanner>}
 
-      {/* ===== À TRAITER — résumé cliquable, filtre directement le tableau ===== */}
-      {(nbAValider > 0 || nbALancer > 0 || nbAReceptionner > 0) && (
+      {/* ===== À TRAITER + COMMANDES EN COURS PAR PÔLE — une seule ligne de métriques, cliquables ===== */}
+      {(nbAValider > 0 || nbALancer > 0 || nbAReceptionner > 0 || commandesEnCoursParPole.some(p => p.nb > 0)) && (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 'var(--sp-4)' }}>
           {nbAValider > 0 && <div onClick={() => setFStatut('proposee')} style={{ cursor: 'pointer' }}><Kpi label="À valider" value={nbAValider} status="warn" /></div>}
           {nbALancer > 0 && <div onClick={() => setFStatut('validee')} style={{ cursor: 'pointer' }}><Kpi label="À lancer" value={nbALancer} status="info" /></div>}
           {nbAReceptionner > 0 && <div onClick={() => setFStatut('a_receptionner')} style={{ cursor: 'pointer' }}><Kpi label="À réceptionner" value={nbAReceptionner} status="alarm" /></div>}
+          {commandesEnCoursParPole.map(p => p.nb > 0 && (
+            <div key={p.key} onClick={() => { setFCat(p.key); setFStatut('tous') }} style={{ cursor: 'pointer' }}>
+              <Kpi label={p.label} value={fcfa(p.value)} sub={p.detail} status="info" />
+            </div>
+          ))}
         </div>
-      )}
-
-      {/* ===== COMMANDES EN COURS PAR PÔLE — montant total engagé, tous statuts non soldés ===== */}
-      {commandesEnCoursParPole.some(p => p.nb > 0) && (
-        <Panel title="Commandes en cours par pôle" meta={`${commandesEnCoursParPole.reduce((s, p) => s + p.nb, 0)} commande(s) engagée(s)`}>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 'var(--sp-4)' }}>
-            {commandesEnCoursParPole.map(p => (
-              <div key={p.key} onClick={() => { setFCat(p.key); setFStatut('tous') }} style={{ cursor: 'pointer' }}>
-                <Kpi label={p.label} value={fcfa(p.value)} sub={p.detail || 'aucune'} status={p.nb > 0 ? 'info' : undefined} />
-              </div>
-            ))}
-          </div>
-        </Panel>
       )}
 
       {can('manage_orders') && !showPropose && (
