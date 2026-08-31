@@ -297,6 +297,21 @@ export default function Submit() {
     if (deposits.some(d => N(d.montant) > 0 && d.periode_debut > d.periode_fin)) {
       fail('La date de début d\'un versement doit être avant sa date de fin.', 'deposits', depositsRef); return
     }
+    // Doublon DANS la même saisie : deux lignes identiques (même pôle/période/montant) ajoutées
+    // par erreur — repéré en prod (double-tap sur "+ Ajouter un versement" sur un téléphone lent,
+    // photo du même bordereau collée deux fois sans que le gérant remarque la 2e ligne créée).
+    for (let i = 0; i < deposits.length; i++) {
+      const d = deposits[i]
+      if (N(d.montant) <= 0 || !d.periode_debut || !d.periode_fin || d.forceDoublon) continue
+      const twin = deposits.find((x, j) => j !== i && N(x.montant) > 0 && !x.forceDoublon
+        && x.pole === d.pole && x.periode_debut === d.periode_debut && x.periode_fin === d.periode_fin
+        && Math.abs(N(x.montant) - N(d.montant)) < 1)
+      if (twin) {
+        setDeposits(p => p.map(x => x === d ? { ...x, _dupWarn: `Deux lignes identiques (${d.pole}, ${frDate(d.periode_debut)} → ${frDate(d.periode_fin)}, ${fcfa(N(d.montant))}) dans cette saisie — retire l'une des deux, ou coche « forcer » si ce sont bien deux versements distincts.` } : x))
+        fail('Versement en double dans cette saisie — voir le détail ci-dessous.', 'deposits', depositsRef)
+        return
+      }
+    }
     // Doublon : même pôle + même période + même montant déjà déclaré un AUTRE jour (celui-ci
     // remplace déjà ses propres versements à l'enregistrement, donc on ne se compare pas à
     // soi-même) — signale sans bloquer définitivement, le gérant/admin peut forcer si ce sont
@@ -881,7 +896,14 @@ export default function Submit() {
                 </div>
               ))}
             </div>
-            <Button onClick={() => setDeposits(p => [...p, { pole: 'carburant', periode_debut: date, periode_fin: date }])} style={{ marginTop: 'var(--sp-4)' }}>+ Ajouter un versement</Button>
+            <Button onClick={() => setDeposits(p => {
+              const last = p[p.length - 1]
+              // Évite une 2e ligne vide en double si le bouton est tapé deux fois rapidement
+              // (téléphone lent, pas de retour visuel immédiat) — la ligne précédente doit déjà
+              // avoir un montant ou une photo avant d'en ouvrir une nouvelle.
+              if (last && !N(last.montant) && !last._file && !last.photo_path) return p
+              return [...p, { pole: 'carburant', periode_debut: date, periode_fin: date }]
+            })} style={{ marginTop: 'var(--sp-4)' }}>+ Ajouter un versement</Button>
           </>}
         </Panel>
       </>)}
