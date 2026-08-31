@@ -11,6 +11,7 @@ import { Select } from './ds/octane/components/forms/Select.jsx'
 import { Tag } from './ds/octane/components/core/Tag.jsx'
 import { Icon } from './ds/octane/components/core/Icon.jsx'
 import { Viewport } from './ds/octane/components/core/Viewport.jsx'
+import { Button } from './ds/octane/components/core/Button.jsx'
 
 // Chargées à la demande : réduit fortement le bundle initial (surtout pour gérant/vendeuse).
 const Submit = lazy(() => import('./pages/Submit.jsx'))
@@ -108,10 +109,27 @@ function Shell({ children }) {
   )
 }
 
+// Compte créé (auth.users + profils existent) mais pas encore validé par un admin — ou
+// validé mais sans station attribuée (le trigger d'inscription ne fixe jamais station_id).
+// Bloque tout accès opérationnel : mieux vaut un message clair qu'une appli vide/cassée.
+function PendingApproval() {
+  const { session, signOut } = useAuth()
+  return (
+    <div className="center" style={{ flexDirection: 'column', gap: 'var(--sp-4)', textAlign: 'center', padding: 'var(--sp-6)' }}>
+      <h2 style={{ font: 'var(--fw-semibold) 18px/1.3 var(--font-ui)', color: 'var(--text-primary)', margin: 0 }}>Compte en attente de validation</h2>
+      <p style={{ font: '400 13px/1.5 var(--font-ui)', color: 'var(--text-muted)', maxWidth: 420, margin: 0 }}>
+        Ton compte{session?.user?.email ? ` (${session.user.email})` : ''} a bien été créé, mais un administrateur doit encore le valider et t'attribuer une station avant que tu puisses accéder à l'application. Reviens plus tard, ou préviens l'administrateur.
+      </p>
+      <Button onClick={signOut}>Se déconnecter</Button>
+    </div>
+  )
+}
+
 export default function App() {
   const { session, loading, profile, isAdmin, isVendeuse, isPompiste, can } = useAuth()
   if (loading) return <div className="center">Chargement…</div>
   if (!session) return <Login />
+  if (!profile?.approved) return <PendingApproval />
 
   const hasOperationalAccess = isAdmin || profile?.role === 'gerant' || isPompiste || isVendeuse || can('manage_orders')
   const opRoute = (el) => hasOperationalAccess ? el : <Navigate to={defaultRoute()} />

@@ -8,6 +8,7 @@ import { Input } from '../ds/octane/components/forms/Input.jsx'
 import { Select } from '../ds/octane/components/forms/Select.jsx'
 import { Checkbox } from '../ds/octane/components/forms/Checkbox.jsx'
 import { AlertBanner } from '../ds/octane/components/feedback/AlertBanner.jsx'
+import { Badge } from '../ds/octane/components/core/Badge.jsx'
 import { DataTable } from '../ds/octane/components/data/DataTable.jsx'
 import { Tabs } from '../ds/octane/components/navigation/Tabs.jsx'
 
@@ -19,7 +20,7 @@ const SINGLE_STATION_ROLES = ['gerant', 'pompiste', 'vendeuse', 'admin']
 const groupBy = (rows, key) => rows.reduce((m, r) => { (m[r[key] || '—'] = m[r[key] || '—'] || []).push(r); return m }, {})
 
 export default function Stations() {
-  const { isAdmin, can } = useAuth()
+  const { isAdmin, can, session } = useAuth()
   const [stations, setStations] = useState([])
   const [users, setUsers] = useState([])
   const [settings, setSettings] = useState(null)
@@ -44,7 +45,7 @@ export default function Stations() {
   async function load() {
     const [s, u, st, r, p, rp, ps] = await Promise.all([
       supabase.from('stations').select('*').order('id'),
-      supabase.from('profiles').select('id, full_name, role, station_id').order('full_name'),
+      supabase.from('profiles').select('id, full_name, role, station_id, approved').order('full_name'),
       supabase.from('settings').select('*').eq('id', 1).maybeSingle(),
       supabase.from('roles').select('*').order('created_at'),
       supabase.from('permissions').select('*').order('category').order('label'),
@@ -77,18 +78,29 @@ export default function Stations() {
     const { error } = await supabase.from('stations').insert({ nom: newName })
     if (error) fail(error); else { setNewName(''); load(); flash('Station ajoutée') }
   }
-  async function saveUser(u) {
+  async function saveUser(u, { approve } = {}) {
     const isMulti = !SINGLE_STATION_ROLES.includes(u.role)
-    const { error } = await supabase.from('profiles').update({
-      role: u.role, station_id: isMulti ? null : (u.station_id ? Number(u.station_id) : null),
-    }).eq('id', u.id)
+    if (approve) {
+      const hasStation = isMulti ? (profileStations[u.id] || []).length > 0 : !!u.station_id
+      if (!hasStation) { setErr('Attribue une station avant de valider ce compte.'); return }
+    }
+    const patch = { role: u.role, station_id: isMulti ? null : (u.station_id ? Number(u.station_id) : null) }
+    if (approve) patch.approved = true
+    const { error } = await supabase.from('profiles').update(patch).eq('id', u.id)
     if (error) { fail(error); return }
     if (isMulti) {
       const selected = profileStations[u.id] || []
       await supabase.from('profile_stations').delete().eq('profile_id', u.id)
       if (selected.length) await supabase.from('profile_stations').insert(selected.map(sid => ({ profile_id: u.id, station_id: sid })))
     }
-    flash('Membre mis à jour'); load()
+    flash(approve ? 'Compte validé' : 'Membre mis à jour'); load()
+  }
+  // Retire l'accès à l'application (supprime la ligne profil) — ne supprime PAS le compte
+  // email/mot de passe côté Supabase Auth (nécessiterait une clé service_role).
+  async function deleteUser(u) {
+    const { error } = await supabase.from('profiles').delete().eq('id', u.id)
+    if (error) { fail(error); return }
+    flash('Compte supprimé — accès à l\'application retiré'); load()
   }
   function toggleUserStation(userId, stationId, checked) {
     setProfileStations(p => {
@@ -135,7 +147,7 @@ export default function Stations() {
 
   const stationOptions = [{ value: '', label: '— toutes / aucune —' }, ...stations.map(s => ({ value: s.id, label: s.nom }))]
 
-  const userColumns = [
+  const stationCols = [
     { key: 'full_name', header: 'Nom' },
     { key: 'role', header: 'Rôle', render: u => <Select size="sm" value={u.role} onChange={e => upU(u.id, 'role', e.target.value)} options={roles.map(r => ({ value: r.key, label: r.label }))} style={{ width: '100%' }} /> },
     { key: 'station_id', header: 'Station(s)', render: u => SINGLE_STATION_ROLES.includes(u.role)
@@ -146,8 +158,27 @@ export default function Stations() {
               onChange={v => toggleUserStation(u.id, s.id, v)} />
           ))}
         </div> },
-    { key: 'actions', header: '', align: 'right', render: u => <Button size="sm" tone="primary" onClick={() => saveUser(u)}>OK</Button> },
   ]
+  const pendingColumns = [
+    ...stationCols,
+    { key: 'actions', header: '', align: 'right', render: u => (
+      <div style={{ display: 'flex', gap: 'var(--sp-2)', justifyContent: 'flex-end' }}>
+        <Button size="sm" tone="primary" onClick={() => saveUser(u, { approve: true })}>Valider</Button>
+        <Button size="sm" tone="danger" onClick={() => deleteUser(u)}>Supprimer</Button>
+      </div>
+    ) },
+  ]
+  const userColumns = [
+    ...stationCols,
+    { key: 'actions', header: '', align: 'right', render: u => (
+      <div style={{ display: 'flex', gap: 'var(--sp-2)', justifyContent: 'flex-end' }}>
+        <Button size="sm" tone="primary" onClick={() => saveUser(u)}>OK</Button>
+        <Button size="sm" tone="danger" disabled={u.id === session?.user?.id} title={u.id === session?.user?.id ? 'Tu ne peux pas te supprimer toi-même' : undefined} onClick={() => deleteUser(u)}>Supprimer</Button>
+      </div>
+    ) },
+  ]
+  const pendingUsers = users.filter(u => !u.approved)
+  const activeUsers = users.filter(u => u.approved)
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-6)' }}>
@@ -195,16 +226,31 @@ export default function Stations() {
       )}
 
       {tab === 'equipe' && (
-      <Panel title="Équipe" flush>
-        <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', margin: 'var(--sp-4) var(--gutter-panel) 0' }}>
-          Gérant/pompiste/vendeuse/admin : rattachés à une seule station. Tout autre rôle
-          (directeur, comptable, ou un rôle créé dans l'onglet Rôles) peut être rattaché à
-          une ou plusieurs stations — coche celles concernées puis « OK ».
-        </p>
-        <div style={{ marginTop: 'var(--sp-4)' }}>
-          <DataTable columns={userColumns} rows={users} />
-        </div>
-      </Panel>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-6)' }}>
+        {pendingUsers.length > 0 && (
+          <Panel title="Comptes en attente de validation" meta={`${pendingUsers.length}`} status="alarm" flush>
+            <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', margin: 'var(--sp-4) var(--gutter-panel) 0' }}>
+              Ces comptes se sont inscrits mais n'ont accès à rien tant qu'ils ne sont pas
+              validés. Choisis le rôle et attribue une station, puis clique « Valider » — ou
+              « Supprimer » pour un compte de test ou non désiré (il perd tout accès, son
+              email reste utilisable pour se réinscrire).
+            </p>
+            <div style={{ marginTop: 'var(--sp-4)' }}>
+              <DataTable columns={pendingColumns} rows={pendingUsers} />
+            </div>
+          </Panel>
+        )}
+        <Panel title="Équipe" meta={`${activeUsers.length}`} flush>
+          <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', margin: 'var(--sp-4) var(--gutter-panel) 0' }}>
+            Gérant/pompiste/vendeuse/admin : rattachés à une seule station. Tout autre rôle
+            (directeur, comptable, ou un rôle créé dans l'onglet Rôles) peut être rattaché à
+            une ou plusieurs stations — coche celles concernées puis « OK ».
+          </p>
+          <div style={{ marginTop: 'var(--sp-4)' }}>
+            <DataTable columns={userColumns} rows={activeUsers} />
+          </div>
+        </Panel>
+      </div>
       )}
 
       {tab === 'roles' && (
