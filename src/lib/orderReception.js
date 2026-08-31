@@ -69,8 +69,22 @@ export async function receptionner({ supabase, bucket, stationId, session, order
     // APRÈS cette livraison plutôt que celui d'avant (le relevé du matin doit précéder toute
     // réception pour que l'anti-coulage reste fiable — cf. migration v53).
     const champMatin = order.produit === 'gasoil' ? 'gas_stock_matin' : 'ess_stock_matin'
-    const { data: dr } = await supabase.from('daily_reports').select(champMatin).eq('station_id', stationId).eq('report_date', day).maybeSingle()
+    const champStock = order.produit === 'gasoil' ? 'gas_stock' : 'ess_stock'
+    const { data: dr } = await supabase.from('daily_reports').select(`${champMatin},${champStock}`).eq('station_id', stationId).eq('report_date', day).maybeSingle()
     matinManquant = !dr || dr[champMatin] == null
+    // Garde-fou : chaque réception ÉCRASE le stock cuve du jour avec son propre "cuve après"
+    // (cf. plus bas). Si une réception précédente CE MÊME JOUR a déjà relevé le stock plus
+    // haut que le "cuve avant" saisi ici, cette écriture l'effacerait silencieusement — bug
+    // réel repéré : une 2e réception du jour saisie avec un vieux "cuve avant" a annulé la
+    // mise à jour correcte faite par la 1ère réception du même jour.
+    const stockActuel = dr ? N(dr[champStock]) : null
+    if (!recv.forceEcart && stockActuel > 0) {
+      const ecartStock = stockActuel - N(recv.cuve_avant)
+      const seuilStock = Math.max(stockActuel * 0.1, 200)
+      if (ecartStock > seuilStock) {
+        return { warnEcart: `Le stock actuellement enregistré pour ce jour est ${Math.round(stockActuel).toLocaleString('fr-FR')} L, mais « cuve avant » saisi ici est ${N(recv.cuve_avant).toLocaleString('fr-FR')} L (écart ${Math.round(ecartStock).toLocaleString('fr-FR')} L). Si une autre réception a déjà eu lieu aujourd'hui, relève la cuve à l'instant présent plutôt que de réutiliser un ancien chiffre.` }
+      }
+    }
   }
   const total = N(deja) + recu
   const marge = N(order.quantite_commandee) * (N(settings.taux_perte_acceptable) || 5) / 100
