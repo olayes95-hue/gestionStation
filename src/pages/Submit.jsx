@@ -121,6 +121,7 @@ export default function Submit() {
           ess: machineNums(MAX_MACHINES).reduce((s, n) => s + N(data['e' + n + '_m']), 0),
           gas: machineNums(MAX_MACHINES).reduce((s, n) => s + N(data['g' + n + '_m']), 0),
           date: data.report_date,
+          raw: data,   // valeurs pompe par pompe — nécessaire pour détecter une baisse sur UNE pompe même si le total semble correct
         })
       })
   }, [stationId, date, isVendeuse])
@@ -343,15 +344,21 @@ export default function Submit() {
       fail(`Photo obligatoire pour le compteur ${missM[1]}.`, isMatinField ? 'meters-matin' : 'meters-16h', isMatinField ? matinMetersRef : apresmidiMetersRef)
       return
     }
-    // Garde-fou décalage compteur : l'index du matin doit être > au dernier jour saisi.
+    // Garde-fou décalage compteur : l'index du matin doit être > au dernier jour saisi —
+    // vérifié POMPE PAR POMPE (pas seulement sur le total), sinon une pompe en baisse peut
+    // passer inaperçue si une autre pompe compense dans la somme globale. Cas réel repéré :
+    // un index gasoil mal saisi sur une seule pompe (baisse de ~30000) n'était pas assez
+    // visible via le seul contrôle sur le total.
     if ((moment === 'matin' || showAll) && prevMorning && !forceMeter) {
-      const essNow = machineNums(nombreMachines).reduce((s, n) => s + N(f['e' + n + '_m']), 0)
-      const gasNow = machineNums(nombreMachines).reduce((s, n) => s + N(f['g' + n + '_m']), 0)
       const parts = []
-      if (essNow > 0 && prevMorning.ess > 0 && essNow <= prevMorning.ess) parts.push(`essence ${Math.round(essNow)} ≤ ${Math.round(prevMorning.ess)}`)
-      if (gasNow > 0 && prevMorning.gas > 0 && gasNow <= prevMorning.gas) parts.push(`gasoil ${Math.round(gasNow)} ≤ ${Math.round(prevMorning.gas)}`)
+      for (const n of machineNums(nombreMachines)) {
+        const essNow = N(f['e' + n + '_m']), essPrev = N(prevMorning.raw?.['e' + n + '_m'])
+        if (essNow > 0 && essPrev > 0 && essNow <= essPrev) parts.push(`essence pompe ${n} : ${Math.round(essNow)} ≤ ${Math.round(essPrev)}`)
+        const gasNow = N(f['g' + n + '_m']), gasPrev = N(prevMorning.raw?.['g' + n + '_m'])
+        if (gasNow > 0 && gasPrev > 0 && gasNow <= gasPrev) parts.push(`gasoil pompe ${n} : ${Math.round(gasNow)} ≤ ${Math.round(gasPrev)}`)
+      }
       if (parts.length) {
-        setMeterWarn(`Index du matin ${parts.join(' et ')} — relevé du ${frDate(prevMorning.date)}. Un index de pompe ne peut que MONTER : sans ça, l'écart compteur sera décalé d'un jour.`)
+        setMeterWarn(`Index du matin incohérent — ${parts.join(', ')} — relevé du ${frDate(prevMorning.date)}. Un index de pompe ne peut que MONTER : sans ça, l'écart compteur sera décalé d'un jour.`)
         fail('Relevé compteur du matin incohérent — voir la section « Relevés compteurs à l\'ouverture » ci-dessus.', 'meters-matin', matinMetersRef)
         return
       }
@@ -654,7 +661,9 @@ export default function Submit() {
             {meterWarn && (
               <AlertBanner tone="alarm" title="Index incohérent" style={{ marginTop: 'var(--sp-3)' }}>
                 {meterWarn}
-                <Checkbox label="Forcer l'envoi (l'index est correct malgré tout)" checked={forceMeter} onChange={v => { setForceMeter(v); if (v) { setMeterWarn(''); setErr('') } }} style={{ marginTop: 'var(--sp-3)' }} />
+                {isAdmin
+                  ? <Checkbox label="Forcer l'envoi (l'index est correct malgré tout)" checked={forceMeter} onChange={v => { setForceMeter(v); if (v) { setMeterWarn(''); setErr('') } }} style={{ marginTop: 'var(--sp-3)' }} />
+                  : <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', margin: 'var(--sp-3) 0 0' }}>Corrige l'index avant d'envoyer, ou préviens l'administrateur si tu es sûr(e) qu'il est correct — seul un compte admin peut forcer l'envoi malgré cet avertissement.</p>}
               </AlertBanner>
             )}
           </FormSection>
