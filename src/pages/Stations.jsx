@@ -96,11 +96,31 @@ export default function Stations() {
     flash(approve ? 'Compte validé' : 'Membre mis à jour'); load()
   }
   // Retire l'accès à l'application (supprime la ligne profil) — ne supprime PAS le compte
-  // email/mot de passe côté Supabase Auth (nécessiterait une clé service_role).
+  // email/mot de passe côté Supabase Auth (nécessiterait une clé service_role). Si ce compte
+  // a déjà des données liées (saisies, dépenses...), la suppression est bloquée par
+  // l'intégrité référentielle (created_by) : on retire l'accès à la place, sans perdre
+  // l'historique — plutôt qu'un échec sans solution pour l'admin.
   async function deleteUser(u) {
     const { error } = await supabase.from('profiles').delete().eq('id', u.id)
-    if (error) { fail(error); return }
+    if (error) {
+      if (error.code === '23503') {
+        const { error: e2 } = await supabase.from('profiles').update({ approved: false }).eq('id', u.id)
+        if (e2) { fail(e2); return }
+        flash('Ce compte a des données liées (saisies…) — suppression impossible, accès retiré à la place')
+        load(); return
+      }
+      fail(error); return
+    }
     flash('Compte supprimé — accès à l\'application retiré'); load()
+  }
+  // Désactivation : pour l'équipe déjà active, qui a presque toujours des données liées
+  // (saisies, dépenses…) — une vraie suppression échouerait donc systématiquement. Retire
+  // l'accès directement (repasse par "en attente de validation", réactivable via Valider),
+  // sans même tenter une suppression qui échouerait.
+  async function disableUser(u) {
+    const { error } = await supabase.from('profiles').update({ approved: false }).eq('id', u.id)
+    if (error) { fail(error); return }
+    flash('Compte désactivé — accès à l\'application retiré'); load()
   }
   function toggleUserStation(userId, stationId, checked) {
     setProfileStations(p => {
@@ -173,7 +193,7 @@ export default function Stations() {
     { key: 'actions', header: '', align: 'right', render: u => (
       <div style={{ display: 'flex', gap: 'var(--sp-2)', justifyContent: 'flex-end' }}>
         <Button size="sm" tone="primary" onClick={() => saveUser(u)}>OK</Button>
-        <Button size="sm" tone="danger" disabled={u.id === session?.user?.id} title={u.id === session?.user?.id ? 'Tu ne peux pas te supprimer toi-même' : undefined} onClick={() => deleteUser(u)}>Supprimer</Button>
+        <Button size="sm" tone="danger" disabled={u.id === session?.user?.id} title={u.id === session?.user?.id ? 'Tu ne peux pas désactiver ton propre compte' : undefined} onClick={() => disableUser(u)}>Désactiver</Button>
       </div>
     ) },
   ]
@@ -230,10 +250,10 @@ export default function Stations() {
         {pendingUsers.length > 0 && (
           <Panel title="Comptes en attente de validation" meta={`${pendingUsers.length}`} status="alarm" flush>
             <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', margin: 'var(--sp-4) var(--gutter-panel) 0' }}>
-              Ces comptes se sont inscrits mais n'ont accès à rien tant qu'ils ne sont pas
+              Nouvelles inscriptions ou comptes désactivés — sans accès tant qu'ils ne sont pas
               validés. Choisis le rôle et attribue une station, puis clique « Valider » — ou
-              « Supprimer » pour un compte de test ou non désiré (il perd tout accès, son
-              email reste utilisable pour se réinscrire).
+              « Supprimer » pour un compte de test (fonctionne seulement s'il n'a encore aucune
+              donnée liée ; sinon son accès est simplement retiré, comme un compte désactivé).
             </p>
             <div style={{ marginTop: 'var(--sp-4)' }}>
               <DataTable columns={pendingColumns} rows={pendingUsers} />
