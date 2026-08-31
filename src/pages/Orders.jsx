@@ -48,6 +48,8 @@ export default function Orders() {
   const [openCombos, setOpenCombos] = useState(false)
   const [detailId, setDetailId] = useState(null)   // id de la commande ouverte dans le panneau de détail
   const [receptions, setReceptions] = useState([])   // historique des réceptions PARTIELLES de la commande ouverte
+  const [editRecId, setEditRecId] = useState(null)   // id de la réception en cours de correction (admin)
+  const [editRecForm, setEditRecForm] = useState({})
   const [page, setPage] = useState(1); const [pageSize, setPageSize] = useState(25)
 
   // Historique des réceptions (order_receptions) de la commande ouverte — jusqu'ici invisible dans
@@ -166,6 +168,60 @@ export default function Orders() {
     } catch (e) { setErr(e.message || String(e)) }
   }
   async function delOrder(o) { await supabase.from('fuel_orders').delete().eq('id', o.id); load() }
+
+  // Recalcule les champs stampés sur fuel_orders (statut, cuve_avant/après, montant, report_date)
+  // à partir des réceptions restantes — nécessaire après une correction/suppression admin, sinon
+  // ces champs (écrits une seule fois par receptionner(), cf. lib/orderReception.js) restent
+  // périmés par rapport aux order_receptions réellement en base. Même seuil de "complet" que
+  // receptionner() (marge = taux de perte acceptable), pour rester cohérent avec une saisie normale.
+  async function resyncOrderFromReceptions(o) {
+    const { data } = await supabase.from('order_receptions').select('*').eq('order_id', o.id).order('report_date')
+    const list = data || []
+    const cat = o.categorie || 'carburant'
+    if (!list.length) {
+      await supabase.from('fuel_orders').update({ statut: 'lancee', cuve_avant: null, cuve_apres: null, montant: null, report_date: null, recu_by: null, recu_at: null }).eq('id', o.id)
+    } else {
+      const total = list.reduce((s, r) => s + N(r.quantite_recue), 0)
+      const marge = N(o.quantite_commandee) * (N(settings.taux_perte_acceptable) || 5) / 100
+      const complet = total >= N(o.quantite_commandee) - marge
+      const last = list[list.length - 1]
+      const patch = { statut: complet ? 'recue' : 'partielle', report_date: last.report_date }
+      if (cat === 'carburant') {
+        const withCuve = list.filter(r => r.cuve_avant != null && r.cuve_apres != null)
+        patch.cuve_avant = withCuve.length ? withCuve[0].cuve_avant : null
+        patch.cuve_apres = withCuve.length ? withCuve[withCuve.length - 1].cuve_apres : null
+        patch.prix_achat = last.prix_achat ?? o.prix_achat
+        patch.montant = total * N(patch.prix_achat)
+      }
+      await supabase.from('fuel_orders').update(patch).eq('id', o.id)
+    }
+    setReceptions(list)
+    load()
+  }
+
+  function startEditRec(r) {
+    setEditRecId(r.id)
+    setEditRecForm({ quantite_recue: String(N(r.quantite_recue)), cuve_avant: r.cuve_avant != null ? String(N(r.cuve_avant)) : '', cuve_apres: r.cuve_apres != null ? String(N(r.cuve_apres)) : '', date: r.report_date })
+  }
+  async function saveEditRec(o, r) {
+    const f = editRecForm
+    const patch = { quantite_recue: N(f.quantite_recue), report_date: f.date }
+    if ((o.categorie || 'carburant') === 'carburant') {
+      patch.cuve_avant = N(f.cuve_avant); patch.cuve_apres = N(f.cuve_apres)
+      patch.montant = N(f.quantite_recue) * N(r.prix_achat)
+    }
+    const { error } = await supabase.from('order_receptions').update(patch).eq('id', r.id)
+    if (error) { setErr(error.message); return }
+    setEditRecId(null)
+    await resyncOrderFromReceptions(o)
+    flash('Réception corrigée')
+  }
+  async function deleteRec(o, r) {
+    const { error } = await supabase.from('order_receptions').delete().eq('id', r.id)
+    if (error) { setErr(error.message); return }
+    await resyncOrderFromReceptions(o)
+    flash('Réception supprimée')
+  }
 
   // Réception réelle (écritures en base) déléguée au composant partagé OrderReception,
   // identique dans « Saisie du jour » et ici. Le tableau ci-dessous est un historique
@@ -447,13 +503,34 @@ export default function Orders() {
                     Réceptions{receptions.length > 1 ? ` (${receptions.length} passages)` : ''}
                   </div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-2)' }}>
-                    {receptions.map(r => (
+                    {receptions.map(r => editRecId === r.id ? (
+                      <div key={r.id} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-3)', padding: 'var(--sp-3)', background: 'var(--surface-raised)', borderRadius: 'var(--radius-1)' }}>
+                        <div style={{ display: 'flex', gap: 'var(--sp-3)', flexWrap: 'wrap' }}>
+                          <Field label="Qté reçue (L)" style={{ flex: '1 1 120px' }}><Input type="text" inputMode="decimal" numeric value={editRecForm.quantite_recue} onChange={e => setEditRecForm(p => ({ ...p, quantite_recue: e.target.value }))} /></Field>
+                          {cat === 'carburant' && <>
+                            <Field label="Cuve avant" style={{ flex: '1 1 120px' }}><Input type="text" inputMode="decimal" numeric value={editRecForm.cuve_avant} onChange={e => setEditRecForm(p => ({ ...p, cuve_avant: e.target.value }))} /></Field>
+                            <Field label="Cuve après" style={{ flex: '1 1 120px' }}><Input type="text" inputMode="decimal" numeric value={editRecForm.cuve_apres} onChange={e => setEditRecForm(p => ({ ...p, cuve_apres: e.target.value }))} /></Field>
+                          </>}
+                          <Field label="Date" style={{ flex: '1 1 140px' }}><Input type="date" value={editRecForm.date} max={today()} onChange={e => setEditRecForm(p => ({ ...p, date: e.target.value }))} /></Field>
+                        </div>
+                        <div style={{ display: 'flex', gap: 'var(--sp-2)' }}>
+                          <Button size="sm" tone="primary" onClick={() => saveEditRec(o, r)}>Enregistrer</Button>
+                          <Button size="sm" onClick={() => setEditRecId(null)}>Annuler</Button>
+                        </div>
+                      </div>
+                    ) : (
                       <div key={r.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 'var(--sp-3)', padding: 'var(--sp-3)', background: 'var(--surface-raised)', borderRadius: 'var(--radius-1)', font: '400 12px/1.4 var(--font-ui)' }}>
                         <span style={{ color: 'var(--text-body)' }}>
                           {frDate(r.report_date)} — {N(r.quantite_recue).toLocaleString('fr-FR')} L
                           {cat === 'carburant' && r.cuve_avant != null && r.cuve_apres != null && ` (cuve ${N(r.cuve_avant).toLocaleString('fr-FR')} → ${N(r.cuve_apres).toLocaleString('fr-FR')})`}
                         </span>
-                        {r.photo_path && <a href={supabase.storage.from(BORDEREAUX_BUCKET).getPublicUrl(r.photo_path).data.publicUrl} target="_blank" rel="noreferrer">Photo</a>}
+                        <div style={{ display: 'flex', gap: 'var(--sp-3)', alignItems: 'center' }}>
+                          {r.photo_path && <a href={supabase.storage.from(BORDEREAUX_BUCKET).getPublicUrl(r.photo_path).data.publicUrl} target="_blank" rel="noreferrer">Photo</a>}
+                          {isAdmin && <>
+                            <Button size="sm" onClick={() => startEditRec(r)}>Modifier</Button>
+                            <Button size="sm" tone="danger" onClick={() => deleteRec(o, r)}>Supprimer</Button>
+                          </>}
+                        </div>
                       </div>
                     ))}
                   </div>

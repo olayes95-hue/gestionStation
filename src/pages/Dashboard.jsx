@@ -53,6 +53,8 @@ export default function Dashboard() {
   const [uniteMode, setUniteMode] = useState(false)   // false = CFA, true = unité physique (L, bouteilles, articles...)
   const [poleEvolution, setPoleEvolution] = useState('carburant')   // pôle affiché par "Évolution mensuelle par pôle" en mode Unité
   const [poleUniteSeries, setPoleUniteSeries] = useState([])   // [{mois, value}] pour gaz/supérette en mode Unité (carburant vient directement de `months`)
+  const [ordersEnCours, setOrdersEnCours] = useState([])   // fuel_orders non soldées (tous statuts sauf reçue/refusée), pour le total engagé par pôle
+  const [orderSettings, setOrderSettings] = useState({ essence_pa: 705, gasoil_pa: 730 })   // prix d'achat carburant, pour valoriser les commandes dont le montant n'est pas encore stampé
 
   useEffect(() => {
     if (!stationId) return
@@ -98,7 +100,17 @@ export default function Dashboard() {
     supabase.from('products').select('nom,prix_vente').eq('categorie', 'lubrifiant').then(({ data }) => {
       const m = {}; for (const p of (data || [])) m[p.nom] = N(p.prix_vente); setLubPrices(m)
     })
+    supabase.from('settings').select('essence_pa,gasoil_pa').eq('id', 1).maybeSingle().then(({ data }) => data && setOrderSettings(data))
   }, [])
+
+  // Commandes en cours (tous pôles) : pas de notion de période — un engagement en cours reste
+  // affiché tant qu'il n'est pas soldé ou refusé, peu importe l'année/le mois sélectionné plus bas.
+  useEffect(() => {
+    if (!stationId) return
+    supabase.from('fuel_orders').select('categorie,statut,montant,montant_paiement,quantite_commandee,produit')
+      .eq('station_id', stationId).in('statut', ['proposee', 'validee', 'lancee', 'partielle'])
+      .then(({ data }) => setOrdersEnCours(data || []))
+  }, [stationId])
 
   useEffect(() => {
     if (!stationId) return
@@ -192,6 +204,21 @@ export default function Dashboard() {
     { name: 'Lubrifiant', value: sum('ventes_lubrifiant') },
     { name: 'Supérette', value: sum('ventes_superette') },
   ].filter(r => r.value > 0)
+
+  // Montant total des commandes en cours par pôle — pas de période, snapshot de l'engagement
+  // actuel. Même formule que orderMontant() dans Orders.jsx : pour le carburant, le montant
+  // n'est stampé qu'à la réception, donc on retombe sur quantité × prix d'achat en attendant.
+  const orderPa = (produit) => produit === 'gasoil' ? N(orderSettings.gasoil_pa) : N(orderSettings.essence_pa)
+  const enCoursMontant = (o) => o.categorie === 'carburant'
+    ? (o.montant != null ? N(o.montant) : N(o.quantite_commandee) * orderPa(o.produit))
+    : N(o.montant_paiement)
+  const commandesEnCoursParPole = [
+    { name: 'Carburant', key: 'carburant' }, { name: 'Gaz', key: 'gaz' },
+    { name: 'Lubrifiant', key: 'lubrifiant' }, { name: 'Supérette', key: 'superette' },
+  ].map(({ name, key }) => {
+    const os = ordersEnCours.filter(o => (o.categorie || 'carburant') === key)
+    return { name, value: os.reduce((s, o) => s + enCoursMontant(o), 0), nb: os.length }
+  })
 
   // Évolution mensuelle par pôle (bâtons empilés) — même agrégat, vue mois par mois plutôt que sommée.
   const chartPoles = fm.map(m => ({
@@ -365,6 +392,19 @@ export default function Dashboard() {
           </p>
           <div style={{ marginTop: 'var(--sp-4)' }}>
             <DataTable columns={reorderColumns} rows={reorder.map(r => ({ ...r, id: r.produit }))} />
+          </div>
+        </Panel>
+      )}
+
+      {commandesEnCoursParPole.some(p => p.nb > 0) && (
+        <Panel title="Commandes en cours par pôle" meta={`${ordersEnCours.length} commande(s) engagée(s)`}>
+          <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', marginTop: 0 }}>
+            Montant total des commandes proposées, validées, lancées ou partiellement reçues (pas encore soldées) — snapshot actuel, indépendant de la période sélectionnée ci-dessous.
+          </p>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 'var(--sp-4)' }}>
+            {commandesEnCoursParPole.map(p => (
+              <Kpi key={p.name} label={p.name} value={fcfa(p.value)} sub={p.nb ? `${p.nb} commande(s)` : 'aucune'} status={p.nb > 0 ? 'info' : undefined} />
+            ))}
           </div>
         </Panel>
       )}
