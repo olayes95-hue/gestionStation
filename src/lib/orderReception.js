@@ -83,15 +83,24 @@ export async function receptionner({ supabase, bucket, stationId, session, order
     if (up) throw up
   }
 
+  // Chaque écriture vérifie son erreur et jette immédiatement : un échec RLS silencieux ici
+  // (déjà arrivé — la mise à jour du statut fuel_orders était bloquée pour le gérant sans que
+  // personne ne le voie, laissant des commandes "lancée" malgré des réceptions bien enregistrées)
+  // doit remonter comme une vraie erreur, pas un faux succès.
   if (cat === 'carburant') {
     const prix = prixAchat(order.produit, settings)
-    await supabase.from('order_receptions').insert({ order_id: order.id, station_id: stationId, report_date: day, quantite_recue: recu, cuve_avant: N(recv.cuve_avant), cuve_apres: N(recv.cuve_apres), prix_achat: prix, montant: recu * prix, photo_path, created_by: session.user.id })
-    await supabase.from('fuel_orders').update({ statut: complet ? 'recue' : 'partielle', cuve_avant: order.cuve_avant != null ? order.cuve_avant : N(recv.cuve_avant), cuve_apres: N(recv.cuve_apres), report_date: day, prix_achat: prix, montant: total * prix, recu_by: session.user.id, recu_at: new Date().toISOString() }).eq('id', order.id)
+    const { error: e1 } = await supabase.from('order_receptions').insert({ order_id: order.id, station_id: stationId, report_date: day, quantite_recue: recu, cuve_avant: N(recv.cuve_avant), cuve_apres: N(recv.cuve_apres), prix_achat: prix, montant: recu * prix, photo_path, created_by: session.user.id })
+    if (e1) throw e1
+    const { error: e2 } = await supabase.from('fuel_orders').update({ statut: complet ? 'recue' : 'partielle', cuve_avant: order.cuve_avant != null ? order.cuve_avant : N(recv.cuve_avant), cuve_apres: N(recv.cuve_apres), report_date: day, prix_achat: prix, montant: total * prix, recu_by: session.user.id, recu_at: new Date().toISOString() }).eq('id', order.id)
+    if (e2) throw e2
     const sf = order.produit === 'gasoil' ? 'gas_stock' : 'ess_stock'
-    await supabase.from('daily_reports').upsert({ station_id: stationId, report_date: day, [sf]: N(recv.cuve_apres), created_by: session.user.id }, { onConflict: 'station_id,report_date' })
+    const { error: e3 } = await supabase.from('daily_reports').upsert({ station_id: stationId, report_date: day, [sf]: N(recv.cuve_apres), created_by: session.user.id }, { onConflict: 'station_id,report_date' })
+    if (e3) throw e3
   } else {
-    await supabase.from('order_receptions').insert({ order_id: order.id, station_id: stationId, report_date: day, quantite_recue: recu, photo_path, created_by: session.user.id })
-    await supabase.from('fuel_orders').update({ statut: complet ? 'recue' : 'partielle', report_date: day, recu_by: session.user.id, recu_at: new Date().toISOString() }).eq('id', order.id)
+    const { error: e1 } = await supabase.from('order_receptions').insert({ order_id: order.id, station_id: stationId, report_date: day, quantite_recue: recu, photo_path, created_by: session.user.id })
+    if (e1) throw e1
+    const { error: e2 } = await supabase.from('fuel_orders').update({ statut: complet ? 'recue' : 'partielle', report_date: day, recu_by: session.user.id, recu_at: new Date().toISOString() }).eq('id', order.id)
+    if (e2) throw e2
     const mvt = { station_id: stationId, categorie: cat, type: 'entree', source: 'reception', ref: 'CMD#' + order.id, date_mouvement: day, created_by: session.user.id }
     if (cat === 'superette') mvt.valeur = N(order.montant_paiement)
     else {
@@ -101,9 +110,13 @@ export async function receptionner({ supabase, bucket, stationId, session, order
       if (recv.facteur_conversion != null) mvt.facteur_conversion = recv.facteur_conversion
       if (recv.detail_saisie) mvt.detail_saisie = recv.detail_saisie
     }
-    await supabase.from('stock_movements').insert(mvt)
+    const { error: e3 } = await supabase.from('stock_movements').insert(mvt)
+    if (e3) throw e3
   }
-  if (photo_path) await supabase.from('attachments').insert({ station_id: stationId, report_date: day, categorie: 'reception', note: `${order.produit || cat} — reçu ${recu} / ${N(order.quantite_commandee)}`, photo_path, created_by: session.user.id })
+  if (photo_path) {
+    const { error: e4 } = await supabase.from('attachments').insert({ station_id: stationId, report_date: day, categorie: 'reception', note: `${order.produit || cat} — reçu ${recu} / ${N(order.quantite_commandee)}`, photo_path, created_by: session.user.id })
+    if (e4) throw e4
+  }
 
   return { complet, total, matinManquant }
 }
