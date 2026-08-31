@@ -289,7 +289,17 @@ export default function Orders() {
     const parEtape = {}
     for (const o of os) parEtape[ETAPE_LABEL[o.statut]] = (parEtape[ETAPE_LABEL[o.statut]] || 0) + orderMontant(o)
     const detail = Object.entries(parEtape).map(([etape, v]) => `${fcfa(v)} ${etape}`).join(' · ')
-    return { key, label, value: os.reduce((s, o) => s + orderMontant(o), 0), nb: os.length, detail }
+    // Litres en cours de livraison vs déjà livrés — carburant uniquement (seul pôle compté
+    // en litres avec une notion physique de cuve avant/après ; gaz/lubrifiant/supérette se
+    // comptent en unités ou en valeur).
+    let litres = null
+    if (key === 'carburant') {
+      const deja = (o) => N(recvTotals[o.id]?.quantite_recue_total)
+      const livres = os.reduce((s, o) => s + deja(o), 0)
+      const restant = os.reduce((s, o) => s + Math.max(0, N(o.quantite_commandee) - deja(o)), 0)
+      litres = { livres, restant }
+    }
+    return { key, label, value: os.reduce((s, o) => s + orderMontant(o), 0), nb: os.length, detail, litres }
   })
 
   const columns = [
@@ -355,6 +365,15 @@ export default function Orders() {
               <Kpi label={p.label} value={fcfa(p.value)} sub={p.detail} status="info" />
             </div>
           ))}
+          {commandesEnCoursParPole.find(p => p.key === 'carburant' && p.litres && (p.litres.restant > 0 || p.litres.livres > 0)) && (() => {
+            const l = commandesEnCoursParPole.find(p => p.key === 'carburant').litres
+            return (
+              <div onClick={() => { setFCat('carburant'); setFStatut('tous') }} style={{ cursor: 'pointer' }}>
+                <Kpi label="Litres carburant en cours" value={`${Math.round(l.restant).toLocaleString('fr-FR')} L`}
+                  sub={`${Math.round(l.livres).toLocaleString('fr-FR')} L déjà livrés`} status="info" />
+              </div>
+            )
+          })()}
         </div>
       )}
 
