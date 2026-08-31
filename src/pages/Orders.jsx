@@ -266,11 +266,17 @@ export default function Orders() {
   const nbALancer = count('validee')
   const nbAReceptionner = count('lancee') + count('partielle')
 
-  // Montant total des commandes en cours (pas encore soldées ni refusées), par pôle.
+  // Montant total des commandes en cours (pas encore soldées ni refusées), par pôle — détaillé
+  // par étape (à valider / à lancer / à réceptionner) plutôt qu'un simple compteur, pour voir
+  // tout de suite combien reste bloqué à valider vs déjà engagé en livraison.
   const EN_COURS_STATUTS = ['proposee', 'validee', 'lancee', 'partielle']
+  const ETAPE_LABEL = { proposee: 'à valider', validee: 'à lancer', lancee: 'à réceptionner', partielle: 'à réceptionner' }
   const commandesEnCoursParPole = CATS.map(([key, label]) => {
     const os = orders.filter(o => (o.categorie || 'carburant') === key && EN_COURS_STATUTS.includes(o.statut))
-    return { key, label, value: os.reduce((s, o) => s + orderMontant(o), 0), nb: os.length }
+    const parEtape = {}
+    for (const o of os) parEtape[ETAPE_LABEL[o.statut]] = (parEtape[ETAPE_LABEL[o.statut]] || 0) + orderMontant(o)
+    const detail = Object.entries(parEtape).map(([etape, v]) => `${fcfa(v)} ${etape}`).join(' · ')
+    return { key, label, value: os.reduce((s, o) => s + orderMontant(o), 0), nb: os.length, detail }
   })
 
   const columns = [
@@ -332,7 +338,7 @@ export default function Orders() {
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 'var(--sp-4)' }}>
             {commandesEnCoursParPole.map(p => (
               <div key={p.key} onClick={() => { setFCat(p.key); setFStatut('tous') }} style={{ cursor: 'pointer' }}>
-                <Kpi label={p.label} value={fcfa(p.value)} sub={p.nb ? `${p.nb} commande(s)` : 'aucune'} status={p.nb > 0 ? 'info' : undefined} />
+                <Kpi label={p.label} value={fcfa(p.value)} sub={p.detail || 'aucune'} status={p.nb > 0 ? 'info' : undefined} />
               </div>
             ))}
           </div>
