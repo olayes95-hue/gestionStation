@@ -42,8 +42,11 @@ export default function OrderReception({ stationId, date, settings = {}, onDone,
   useEffect(() => { load() }, [stationId])
 
   const flash = (m) => { setMsg(m); setTimeout(() => setMsg(''), 2500) }
+  const [submitting, setSubmitting] = useState({})   // { [order_id]: true } — anti double-clic (un doublon en base a été repéré via une fausse alerte anti-coulage)
 
   async function receptionner(o) {
+    if (submitting[o.id]) return
+    setSubmitting(p => ({ ...p, [o.id]: true }))
     const raw = recv[o.id] || {}
     const r = raw.date ? raw : { ...raw, date: date || today() }
     setErr(''); setMatinWarn('')
@@ -56,6 +59,7 @@ export default function OrderReception({ stationId, date, settings = {}, onDone,
       if (result.matinManquant) setMatinWarn("Le relevé du matin de ce jour n'est pas encore saisi — fais-le dès que possible : sans ça, il risque de capter le niveau APRÈS cette livraison au lieu d'avant, et de fausser le contrôle anti-coulage.")
       await load(); onDone && onDone()
     } catch (e) { setErr(e.message || String(e)) }
+    finally { setSubmitting(p => ({ ...p, [o.id]: false })) }
   }
 
   if (!stationId || !orders.length) return null
@@ -133,7 +137,7 @@ export default function OrderReception({ stationId, date, settings = {}, onDone,
                       </AlertBanner>
                     )}
                     <EvidenceUpload label={r._file ? r._file.name : 'Photo (bon de livraison) — facultatif'} multiple={false} onFiles={files => setRecv(p => ({ ...p, [o.id]: { ...r, _file: files[0] } }))} />
-                    <Button size="sm" tone="primary" onClick={() => receptionner(o)} style={{ alignSelf: 'flex-start' }}>Valider la réception</Button>
+                    <Button size="sm" tone="primary" disabled={!!submitting[o.id]} onClick={() => receptionner(o)} style={{ alignSelf: 'flex-start' }}>{submitting[o.id] ? 'Enregistrement…' : 'Valider la réception'}</Button>
                   </div>}
             </div>
           )

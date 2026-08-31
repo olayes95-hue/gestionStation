@@ -154,7 +154,10 @@ export default function Orders() {
 
   // Réception — logique partagée avec « Saisie du jour » (OrderReception.jsx) via lib/orderReception.js,
   // pour n'avoir qu'un seul endroit à maintenir pour le garde-fou d'écart et les écritures en base.
+  const [recSubmitting, setRecSubmitting] = useState({})   // { [order_id]: true } — anti double-clic (cf. doublon en base repéré via une fausse alerte anti-coulage)
   async function receptionner(o) {
+    if (recSubmitting[o.id]) return
+    setRecSubmitting(p => ({ ...p, [o.id]: true }))
     const r = recv[o.id] || {}
     setErr(''); setMatinWarn('')
     try {
@@ -166,6 +169,7 @@ export default function Orders() {
       if (result.matinManquant) setMatinWarn("Le relevé du matin de ce jour n'est pas encore saisi — fais-le dès que possible : sans ça, il risque de capter le niveau APRÈS cette livraison au lieu d'avant, et de fausser le contrôle anti-coulage.")
       load()
     } catch (e) { setErr(e.message || String(e)) }
+    finally { setRecSubmitting(p => ({ ...p, [o.id]: false })) }
   }
   async function delOrder(o) { await supabase.from('fuel_orders').delete().eq('id', o.id); load() }
 
@@ -617,7 +621,7 @@ export default function Orders() {
                     </AlertBanner>
                   )}
                   <EvidenceUpload label={r?._file ? r._file.name : 'Photo (bon de livraison) — facultatif'} multiple={false} onFiles={files => setRecv(p => ({ ...p, [o.id]: { ...(p[o.id] || {}), _file: files[0] } }))} />
-                  <Button tone="primary" onClick={() => receptionner(o)} style={{ alignSelf: 'flex-start' }}>Valider la réception</Button>
+                  <Button tone="primary" disabled={!!recSubmitting[o.id]} onClick={() => receptionner(o)} style={{ alignSelf: 'flex-start' }}>{recSubmitting[o.id] ? 'Enregistrement…' : 'Valider la réception'}</Button>
                 </div>
               )}
 
