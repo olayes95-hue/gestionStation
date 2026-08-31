@@ -324,16 +324,15 @@ export default function Orders() {
       {matinWarn && <AlertBanner tone="warn" title="Pense au relevé du matin">{matinWarn}</AlertBanner>}
 
       {/* ===== À TRAITER + COMMANDES EN COURS PAR PÔLE — une seule ligne de métriques, cliquables =====
-          Les 4 pôles restent toujours affichés (même à 0), pour montrer qu'il n'y a rien en cours
-          plutôt que de faire disparaître la carte, ce qui se lisait comme un pôle manquant/cassé. */}
-      {(nbAValider > 0 || nbALancer > 0 || nbAReceptionner > 0 || commandesEnCoursParPole.length > 0) && (
+          Dynamique : une carte n'apparaît que si elle a quelque chose à montrer. */}
+      {(nbAValider > 0 || nbALancer > 0 || nbAReceptionner > 0 || commandesEnCoursParPole.some(p => p.nb > 0)) && (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 'var(--sp-4)' }}>
           {nbAValider > 0 && <div onClick={() => setFStatut('proposee')} style={{ cursor: 'pointer' }}><Kpi label="À valider" value={nbAValider} status="warn" /></div>}
           {nbALancer > 0 && <div onClick={() => setFStatut('validee')} style={{ cursor: 'pointer' }}><Kpi label="À lancer" value={nbALancer} status="info" /></div>}
           {nbAReceptionner > 0 && <div onClick={() => setFStatut('a_receptionner')} style={{ cursor: 'pointer' }}><Kpi label="À réceptionner" value={nbAReceptionner} status="alarm" /></div>}
-          {commandesEnCoursParPole.map(p => (
+          {commandesEnCoursParPole.map(p => p.nb > 0 && (
             <div key={p.key} onClick={() => { setFCat(p.key); setFStatut('tous') }} style={{ cursor: 'pointer' }}>
-              <Kpi label={p.label} value={fcfa(p.value)} sub={p.detail || 'aucune commande en cours'} status={p.nb > 0 ? 'info' : undefined} />
+              <Kpi label={p.label} value={fcfa(p.value)} sub={p.detail} status="info" />
             </div>
           ))}
         </div>
