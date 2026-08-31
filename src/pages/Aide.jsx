@@ -52,6 +52,15 @@ export default function Aide() {
         <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', margin: 0 }}>3 moments dans la journée. On ne t'affiche que ce qu'il faut remplir. Envoie à chaque fois.</p>
       </Panel>
 
+      <Panel title="Première connexion — nouveau compte">
+        <ul style={{ lineHeight: 1.9, fontSize: 13, margin: 0, paddingLeft: 18, color: 'var(--text-body)' }}>
+          <li>Crée ton compte sur l'écran de connexion (« Créer un compte » — nom, email, mot de passe).</li>
+          <li>Ton compte est <b>en attente de validation</b> tant que la direction ne l'a pas approuvé et rattaché à ta station : tu verras un message « Compte en attente de validation », pas encore l'application.</li>
+          <li>Préviens la direction dès que tu t'es inscrit(e) — elle valide ton compte et t'attribue ta station (ex. Vedoko) dans Stations &amp; équipe.</li>
+          <li>Une fois validé, reconnecte-toi (ou recharge la page) : l'application s'ouvre normalement.</li>
+        </ul>
+      </Panel>
+
       <StepPanel n={1} title="Matin (8h) — le stock" action={<Button size="sm" onClick={() => nav('/saisie?moment=matin')}>Aller à Saisie du jour</Button>}>
         <li><b>Stock en cuve</b> : litres d'essence et de gasoil restants.</li>
         <li><b>Relevés compteurs à l'ouverture</b> : l'index de chaque pompe <b>+ la photo</b>.</li>
@@ -62,7 +71,8 @@ export default function Aide() {
       <StepPanel n={2} title="16 h — ventes & compteurs" action={<Button size="sm" onClick={() => nav('/saisie?moment=apres-midi')}>Aller à Saisie du jour</Button>}>
         <li><b>Ventes carburant de la veille</b> : litres, puis sépare <b>Bon</b> / <b>Espèces</b>.</li>
         <li><b>Relevés 16 h</b> : index de chaque pompe <b>+ photo</b>. <b>Obligatoire</b> pour envoyer.</li>
-        <li><b>Gaz vendu</b> et recettes espèces des autres pôles.</li>
+        <li><b>Gaz vendu</b> (bouteilles) <b>et Lubrifiants vendus</b> (quantité par référence) — sert à calculer la vraie commission, pas juste une estimation.</li>
+        <li>Recettes espèces des autres pôles (gaz, lubrifiant, supérette).</li>
       </StepPanel>
 
       <StepPanel n={3} title="Soir — clôture" action={<Button size="sm" onClick={() => nav('/saisie?moment=soir')}>Aller à Saisie du jour</Button>}>
@@ -103,6 +113,7 @@ export default function Aide() {
         <Faq q="« Relevés 16 h obligatoires »">Remplis l'index de chaque pompe avant d'envoyer le point de 16 h.</Faq>
         <Faq q="Réceptionner une livraison de carburant ?">À tout moment : sur Saisie du jour, bouton « J'ai reçu une commande » en haut de page → Réceptionner → cuve avant puis après. Le stock se met à jour seul.</Faq>
         <Faq q="Mot de passe oublié ?">Préviens la direction, elle le réinitialise.</Faq>
+        <Faq q="« Compte en attente de validation » ?">Ton compte a bien été créé, mais la direction doit encore le valider et t'attribuer une station — préviens-la, ça ne prend qu'un instant de son côté.</Faq>
       </Panel>
 
       <Panel status="accent">
