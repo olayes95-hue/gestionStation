@@ -15,6 +15,7 @@ import { Input } from '../ds/octane/components/forms/Input.jsx'
 import { Select } from '../ds/octane/components/forms/Select.jsx'
 import { AlertBanner } from '../ds/octane/components/feedback/AlertBanner.jsx'
 import { DataTable } from '../ds/octane/components/data/DataTable.jsx'
+import { Tabs } from '../ds/octane/components/navigation/Tabs.jsx'
 import { Kpi } from '../lib/Kpi.jsx'
 
 const N = (v) => (v ? (numFR(v) ?? 0) : 0)
@@ -44,8 +45,7 @@ export default function Stock() {
   const [snapshots, setSnapshots] = useState([])
   const [reorderLub, setReorderLub] = useState([])
   const [products, setProducts] = useState([])
-  const [openEcart, setOpenEcart] = useState(true)
-  const [openHistorique, setOpenHistorique] = useState(false)
+  const [lubTab, setLubTab] = useState('ecart')   // onglet actif du bloc "Lubrifiant — détail" (écart / historique / réappro)
   const [histProduit, setHistProduit] = useState('')
   const [action, setAction] = useState(null)   // null | 'entree' | 'ajustement'
   const [nm, setNm] = useState(blank('entree'))
@@ -375,48 +375,46 @@ export default function Stock() {
         </Panel>
       )}
 
-      {/* ===== ÉCART THÉORIQUE / DÉCLARÉ (lubrifiant) — gérant/pompiste/admin ===== */}
-      {!isVendeuse && ecartRows.length > 0 && (
-        <Panel title="Lubrifiant — théorique vs déclaré" meta="mouvements depuis le dernier comptage" flush
-          bodyStyle={openEcart ? undefined : { display: 'none' }}
-          actions={<IconButton icon="chevron-down" size="sm" title={openEcart ? 'Masquer' : 'Afficher'}
-            onClick={() => setOpenEcart(v => !v)} style={{ transform: openEcart ? 'rotate(180deg)' : 'none' }} />}>
-          <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', margin: 'var(--sp-4) var(--gutter-panel) 0' }}>
-            Théorique = dernier stock déclaré + mouvements enregistrés depuis. Si l'écart n'est pas nul, cherche la cause (casse, perte…) avant de recourir à une correction d'inventaire.
-          </p>
-          <div style={{ marginTop: 'var(--sp-4)' }}>
-            <DataTable columns={ecartColumns} rows={ecartRows.map((r, i) => ({ ...r, id: i }))} />
-          </div>
-        </Panel>
-      )}
-
-      {/* ===== HISTORIQUE QUOTIDIEN (lubrifiant) — admin seulement, replié par défaut ===== */}
-      {isAdmin && snapshots.length > 0 && (
-        <Panel title="Historique quotidien (lubrifiant)" flush
-          bodyStyle={openHistorique ? undefined : { display: 'none' }}
-          actions={<IconButton icon="chevron-down" size="sm" title={openHistorique ? 'Masquer' : 'Afficher'}
-            onClick={() => setOpenHistorique(v => !v)} style={{ transform: openHistorique ? 'rotate(180deg)' : 'none' }} />}>
-          <div style={{ display: 'flex', gap: 'var(--sp-3)', padding: 'var(--gutter-panel)', paddingBottom: 0 }}>
-            <Select size="sm" value={histProduit} onChange={e => setHistProduit(e.target.value)}
-              options={[{ value: '', label: 'Tous les produits' }, ...products.filter(p => p.categorie === 'lubrifiant').map(p => ({ value: p.nom, label: p.nom }))]} />
-          </div>
-          <div style={{ marginTop: 'var(--sp-4)' }}>
-            {histRows.length ? <DataTable columns={histColumns} rows={histRows} /> : <PanelEmpty icon="calendar-days" label="Aucune déclaration figée pour l'instant" />}
-          </div>
-        </Panel>
-      )}
-
-      {/* ===== RÉAPPRO LUBRIFIANT — gérant/pompiste/admin ===== */}
-      {!isVendeuse && reorderLub.length > 0 && (
-        <Panel title="Lubrifiant — suggestions de commande" flush>
-          <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', margin: 'var(--sp-4) var(--gutter-panel) 0' }}>
-            Cible = seuil ou consommation moyenne × (délai livraison + jours de sécurité), selon le plus élevé. Le nombre de cartons est calculé automatiquement.
-          </p>
-          <div style={{ marginTop: 'var(--sp-4)' }}>
-            <DataTable columns={reorderColumns} rows={reorderLub.map((r, i) => ({ ...r, id: i }))} />
-          </div>
-        </Panel>
-      )}
+      {/* ===== LUBRIFIANT — DÉTAIL — regroupe écart / historique / réappro en un seul bloc à onglets
+          (auparavant 3 panneaux séparés dispersés sur la page) — gérant/pompiste/admin ===== */}
+      {!isVendeuse && (ecartRows.length > 0 || reorderLub.length > 0 || (isAdmin && snapshots.length > 0)) && (() => {
+        const tabs = [
+          ecartRows.length > 0 && { value: 'ecart', label: 'Théorique vs déclaré' },
+          isAdmin && snapshots.length > 0 && { value: 'historique', label: 'Historique quotidien' },
+          reorderLub.length > 0 && { value: 'reappro', label: 'Suggestions de commande' },
+        ].filter(Boolean)
+        const active = tabs.some(t => t.value === lubTab) ? lubTab : tabs[0].value
+        return (
+          <Panel title="Lubrifiant — détail" flush>
+            <Tabs items={tabs} value={active} onChange={setLubTab} />
+            {active === 'ecart' && (<>
+              <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', margin: 'var(--sp-4) var(--gutter-panel) 0' }}>
+                Théorique = dernier stock déclaré + mouvements enregistrés depuis. Si l'écart n'est pas nul, cherche la cause (casse, perte…) avant de recourir à une correction d'inventaire.
+              </p>
+              <div style={{ marginTop: 'var(--sp-4)' }}>
+                <DataTable columns={ecartColumns} rows={ecartRows.map((r, i) => ({ ...r, id: i }))} />
+              </div>
+            </>)}
+            {active === 'historique' && (<>
+              <div style={{ display: 'flex', gap: 'var(--sp-3)', padding: 'var(--gutter-panel)', paddingBottom: 0 }}>
+                <Select size="sm" value={histProduit} onChange={e => setHistProduit(e.target.value)}
+                  options={[{ value: '', label: 'Tous les produits' }, ...products.filter(p => p.categorie === 'lubrifiant').map(p => ({ value: p.nom, label: p.nom }))]} />
+              </div>
+              <div style={{ marginTop: 'var(--sp-4)' }}>
+                {histRows.length ? <DataTable columns={histColumns} rows={histRows} /> : <PanelEmpty icon="calendar-days" label="Aucune déclaration figée pour l'instant" />}
+              </div>
+            </>)}
+            {active === 'reappro' && (<>
+              <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', margin: 'var(--sp-4) var(--gutter-panel) 0' }}>
+                Cible = seuil ou consommation moyenne × (délai livraison + jours de sécurité), selon le plus élevé. Le nombre de cartons est calculé automatiquement.
+              </p>
+              <div style={{ marginTop: 'var(--sp-4)' }}>
+                <DataTable columns={reorderColumns} rows={reorderLub.map((r, i) => ({ ...r, id: i }))} />
+              </div>
+            </>)}
+          </Panel>
+        )
+      })()}
 
       {/* ===== SORTIES DÉDUITES — admin seulement (analyse, repliée par défaut) ===== */}
       {isAdmin && (() => {
