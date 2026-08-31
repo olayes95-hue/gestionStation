@@ -296,13 +296,20 @@ export default function Orders() {
       : o.produit },
     { key: 'qte', header: 'Qté', numeric: true, align: 'right', render: o => (o.categorie || 'carburant') !== 'superette' && N(o.quantite_commandee) ? N(o.quantite_commandee).toLocaleString('fr-FR') : '—' },
     { key: 'statut', header: 'Statut', render: o => { const st = ORDER_STATUS_TONES[o.statut] || { label: o.statut, tone: 'idle' }; return <Badge tone={st.tone}>{st.label}</Badge> } },
-    { key: 'actions', header: '', align: 'right', render: o => (
+    { key: 'actions', header: '', align: 'right', render: o => {
+      // Le libellé doit refléter ce qui se passe réellement au clic, pas juste le statut de
+      // la commande : un directeur (validate_orders sans manage_orders) ouvre le même tiroir
+      // mais n'y voit aucun formulaire de réception (cf. plus bas, gardé par can('manage_orders'))
+      // — lui afficher "Réceptionner" serait trompeur, "Détail" reflète ce qu'il peut vraiment faire.
+      const peutReceptionner = (o.statut === 'lancee' || o.statut === 'partielle') && can('manage_orders')
+      return (
       <div onClick={e => e.stopPropagation()}>
         <Button size="sm" tone={['proposee', 'validee', 'lancee', 'partielle'].includes(o.statut) ? 'primary' : 'outline'} onClick={() => setDetailId(o.id)}>
-          {o.statut === 'lancee' || o.statut === 'partielle' ? 'Réceptionner' : 'Détail'}
+          {peutReceptionner ? 'Réceptionner' : 'Détail'}
         </Button>
       </div>
-    ) },
+      )
+    } },
   ]
 
   // Délai, paiement, avancement et note : déplacés du tableau (trop dense) vers le panneau de
