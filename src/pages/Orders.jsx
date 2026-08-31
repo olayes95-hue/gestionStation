@@ -5,7 +5,7 @@ import { useStation } from '../lib/station.jsx'
 import { fcfa, frDate, numFR, today } from '../lib/format'
 import { ORDER_STATUS_TONES } from '../lib/tones'
 import { N, receptionner as receptionnerCommande, cumulStatus, packagingSplit } from '../lib/orderReception'
-import { Panel } from '../ds/octane/components/core/Panel.jsx'
+import { Panel, PanelEmpty } from '../ds/octane/components/core/Panel.jsx'
 import { Button } from '../ds/octane/components/core/Button.jsx'
 import { Badge } from '../ds/octane/components/core/Badge.jsx'
 import { Tag } from '../ds/octane/components/core/Tag.jsx'
@@ -19,6 +19,7 @@ import { IconButton } from '../ds/octane/components/core/IconButton.jsx'
 import { DataTable } from '../ds/octane/components/data/DataTable.jsx'
 import { Pagination } from '../ds/octane/components/data/Pagination.jsx'
 import { EvidenceUpload } from '../ds/octane/components/evidence/EvidenceUpload.jsx'
+import { Tabs } from '../ds/octane/components/navigation/Tabs.jsx'
 import { Kpi } from '../lib/Kpi.jsx'
 const CATS = [['carburant', 'Carburant'], ['gaz', 'Gaz'], ['lubrifiant', 'Lubrifiant'], ['superette', 'Supérette']]
 // Lignes carburant par défaut (essence + gasoil commandés simultanément).
@@ -51,6 +52,8 @@ export default function Orders() {
   const [editRecId, setEditRecId] = useState(null)   // id de la réception en cours de correction (admin)
   const [editRecForm, setEditRecForm] = useState({})
   const [page, setPage] = useState(1); const [pageSize, setPageSize] = useState(25)
+  const [allReceptions, setAllReceptions] = useState([])   // toutes les réceptions carburant, toutes commandes confondues — voir "Réceptions carburant récentes"
+  const [recProduit, setRecProduit] = useState('essence')
 
   // Historique des réceptions (order_receptions) de la commande ouverte — jusqu'ici invisible dans
   // l'app une fois la commande soldée : seul le cumul (v_order_reception) et le dernier cuve_avant/
@@ -64,16 +67,22 @@ export default function Orders() {
 
   async function load() {
     if (!stationId) return
-    const [o, rt, lv] = await Promise.all([
+    const [o, rt, lv, ar] = await Promise.all([
       supabase.from('fuel_orders').select('*').eq('station_id', stationId).order('created_at', { ascending: false }),
       supabase.from('v_order_reception').select('*').eq('station_id', stationId),
       // Livraison réelle = somme des (cuve_après−cuve_avant) PAR réception (v40), insensible aux ventes
       // survenues entre deux réceptions partielles d'une même commande. Repli silencieux si v40 pas encore exécutée.
       supabase.from('v_order_livraison').select('*').eq('station_id', stationId),
+      // Toutes les réceptions carburant, toutes commandes confondues — pour repérer d'un coup
+      // d'œil si deux commandes du même produit se chevauchent (cause d'un vrai bug repéré :
+      // une réception mal attribuée créait un doublon de plage de cuve, invisible commande par
+      // commande). fuel_orders(...) : embedding PostgREST via la FK order_receptions.order_id.
+      supabase.from('order_receptions').select('*, fuel_orders(produit,categorie,statut)').eq('station_id', stationId).order('report_date', { ascending: false }).order('id', { ascending: false }).limit(200),
     ])
     setOrders(o.data || [])
     const m = {}; for (const x of (rt.data || [])) m[x.order_id] = x; setRecvTotals(m)
     const lm = {}; for (const x of (lv.data || [])) lm[x.order_id] = N(x.livre_reel); setLivreReel(lm)
+    setAllReceptions((ar.data || []).filter(r => r.fuel_orders?.categorie === 'carburant'))
   }
   useEffect(() => { load() }, [stationId])
   useEffect(() => { supabase.from('settings').select('*').eq('id', 1).maybeSingle().then(({ data }) => data && setSettings(data)) }, [])
@@ -469,6 +478,32 @@ export default function Orders() {
           </form>
         </Panel>
       )}
+
+      {/* ===== RÉCEPTIONS CARBURANT RÉCENTES — toutes commandes confondues, par produit =====
+          Quand deux commandes du même produit sont en cours en même temps, chaque tiroir de
+          détail ne montre que SES propres réceptions — impossible de voir si deux commandes se
+          chevauchent (bug réel repéré : une réception mal attribuée dupliquait une plage de
+          cuve déjà couverte par une autre commande, invisible commande par commande). Cette vue
+          rassemble tout, dans l'ordre, pour repérer ça d'un coup d'œil. */}
+      {!isPompiste && allReceptions.length > 0 && (() => {
+        const rows = allReceptions.filter(r => (r.fuel_orders?.produit || '') === recProduit).slice(0, 20)
+        const recColumns = [
+          { key: 'report_date', header: 'Date', render: r => frDate(r.report_date) },
+          { key: 'order_id', header: 'Commande', render: r => <Tag>#{r.order_id}</Tag> },
+          { key: 'cuve', header: 'Cuve avant → après', render: r => r.cuve_avant != null && r.cuve_apres != null
+            ? `${N(r.cuve_avant).toLocaleString('fr-FR')} → ${N(r.cuve_apres).toLocaleString('fr-FR')} L` : '—' },
+          { key: 'quantite_recue', header: 'Quantité', numeric: true, align: 'right', render: r => N(r.quantite_recue).toLocaleString('fr-FR') + ' L' },
+          { key: 'statut', header: 'Statut commande', render: r => { const st = ORDER_STATUS_TONES[r.fuel_orders?.statut] || {}; return <Badge tone={st.tone || 'idle'}>{st.label || r.fuel_orders?.statut}</Badge> } },
+        ]
+        return (
+          <Panel title="Réceptions carburant récentes" meta="toutes commandes confondues" flush>
+            <Tabs items={[{ value: 'essence', label: 'Essence' }, { value: 'gasoil', label: 'Gasoil' }]} value={recProduit} onChange={setRecProduit} />
+            <div style={{ marginTop: 'var(--sp-4)' }}>
+              {rows.length ? <DataTable columns={recColumns} rows={rows} /> : <PanelEmpty icon="fuel" label="Aucune réception récente pour ce produit" />}
+            </div>
+          </Panel>
+        )
+      })()}
 
       {/* Historique des commandes : tableau filtrable (mois OU période libre, catégorie, produit, statut).
           Toutes les actions d'une commande (valider/refuser/lancer/réceptionner/supprimer) sont ici,
