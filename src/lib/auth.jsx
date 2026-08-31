@@ -13,10 +13,17 @@ export function AuthProvider({ children }) {
   const [permissions, setPermissions] = useState(new Set())
   const [roleLabel, setRoleLabel] = useState('')
   const [loading, setLoading] = useState(true)
+  // Distinct de `loading` (qui ne couvre que le tout premier chargement de la session) :
+  // à chaque connexion/changement de session, onAuthStateChange met `session` à jour
+  // immédiatement, avant que loadProfile() ait fini — sans ce flag, profile reste `null`
+  // pendant ce court instant et App.jsx affichait à tort l'écran "en attente de validation"
+  // pour un compte déjà validé, le temps que le vrai profil arrive.
+  const [profileLoading, setProfileLoading] = useState(true)
   const [deconnexionHeures, setDeconnexionHeures] = useState(DECONNEXION_DEFAUT_HEURES)
 
   async function loadProfile(userId) {
-    if (!userId) { setProfile(null); setPermissions(new Set()); return }
+    if (!userId) { setProfile(null); setPermissions(new Set()); setProfileLoading(false); return }
+    setProfileLoading(true)
     const { data } = await supabase.from('profiles').select('*').eq('id', userId).single()
     setProfile(data || null)
     // L'admin n'a jamais de ligne dans role_permissions (son accès passe toujours par
@@ -28,6 +35,7 @@ export function AuthProvider({ children }) {
     } else {
       setPermissions(new Set())
     }
+    setProfileLoading(false)
   }
 
   useEffect(() => {
@@ -88,6 +96,7 @@ export function AuthProvider({ children }) {
     session,
     profile,
     loading,
+    profileLoading,
     role: profile?.role,
     roleLabel,
     isAdmin: profile?.role === 'admin',

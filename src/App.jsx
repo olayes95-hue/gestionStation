@@ -126,9 +126,13 @@ function PendingApproval() {
 }
 
 export default function App() {
-  const { session, loading, profile, isAdmin, isVendeuse, isPompiste, can } = useAuth()
+  const { session, loading, profileLoading, profile, isAdmin, isVendeuse, isPompiste, can } = useAuth()
   if (loading) return <div className="center">Chargement…</div>
   if (!session) return <Login />
+  // profileLoading (pas juste `!profile`) : à chaque connexion, la session est connue avant
+  // que le profil ait fini de charger — sans ce garde-fou, l'écran "en attente de validation"
+  // s'affichait brièvement même pour un compte déjà validé, le temps que profile arrive.
+  if (profileLoading) return <div className="center">Chargement…</div>
   if (!profile?.approved) return <PendingApproval />
 
   const hasOperationalAccess = isAdmin || profile?.role === 'gerant' || isPompiste || isVendeuse || can('manage_orders')
