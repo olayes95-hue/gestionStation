@@ -43,7 +43,7 @@ export default function Stock() {
   const [sorties, setSorties] = useState([])
   const [theorique, setTheorique] = useState([])
   const [snapshots, setSnapshots] = useState([])
-  const [reorderLub, setReorderLub] = useState([])
+  const [reorder, setReorder] = useState([])   // v_reorder_produit — gaz + lubrifiant
   const [products, setProducts] = useState([])
   const [lubTab, setLubTab] = useState('ecart')   // onglet actif du bloc "Lubrifiant — détail" (écart / historique / réappro)
   const [histProduit, setHistProduit] = useState('')
@@ -75,10 +75,10 @@ export default function Stock() {
       supabase.from('products').select('*').eq('actif', true).order('ordre'),
       supabase.from('v_stock_theorique').select('*').eq('station_id', stationId),
       supabase.from('stock_declarations_snapshot').select('*').eq('station_id', stationId).order('report_date', { ascending: false }).limit(200),
-      supabase.from('v_reorder_lubrifiant').select('*').eq('station_id', stationId),
+      supabase.from('v_reorder_produit').select('*').eq('station_id', stationId),
     ])
     setStock(sp.data || []); setValeur(sv.data || []); setMvts(mv.data || []); setSorties(so.data || []); setProducts(pr.data || [])
-    setTheorique(th.data || []); setSnapshots(sn.data || []); setReorderLub(ro.data || [])
+    setTheorique(th.data || []); setSnapshots(sn.data || []); setReorder(ro.data || [])
   }
   useEffect(() => { load() }, [stationId])
   const flash = (m) => { setMsg(m); setErr(''); setTimeout(() => setMsg(''), 2500) }
@@ -173,6 +173,7 @@ export default function Stock() {
   ]
 
   const reorderColumns = [
+    { key: 'categorie', header: 'Catégorie', render: r => (CATS.find(c => c[0] === r.categorie) || [, r.categorie])[1] },
     { key: 'produit', header: 'Produit' },
     { key: 'stock_theorique_actuel', header: 'Stock', numeric: true, align: 'right', render: r => N(r.stock_theorique_actuel) },
     { key: 'conso_moy_jour', header: 'Conso/jour', numeric: true, align: 'right', muted: true, render: r => (Number(r.conso_moy_jour) || 0).toFixed(1) },
@@ -362,13 +363,24 @@ export default function Stock() {
         </Panel>
       )}
 
-      {/* ===== LUBRIFIANT — DÉTAIL — regroupe écart / historique / réappro en un seul bloc à onglets
-          (auparavant 3 panneaux séparés dispersés sur la page) — gérant/pompiste/admin ===== */}
-      {!isVendeuse && (ecartRows.length > 0 || reorderLub.length > 0 || (isAdmin && snapshots.length > 0)) && (() => {
+      {/* ===== SUGGESTIONS DE COMMANDE — gaz + lubrifiant, une seule liste — gérant/pompiste/admin ===== */}
+      {!isVendeuse && reorder.length > 0 && (
+        <Panel title="Suggestions de commande" meta="gaz + lubrifiant" flush>
+          <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', margin: 'var(--sp-4) var(--gutter-panel) 0' }}>
+            Cible = seuil ou consommation moyenne × (délai livraison + jours de sécurité), selon le plus élevé. Le nombre de cartons est calculé automatiquement.
+          </p>
+          <div style={{ marginTop: 'var(--sp-4)' }}>
+            <DataTable columns={reorderColumns} rows={reorder.map((r, i) => ({ ...r, id: i }))} />
+          </div>
+        </Panel>
+      )}
+
+      {/* ===== LUBRIFIANT — DÉTAIL — regroupe écart / historique en un seul bloc à onglets
+          (auparavant 2 panneaux séparés dispersés sur la page) — gérant/pompiste/admin ===== */}
+      {!isVendeuse && (ecartRows.length > 0 || (isAdmin && snapshots.length > 0)) && (() => {
         const tabs = [
           ecartRows.length > 0 && { value: 'ecart', label: 'Théorique vs déclaré' },
           isAdmin && snapshots.length > 0 && { value: 'historique', label: 'Historique quotidien' },
-          reorderLub.length > 0 && { value: 'reappro', label: 'Suggestions de commande' },
         ].filter(Boolean)
         const active = tabs.some(t => t.value === lubTab) ? lubTab : tabs[0].value
         return (
@@ -389,14 +401,6 @@ export default function Stock() {
               </div>
               <div style={{ marginTop: 'var(--sp-4)' }}>
                 {histRows.length ? <DataTable columns={histColumns} rows={histRows} /> : <PanelEmpty icon="calendar-days" label="Aucune déclaration figée pour l'instant" />}
-              </div>
-            </>)}
-            {active === 'reappro' && (<>
-              <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', margin: 'var(--sp-4) var(--gutter-panel) 0' }}>
-                Cible = seuil ou consommation moyenne × (délai livraison + jours de sécurité), selon le plus élevé. Le nombre de cartons est calculé automatiquement.
-              </p>
-              <div style={{ marginTop: 'var(--sp-4)' }}>
-                <DataTable columns={reorderColumns} rows={reorderLub.map((r, i) => ({ ...r, id: i }))} />
               </div>
             </>)}
           </Panel>
