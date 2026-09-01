@@ -83,7 +83,7 @@ export default function Submit() {
   const [attachments, setAttachments] = useState([])   // photos déjà envoyées
   const [newPhotos, setNewPhotos] = useState([])        // {file, categorie}
   const [recvTotals, setRecvTotals] = useState({})       // {orderId: {quantite_recue_total, reste, complet}}
-  const [meterPhotos, setMeterPhotos] = useState({})     // {champCompteur: {file, label}}
+  const [meterPhotoBusy, setMeterPhotoBusy] = useState({}) // {champCompteur: true} pendant l'envoi immédiat de la photo
   const [lubTypes, setLubTypes] = useState(LUB_TYPES)    // références lubrifiant (dynamiques)
   const [settings, setSettings] = useState({ essence_pv: 725, gasoil_pv: 750, marge_unitaire: 25 })
   const [prods, setProds] = useState([])                 // catalogue supérette/autre (vendeuse)
@@ -96,7 +96,6 @@ export default function Submit() {
   const [forceMeter, setForceMeter] = useState(false)  // forcer malgré l'avertissement
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState(''); const [err, setErr] = useState('')
-  const [draftRestored, setDraftRestored] = useState(false)
   const [errTarget, setErrTarget] = useState('top')
   const [submittedMoments, setSubmittedMoments] = useState(new Set())
   const [openAchats, setOpenAchats] = useState(null)     // null = auto (ouvert si déjà des lignes)
@@ -178,12 +177,14 @@ export default function Submit() {
       Object.keys(EMPTY).forEach(k => c[k] = r.data[k] ?? '')
       THOUSANDS_FIELDS.forEach(k => { if (c[k] !== '') c[k] = formatThousands(String(c[k])) })
       setF(c); setLub(r.data.lubrifiant_stock || {}); setLubVendu(r.data.lubrifiant_vendu || {})
-      setDraftRestored(false)
       // La journée est réellement enregistrée en base : le brouillon local n'a plus lieu d'être.
       clearDraft(stationId, d)
     }
-    else if (draft?.f) { setF(draft.f); setLub(draft.lub || {}); setLubVendu(draft.lubVendu || {}); setDraftRestored(true) }
-    else { setF({ ...EMPTY, ess_pu: settings.essence_pv, gas_pu: settings.gasoil_pv }); setLub({}); setLubVendu({}); setDraftRestored(false) }
+    // Restauration silencieuse (pas de bannière) : un brouillon existe dès qu'une saisie du
+    // jour est en cours, que la page ait redémarré ou non — l'afficher à chaque fois serait
+    // trompeur (laisserait croire à un incident alors que c'est le cas normal).
+    else if (draft?.f) { setF(draft.f); setLub(draft.lub || {}); setLubVendu(draft.lubVendu || {}) }
+    else { setF({ ...EMPTY, ess_pu: settings.essence_pv, gas_pu: settings.gasoil_pv }); setLub({}); setLubVendu({}) }
     setLubSplit({}); setLubVenduSplit({})
     // Dépenses/versements/achats : la base fait autorité dès qu'il y a quelque chose ; sinon,
     // on retombe sur le brouillon local (ex. après un rechargement inattendu de la page).
@@ -193,7 +194,7 @@ export default function Submit() {
     setAttachments(at.data || [])
     setNewPhotos([])
     const tmap = {}; for (const x of (rt.data || [])) tmap[x.order_id] = x; setRecvTotals(tmap)
-    setMeterPhotos({})
+    setMeterPhotoBusy({})
     setOpenReception(false)
   }
 
@@ -205,17 +206,17 @@ export default function Submit() {
     saveDraft(stationId, date, { f, lub, lubVendu, expenses: stripFiles(expenses), deposits: stripFiles(deposits), deliveries: stripFiles(deliveries) })
   }, [f, lub, lubVendu, expenses, deposits, deliveries, stationId, date])
 
-  // champ compteur avec photo-preuve par pompe
+  // champ compteur avec photo-preuve par pompe — envoyée immédiatement à la sélection (voir handleMeterPhoto)
   const meterField = (k, label) => (
     <Field label={label} key={k}>
       <Input type="text" inputMode="decimal" numeric {...numProps(k)} />
-      <Button type="button" size="sm" icon="camera" block
-        style={{ marginTop: 'var(--sp-2)', ...(meterPhotos[k]?.file ? { color: 'var(--state-ok)', borderColor: 'var(--state-ok)' } : {}) }}
+      <Button type="button" size="sm" icon="camera" block disabled={!!meterPhotoBusy[k]}
+        style={{ marginTop: 'var(--sp-2)', ...(meterHasPhoto(k, label) ? { color: 'var(--state-ok)', borderColor: 'var(--state-ok)' } : {}) }}
         onClick={() => document.getElementById(`meter-photo-${k}`)?.click()}>
-        {meterPhotos[k]?.file ? 'Photo ✓' : 'Ajouter la photo'}
+        {meterPhotoBusy[k] ? 'Envoi…' : meterHasPhoto(k, label) ? 'Photo ✓ (reprendre)' : 'Ajouter la photo'}
       </Button>
       <input id={`meter-photo-${k}`} type="file" accept="image/*" capture="environment" style={{ display: 'none' }}
-        onChange={e => setMeterPhotos(p => ({ ...p, [k]: e.target.files[0] ? { file: e.target.files[0], label } : undefined }))} />
+        onChange={e => { const file = e.target.files[0]; e.target.value = ''; if (file) handleMeterPhoto(k, label, file) }} />
     </Field>
   )
 
@@ -235,7 +236,34 @@ export default function Submit() {
 
 
   // un compteur a-t-il déjà sa photo (nouvelle ou déjà enregistrée) ?
-  const meterHasPhoto = (k, label) => !!meterPhotos[k]?.file || attachments.some(a => a.categorie === 'compteur' && (a.note || '').startsWith(label))
+  const meterHasPhoto = (k, label) => !!meterPhotoBusy[k] || attachments.some(a => a.categorie === 'compteur' && (a.note || '').startsWith(label))
+
+  // Photo compteur envoyée immédiatement à la sélection (pas au submit final) : sur téléphone,
+  // l'appareil photo natif peut faire recharger l'onglet en arrière-plan (mémoire faible) —
+  // si on attendait le submit, la photo (jamais sérialisable dans le brouillon local) disparaissait
+  // à chaque fois, obligeant à tout ressaisir. En l'envoyant tout de suite, elle est en sécurité
+  // dans le stockage dès la sélection, quoi qu'il arrive à l'onglet ensuite.
+  async function handleMeterPhoto(k, label, file) {
+    if (!file || !stationId) return
+    setMeterPhotoBusy(p => ({ ...p, [k]: true }))
+    try {
+      // remplace une éventuelle photo précédente pour ce compteur (reprise après un flou, etc.)
+      const anciennes = attachments.filter(a => a.categorie === 'compteur' && (a.note || '').startsWith(label))
+      for (const a of anciennes) await supabase.from('attachments').delete().eq('id', a.id)
+      const path = `${stationId}/compteurs/${date}/${k}_${Date.now()}_${file.name.replace(/[^\w.\-]/g, '_')}`
+      const { error: up } = await supabase.storage.from(BORDEREAUX_BUCKET).upload(path, await compressImage(file))
+      if (up) throw up
+      const { data: ins, error: ai } = await supabase.from('attachments').insert({
+        station_id: stationId, report_date: date, categorie: 'compteur', note: `${label} — index ${f[k] || '?'}`, photo_path: path, created_by: session.user.id,
+      }).select().single()
+      if (ai) throw ai
+      setAttachments(a => [...a.filter(x => !anciennes.some(old => old.id === x.id)), ins])
+    } catch (e) {
+      fail(`Échec de l'envoi de la photo (${label}) : ${e.message || e}. Vérifie ta connexion et réessaie.`)
+    } finally {
+      setMeterPhotoBusy(p => { const c = { ...p }; delete c[k]; return c })
+    }
+  }
 
   const photoUrl = (path) => supabase.storage.from(BORDEREAUX_BUCKET).getPublicUrl(path).data.publicUrl
   function addFiles(e) {
@@ -486,16 +514,7 @@ export default function Submit() {
           station_id: sid, report_date: date, categorie: np.categorie || 'autre', photo_path: path, created_by: session.user.id })
         if (ai) throw ai
       }
-      // photos des compteurs (une par pompe)
-      for (const [k, mp] of Object.entries(meterPhotos)) {
-        if (!mp?.file) continue
-        const path = `${sid}/compteurs/${date}/${k}_${Date.now()}_${mp.file.name.replace(/[^\w.\-]/g, '_')}`
-        const { error: up } = await supabase.storage.from(BORDEREAUX_BUCKET).upload(path, await compressImage(mp.file))
-        if (up) throw up
-        const { error: ai } = await supabase.from('attachments').insert({
-          station_id: sid, report_date: date, categorie: 'compteur', note: `${mp.label} — index ${f[k] || '?'}`, photo_path: path, created_by: session.user.id })
-        if (ai) throw ai
-      }
+      // photos des compteurs : déjà envoyées à la prise de vue (voir handleMeterPhoto), rien à faire ici.
 
       // NB : plus de sortie automatique pour le GAZ / LUBRIFIANT.
       // Le stock est DÉCLARÉ chaque jour (gaz_stock_*, lubrifiant_stock) ; la sortie
@@ -661,11 +680,6 @@ export default function Submit() {
 
       {err && errTarget === 'top' && <AlertBanner tone="alarm" title="Erreur">{err}</AlertBanner>}
       {msg && <AlertBanner tone="ok" title="Succès">{msg}</AlertBanner>}
-      {draftRestored && (
-        <AlertBanner tone="info" title="Saisie récupérée">
-          La page a redémarré avant l'envoi (ex. après une photo) — ta saisie en cours pour cette journée a été retrouvée automatiquement. Vérifie les champs, puis envoie normalement.
-        </AlertBanner>
-      )}
       {locked && <AlertBanner tone="alarm" title="Verrouillé">{lockedMsg} Lecture seule.</AlertBanner>}
       {isPompiste && <AlertBanner tone="info" title="Mode pompiste">Tu saisis les compteurs, le stock et les photos. Les ventes et versements sont gérés par le gérant.</AlertBanner>}
 
