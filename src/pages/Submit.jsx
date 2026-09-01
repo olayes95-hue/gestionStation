@@ -45,6 +45,24 @@ const STEPPER_FIELDS = ['gaz_stock_3','gaz_stock_6','gaz_stock_12','gaz_stock_38
 const THOUSANDS_FIELDS = NUMFIELDS.filter(k => !STEPPER_FIELDS.includes(k))
 const EMPTY = Object.fromEntries([...NUMFIELDS.map(k => [k, '']), ['note', '']])
 
+// Brouillon local (localStorage), protège contre une saisie perdue au complet — cas réel
+// rencontré : sur mobile, prendre une photo (l'appareil photo natif prend le dessus sur la
+// mémoire du navigateur) peut recharger l'onglet en revenant, effaçant tout ce qui n'était
+// encore qu'en mémoire React. Ne protège pas les photos déjà sélectionnées (des File(), non
+// sérialisables) mais protège tous les chiffres/textes déjà saisis — sans ça, tout repartait
+// à zéro. Effacé automatiquement dès que la journée est réellement enregistrée en base.
+const draftKey = (stationId, date) => `station_draft_${stationId}_${date}`
+const stripFiles = (rows) => rows.map(({ _file, ...r }) => r)
+function saveDraft(stationId, date, data) {
+  try { localStorage.setItem(draftKey(stationId, date), JSON.stringify(data)) } catch { /* stockage plein/indisponible — tant pis, pas bloquant */ }
+}
+function readDraft(stationId, date) {
+  try { const raw = localStorage.getItem(draftKey(stationId, date)); return raw ? JSON.parse(raw) : null } catch { return null }
+}
+function clearDraft(stationId, date) {
+  try { localStorage.removeItem(draftKey(stationId, date)) } catch { /* ignore */ }
+}
+
 export default function Submit() {
   const { session, isAdmin, isPompiste, isVendeuse } = useAuth()
   const { stationId, current } = useStation()
@@ -78,6 +96,7 @@ export default function Submit() {
   const [forceMeter, setForceMeter] = useState(false)  // forcer malgré l'avertissement
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState(''); const [err, setErr] = useState('')
+  const [draftRestored, setDraftRestored] = useState(false)
   const [errTarget, setErrTarget] = useState('top')
   const [submittedMoments, setSubmittedMoments] = useState(new Set())
   const [openAchats, setOpenAchats] = useState(null)     // null = auto (ouvert si déjà des lignes)
@@ -153,23 +172,38 @@ export default function Submit() {
       supabase.from('submissions').select('moment').eq('report_date', d).eq('station_id', stationId),
     ])
     setSubmittedMoments(new Set((sub.data || []).map(x => x.moment)))
+    const draft = r.data ? null : readDraft(stationId, d)
     if (r.data) {
       const c = { ...EMPTY }
       Object.keys(EMPTY).forEach(k => c[k] = r.data[k] ?? '')
       THOUSANDS_FIELDS.forEach(k => { if (c[k] !== '') c[k] = formatThousands(String(c[k])) })
       setF(c); setLub(r.data.lubrifiant_stock || {}); setLubVendu(r.data.lubrifiant_vendu || {})
+      setDraftRestored(false)
+      // La journée est réellement enregistrée en base : le brouillon local n'a plus lieu d'être.
+      clearDraft(stationId, d)
     }
-    else { setF({ ...EMPTY, ess_pu: settings.essence_pv, gas_pu: settings.gasoil_pv }); setLub({}); setLubVendu({}) }
+    else if (draft?.f) { setF(draft.f); setLub(draft.lub || {}); setLubVendu(draft.lubVendu || {}); setDraftRestored(true) }
+    else { setF({ ...EMPTY, ess_pu: settings.essence_pv, gas_pu: settings.gasoil_pv }); setLub({}); setLubVendu({}); setDraftRestored(false) }
     setLubSplit({}); setLubVenduSplit({})
-    setExpenses(ex.data || [])
-    setDeposits(dep.data || [])
-    setDeliveries(dl.data || [])
+    // Dépenses/versements/achats : la base fait autorité dès qu'il y a quelque chose ; sinon,
+    // on retombe sur le brouillon local (ex. après un rechargement inattendu de la page).
+    setExpenses(ex.data?.length ? ex.data : (draft?.expenses || []))
+    setDeposits(dep.data?.length ? dep.data : (draft?.deposits || []))
+    setDeliveries(dl.data?.length ? dl.data : (draft?.deliveries || []))
     setAttachments(at.data || [])
     setNewPhotos([])
     const tmap = {}; for (const x of (rt.data || [])) tmap[x.order_id] = x; setRecvTotals(tmap)
     setMeterPhotos({})
     setOpenReception(false)
   }
+
+  // Sauvegarde continue du brouillon local — voir le commentaire sur saveDraft plus haut.
+  // Ne sauvegarde pas les fichiers (photos) : seulement ce qui est sérialisable et donc
+  // récupérable après un rechargement inattendu de l'onglet.
+  useEffect(() => {
+    if (!stationId || !date) return
+    saveDraft(stationId, date, { f, lub, lubVendu, expenses: stripFiles(expenses), deposits: stripFiles(deposits), deliveries: stripFiles(deliveries) })
+  }, [f, lub, lubVendu, expenses, deposits, deliveries, stationId, date])
 
   // champ compteur avec photo-preuve par pompe
   const meterField = (k, label) => (
@@ -627,6 +661,11 @@ export default function Submit() {
 
       {err && errTarget === 'top' && <AlertBanner tone="alarm" title="Erreur">{err}</AlertBanner>}
       {msg && <AlertBanner tone="ok" title="Succès">{msg}</AlertBanner>}
+      {draftRestored && (
+        <AlertBanner tone="info" title="Saisie récupérée">
+          La page a redémarré avant l'envoi (ex. après une photo) — ta saisie en cours pour cette journée a été retrouvée automatiquement. Vérifie les champs, puis envoie normalement.
+        </AlertBanner>
+      )}
       {locked && <AlertBanner tone="alarm" title="Verrouillé">{lockedMsg} Lecture seule.</AlertBanner>}
       {isPompiste && <AlertBanner tone="info" title="Mode pompiste">Tu saisis les compteurs, le stock et les photos. Les ventes et versements sont gérés par le gérant.</AlertBanner>}
 
