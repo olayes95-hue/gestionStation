@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { supabase, BORDEREAUX_BUCKET } from '../lib/supabase'
+import { uploadEvidence } from '../lib/image'
 import { useAuth } from '../lib/auth.jsx'
 import { useStation } from '../lib/station.jsx'
 import { fcfa, frDate, numFR, today } from '../lib/format'
@@ -38,7 +39,11 @@ export default function Orders() {
   const [recv, setRecv] = useState({})
   const [recvTotals, setRecvTotals] = useState({})
   const [livreReel, setLivreReel] = useState({})   // {order_id: somme des (cuve_après−cuve_avant) PAR réception}
-  const [fStatut, setFStatut] = useState('tous'); const [fCat, setFCat] = useState('tous')
+  // Par défaut : commandes en cours (tous statuts actifs), peu importe le mois — une commande
+  // proposée/lancée un mois donné peut n'être reçue que le mois suivant, et ne doit jamais se
+  // retrouver cachée par le filtre de période par défaut. « Tous statuts » (historique complet,
+  // filtré par mois) reste disponible dans le sélecteur pour qui veut consulter l'historique.
+  const [fStatut, setFStatut] = useState('en_cours'); const [fCat, setFCat] = useState('tous')
   // Filtre par défaut : mois en cours (plus lisible qu'un historique complet non filtré).
   const now = new Date()
   const [year, setYear] = useState(String(now.getFullYear())); const [month, setMonth] = useState(String(now.getMonth() + 1).padStart(2, '0'))
@@ -165,6 +170,17 @@ export default function Orders() {
   // Réception — logique partagée avec « Saisie du jour » (OrderReception.jsx) via lib/orderReception.js,
   // pour n'avoir qu'un seul endroit à maintenir pour le garde-fou d'écart et les écritures en base.
   const [recSubmitting, setRecSubmitting] = useState({})   // { [order_id]: true } — anti double-clic (cf. doublon en base repéré via une fausse alerte anti-coulage)
+  const [recPhotoBusy, setRecPhotoBusy] = useState({})     // { [order_id]: true } pendant l'envoi immédiat de la photo (bon de livraison)
+  async function handleReceptionPhoto(o, file) {
+    if (!file || !stationId) return
+    setRecPhotoBusy(p => ({ ...p, [o.id]: true }))
+    try {
+      const day = recv[o.id]?.date || today()
+      const path = await uploadEvidence(supabase, BORDEREAUX_BUCKET, `${stationId}/reception/${day}/${o.id}`, file)
+      setRecv(p => ({ ...p, [o.id]: { ...(p[o.id] || {}), photo_path: path } }))
+    } catch (e) { setErr(`Échec de l'envoi de la photo : ${e.message || e}. Vérifie ta connexion et réessaie.`) }
+    finally { setRecPhotoBusy(p => { const c = { ...p }; delete c[o.id]; return c }) }
+  }
   async function receptionner(o) {
     if (recSubmitting[o.id]) return
     setRecSubmitting(p => ({ ...p, [o.id]: true }))
@@ -260,11 +276,17 @@ export default function Orders() {
   const resetFilters = () => { setYear('all'); setMonth('all'); setDateFrom(''); setDateTo(''); setFCat('tous'); setFStatut('tous') }
   const filtersActive = year !== 'all' || month !== 'all' || dateFrom || dateTo || fCat !== 'tous' || fStatut !== 'tous'
 
-  // « À réceptionner » : liste toujours complète, peu importe le mois de lancement ou la catégorie —
-  // une commande lancée peut être livrée bien après le mois où elle a été proposée/lancée, et il ne faut
-  // jamais la perdre de vue derrière un filtre de période ou de catégorie.
+  // Statuts d'une commande pas encore soldée ni refusée — définis ici (pas plus bas) car « en
+  // cours », comme « à réceptionner », doit ignorer le filtre de période.
+  const EN_COURS_STATUTS = ['proposee', 'validee', 'lancee', 'partielle']
+
+  // « À réceptionner » / « En cours » : liste toujours complète, peu importe le mois de lancement
+  // ou la catégorie — une commande lancée peut être livrée bien après le mois où elle a été
+  // proposée/lancée, et il ne faut jamais la perdre de vue derrière un filtre de période.
   const shown = fStatut === 'a_receptionner'
     ? orders.filter(o => o.statut === 'lancee' || o.statut === 'partielle')
+    : fStatut === 'en_cours'
+    ? orders.filter(o => EN_COURS_STATUTS.includes(o.statut) && (fCat === 'tous' || (o.categorie || 'carburant') === fCat))
     : orders.filter(o =>
         inPeriod(dateOf(o)) &&
         (fStatut === 'tous' || o.statut === fStatut) &&
@@ -283,7 +305,6 @@ export default function Orders() {
   // Montant total des commandes en cours (pas encore soldées ni refusées), par pôle — détaillé
   // par étape (à valider / à lancer / à réceptionner) plutôt qu'un simple compteur, pour voir
   // tout de suite combien reste bloqué à valider vs déjà engagé en livraison.
-  const EN_COURS_STATUTS = ['proposee', 'validee', 'lancee', 'partielle']
   const ETAPE_LABEL = { proposee: 'à valider', validee: 'à lancer', lancee: 'à réceptionner', partielle: 'à réceptionner' }
   const commandesEnCoursParPole = CATS.map(([key, label]) => {
     const os = orders.filter(o => (o.categorie || 'carburant') === key && EN_COURS_STATUTS.includes(o.statut))
@@ -528,7 +549,7 @@ export default function Orders() {
             </div>
             <div style={{ display: 'flex', gap: 'var(--sp-2)', flexWrap: 'wrap', alignItems: 'center' }}>
               <Select size="sm" value={fStatut} onChange={e => setFStatut(e.target.value)}
-                options={[['tous', 'Tous statuts'], ['proposee', `Proposées (${count('proposee')})`], ['validee', `Validées (${count('validee')})`], ['a_receptionner', `À réceptionner (${nbAReceptionner})`], ['lancee', `Lancées (${count('lancee')})`], ['partielle', `Partielles (${count('partielle')})`], ['recue', `Reçues (${count('recue')})`], ['annulee', `Refusées (${count('annulee')})`]].map(([k, l]) => ({ value: k, label: l }))} />
+                options={[['en_cours', `En cours, tous mois (${nbAValider + nbALancer + nbAReceptionner})`], ['tous', 'Tous statuts (mois sélectionné)'], ['proposee', `Proposées (${count('proposee')})`], ['validee', `Validées (${count('validee')})`], ['a_receptionner', `À réceptionner (${nbAReceptionner})`], ['lancee', `Lancées (${count('lancee')})`], ['partielle', `Partielles (${count('partielle')})`], ['recue', `Reçues (${count('recue')})`], ['annulee', `Refusées (${count('annulee')})`]].map(([k, l]) => ({ value: k, label: l }))} />
             </div>
           </div>
           <DataTable columns={columns} rows={pageRows} onRowClick={o => setDetailId(o.id)} />
@@ -688,7 +709,9 @@ export default function Orders() {
                       <Checkbox label="Forcer (c'est correct malgré tout)" checked={!!r.forceEcart} onChange={v => setRecv(p => ({ ...p, [o.id]: { ...r, forceEcart: v, warnEcart: v ? '' : r.warnEcart } }))} style={{ marginTop: 'var(--sp-3)' }} />
                     </AlertBanner>
                   )}
-                  <EvidenceUpload label={r?._file ? r._file.name : 'Photo (bon de livraison) — facultatif'} multiple={false} onFiles={files => setRecv(p => ({ ...p, [o.id]: { ...(p[o.id] || {}), _file: files[0] } }))} />
+                  <EvidenceUpload disabled={!!recPhotoBusy[o.id]}
+                    label={recPhotoBusy[o.id] ? 'Envoi…' : r?.photo_path ? 'Photo ✓ (reprendre)' : 'Photo (bon de livraison) — facultatif'}
+                    multiple={false} onFiles={files => files[0] && handleReceptionPhoto(o, files[0])} />
                   <Button tone="primary" disabled={!!recSubmitting[o.id]} onClick={() => receptionner(o)} style={{ alignSelf: 'flex-start' }}>{recSubmitting[o.id] ? 'Enregistrement…' : 'Valider la réception'}</Button>
                 </div>
               )}
