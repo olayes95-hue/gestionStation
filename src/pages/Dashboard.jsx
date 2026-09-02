@@ -35,7 +35,7 @@ export default function Dashboard() {
   const { stationId } = useStation()
   const nav = useNavigate()
   const [months, setMonths] = useState([])   // v_ventes_mensuelles (agrégé, rapide)
-  const [alerts, setAlerts] = useState([])   // v_alerts du mois en cours (station active), triées par gravité
+  const [alerts, setAlerts] = useState([])   // v_alerts des 60 derniers jours (station active), triées par gravité
   const [stock, setStock] = useState(null)
   const [forecast, setForecast] = useState(null)
   const [reorder, setReorder] = useState([])
@@ -134,12 +134,15 @@ export default function Dashboard() {
     loadStock()
     supabase.from('v_ventes_mensuelles').select('*').eq('station_id', stationId).order('mois')
       .then(({ data }) => { setMonths(data || []); setLoading(false) })
-    // les alertes (vue lourde) se chargent après l'affichage, sans bloquer — mois en cours seulement,
-    // pour rester une liste actionnable plutôt qu'un historique complet.
+    // les alertes (vue lourde) se chargent après l'affichage, sans bloquer — fenêtre glissante de
+    // 60 jours (pas le mois calendaire en cours) : un manque à verser d'un mois encore non réglé
+    // ne doit pas disparaître silencieusement le 1er du mois suivant simplement parce qu'il est
+    // sorti de la période affichée — constaté en prod (directeur/admin ne voyaient plus un
+    // versement en retard une fois le mois tourné, alors qu'il restait dû).
     const day = new Date().toISOString().slice(0, 10)
-    const monthStart = day.slice(0, 7) + '-01', monthEnd = day.slice(0, 7) + '-31'
+    const cutoff60 = new Date(Date.now() - 60 * 864e5).toISOString().slice(0, 10)
     Promise.all([
-      supabase.from('v_alerts').select('*').eq('station_id', stationId).gte('report_date', monthStart).lte('report_date', monthEnd),
+      supabase.from('v_alerts').select('*').eq('station_id', stationId).gte('report_date', cutoff60).lte('report_date', day),
       supabase.from('alert_dismissals').select('report_date,type').eq('station_id', stationId),
     ]).then(([al, dis]) => {
       // v_alerts n'a aucune notion de "traité" (vue calculée) — sans ce filtre, une alerte
@@ -508,7 +511,7 @@ export default function Dashboard() {
         </div>
         {alerts.length > 0 && (
           <div style={{ flex: '1 1 320px' }}>
-            <Panel title="Alertes — mois en cours" meta={`${alerts.length}`} flush style={{ height: '100%' }}>
+            <Panel title="Alertes — 60 derniers jours" meta={`${alerts.length}`} flush style={{ height: '100%' }}>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-3)', padding: 'var(--gutter-panel)' }}>
                 {alerts.slice(0, 5).map((a, i) => {
                   const meta = ALERT_TONES[a.type] || { label: a.type, tone: 'info' }

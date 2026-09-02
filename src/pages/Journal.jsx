@@ -58,13 +58,18 @@ export default function Journal() {
     const day = today()
     const monthStart = day.slice(0, 7) + '-01'
     const monthEnd = day.slice(0, 7) + '-31'
+    // Alertes : fenêtre glissante de 60 jours, PAS le mois calendaire — un manque à verser ou un
+    // jour manquant du mois dernier reste dû/à faire même après le 1er du mois suivant ; le
+    // gérant ne doit pas le perdre de vue simplement parce que le calendrier a tourné (constaté
+    // en prod : un manque de 15 500 F du mois précédent avait disparu de cette page).
+    const cutoff60 = new Date(Date.now() - 60 * 864e5).toISOString().slice(0, 10)
     const [sub, fc, recon, exp, pert, al, dis, po, st, pr, ls] = await Promise.all([
       supabase.from('submissions').select('moment').eq('station_id', stationId).eq('report_date', day),
       supabase.from('v_stock_forecast').select('*').eq('station_id', stationId).maybeSingle(),
       supabase.from('v_pole_recon_jour').select('*').eq('station_id', stationId).gte('report_date', monthStart).lte('report_date', monthEnd),
       supabase.from('expenses').select('categorie,montant,non_cash').eq('station_id', stationId).gte('report_date', monthStart).lte('report_date', monthEnd),
       supabase.from('v_pertes_mensuelles').select('*').eq('station_id', stationId).eq('mois', day.slice(0, 7)).maybeSingle(),
-      supabase.from('v_alerts').select('*').eq('station_id', stationId).gte('report_date', monthStart).lte('report_date', monthEnd),
+      supabase.from('v_alerts').select('*').eq('station_id', stationId).gte('report_date', cutoff60).lte('report_date', day),
       supabase.from('alert_dismissals').select('report_date,type').eq('station_id', stationId),
       supabase.from('fuel_orders').select('id', { count: 'exact', head: true }).eq('station_id', stationId).in('statut', ['lancee', 'partielle']),
       supabase.from('settings').select('pompe_inactive_apres').eq('id', 1).maybeSingle(),
@@ -126,7 +131,11 @@ export default function Journal() {
   // depGeneral (SBEE/AUTRE) est déjà déduit de manque.carburant (voir le chargement des données) —
   // ne pas le soustraire une seconde fois ici.
   const manqueTotal = manque.carburant + manque.gaz_lub + manque.superette
-  const topAlerts = alerts.slice(0, 5)
+  // Jours passés sans aucune saisie — mis en avant séparément (pas juste noyés dans la liste
+  // d'alertes) : c'est précisément ce que le gérant ne voit pas spontanément autrement.
+  const joursManquants = [...new Set(alerts.filter(a => a.type === 'POINT_MANQUANT').map(a => a.report_date))].sort().reverse()
+  const otherAlerts = alerts.filter(a => a.type !== 'POINT_MANQUANT')
+  const topAlerts = otherAlerts.slice(0, 5)
   const nombreMachines = Math.min(MAX_MACHINES, Math.max(1, N(current?.nombre_machines) || 4))
   const pumps = machineNums(nombreMachines).map(n => ({
     n, e: `e${n}`, g: `g${n}`,
@@ -228,9 +237,21 @@ export default function Journal() {
         </div>
 
         <div style={{ flex: '1 1 380px' }}>
-          <Panel title="Alertes du mois" meta={`${alerts.length}`} flush style={{ height: '100%' }}>
-            {topAlerts.length
+          <Panel title="Alertes récentes" meta={`${alerts.length}`} flush style={{ height: '100%' }}>
+            {(joursManquants.length || topAlerts.length)
               ? <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-3)', padding: 'var(--gutter-panel)' }}>
+                  {joursManquants.length > 0 && (
+                    <AlertBanner tone="alarm" title={joursManquants.length > 1 ? `${joursManquants.length} jours sans aucune saisie` : 'Jour sans aucune saisie'}>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-2)', marginTop: 'var(--sp-2)' }}>
+                        {joursManquants.map(d => (
+                          <div key={d} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 'var(--sp-3)' }}>
+                            <span>{frDate(d)} — rien envoyé</span>
+                            <Button size="sm" onClick={() => nav(`/saisie?date=${d}`)}>Rattraper</Button>
+                          </div>
+                        ))}
+                      </div>
+                    </AlertBanner>
+                  )}
                   {topAlerts.map((a, i) => {
                     const meta = ALERT_TONES[a.type] || { label: a.type, tone: 'info' }
                     return (
@@ -240,11 +261,11 @@ export default function Journal() {
                       </AlertBanner>
                     )
                   })}
-                  {alerts.length > topAlerts.length && (
-                    <p style={{ font: '400 12px/1 var(--font-ui)', color: 'var(--text-muted)', margin: 0 }}>+ {alerts.length - topAlerts.length} autre(s) alerte(s).</p>
+                  {otherAlerts.length > topAlerts.length && (
+                    <p style={{ font: '400 12px/1 var(--font-ui)', color: 'var(--text-muted)', margin: 0 }}>+ {otherAlerts.length - topAlerts.length} autre(s) alerte(s).</p>
                   )}
                 </div>
-              : <PanelEmpty icon="check" label="Aucune alerte ce mois" />}
+              : <PanelEmpty icon="check" label="Aucune alerte" />}
           </Panel>
         </div>
       </div>
