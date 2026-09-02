@@ -209,18 +209,16 @@ export default function Submit() {
   }, [f, lub, lubVendu, expenses, deposits, deliveries, stationId, date])
 
   // champ compteur avec photo-preuve par pompe — envoyée immédiatement à la sélection (voir handleMeterPhoto)
-  // Vert seulement quand le RELEVÉ (le chiffre saisi) ET sa photo sont là — une photo seule sans
-  // le chiffre tapé n'est pas un relevé fait (constaté en prod : bouton vert alors que l'index
-  // n'était pas encore rempli, donnant l'impression à tort que ce compteur était terminé).
-  const meterField = (k, label) => {
-    const releveDone = f[k] !== '' && f[k] != null && meterHasPhoto(k, label)
-    return (
+  // Photo recommandée mais plus bloquante à l'envoi (voir save()) : le gérant doit pouvoir
+  // envoyer son relevé même si la prise de photo échoue sur son téléphone. Le bouton reflète donc
+  // seulement l'état de la photo elle-même, indépendamment de l'index tapé à côté.
+  const meterField = (k, label) => (
     <Field label={label} key={k}>
       <Input type="text" inputMode="decimal" numeric {...numProps(k)} />
       <Button type="button" size="sm" icon="camera" block disabled={!!meterPhotoBusy[k]}
-        style={{ marginTop: 'var(--sp-2)', ...(releveDone ? { color: 'var(--state-ok)', borderColor: 'var(--state-ok)' } : {}) }}
+        style={{ marginTop: 'var(--sp-2)', ...(meterHasPhoto(k, label) ? { color: 'var(--state-ok)', borderColor: 'var(--state-ok)' } : {}) }}
         onClick={() => document.getElementById(`meter-photo-${k}`)?.click()}>
-        {meterPhotoBusy[k] ? 'Envoi…' : releveDone ? 'Photo ✓ (reprendre)' : meterHasPhoto(k, label) ? 'Photo ✓ — index manquant' : 'Ajouter la photo'}
+        {meterPhotoBusy[k] ? 'Envoi…' : meterHasPhoto(k, label) ? 'Photo ✓ (reprendre)' : 'Ajouter la photo (optionnel)'}
       </Button>
       {/* Pas de capture="environment" : forcer l'appareil photo natif en plein écran est le
           changement d'activité le plus lourd pour l'OS — sur téléphone à mémoire faible, c'est ce
@@ -229,8 +227,7 @@ export default function Submit() {
       <input id={`meter-photo-${k}`} type="file" accept="image/*" style={{ display: 'none' }}
         onChange={e => { const file = e.target.files[0]; e.target.value = ''; if (file) handleMeterPhoto(k, label, file) }} />
     </Field>
-    )
-  }
+  )
 
   // regroupe une pompe essence + gasoil de la même machine (E1+G1 sur la machine 1, etc.)
   const meterMachine = (n, eKey, eLabel, gKey, gLabel) => (
@@ -398,14 +395,10 @@ export default function Submit() {
     if (moment === 'matin' && metersMatin.some(k => f[k] === '' || f[k] === null || f[k] === undefined)) {
       fail(`Relevés du matin obligatoires : remplis les ${metersMatin.length} index des pompes avant d'envoyer.`, 'meters-matin', matinMetersRef); return
     }
-    // justificatifs obligatoires : photo pour chaque dépense EN ESPÈCES
-    // (la catégorie CARBURANT = prélèvement carburant du propriétaire, non-cash → pas de reçu).
-    if (expenses.some(e => N(e.montant) > 0 && (e.categorie || '').toUpperCase() !== 'CARBURANT' && !e.photo_path)) {
-      fail('Photo du justificatif obligatoire pour chaque dépense en espèces.', 'expenses', expensesRef); return
-    }
-    if (deposits.some(d => N(d.montant) > 0 && !d.photo_path)) {
-      fail('Photo du bordereau obligatoire pour chaque versement.', 'deposits', depositsRef); return
-    }
+    // Les photos (justificatif dépense, bordereau versement, compteur) sont RECOMMANDÉES mais
+    // plus bloquantes à l'envoi — le gérant doit toujours pouvoir envoyer ses chiffres même quand
+    // la prise de photo échoue sur son téléphone (rechargement d'écran, appareil bas de gamme).
+    // Les montants/index restent, eux, obligatoires (checks ci-dessus et ci-dessous, inchangés).
     if (deposits.some(d => N(d.montant) > 0 && (!d.periode_debut || !d.periode_fin))) {
       fail('Indique la période concernée (du… au…) pour chaque versement.', 'deposits', depositsRef); return
     }
@@ -443,20 +436,6 @@ export default function Submit() {
         fail('Versement en double détecté — voir le détail ci-dessous.', 'deposits', depositsRef)
         return
       }
-    }
-    // photo obligatoire pour chaque compteur saisi (du moment)
-    const meterSets = []
-    if (moment === 'matin' || showAll) meterSets.push(
-      ...machineNums(nombreMachines).map(n => [`e${n}_m`, `Essence ${n}`]),
-      ...machineNums(nombreMachines).map(n => [`g${n}_m`, `Gasoil ${n}`]))
-    if (moment === 'apres-midi' || showAll) meterSets.push(
-      ...machineNums(nombreMachines).map(n => [`e${n}`, `Pompe E${n}`]),
-      ...machineNums(nombreMachines).map(n => [`g${n}`, `Pompe G${n}`]))
-    const missM = meterSets.find(([k, label]) => f[k] !== '' && f[k] != null && !meterHasPhoto(k, label))
-    if (missM) {
-      const isMatinField = missM[0].endsWith('_m')
-      fail(`Photo obligatoire pour le compteur ${missM[1]}.`, isMatinField ? 'meters-matin' : 'meters-16h', isMatinField ? matinMetersRef : apresmidiMetersRef)
-      return
     }
     // Garde-fou décalage compteur : l'index du matin doit être > au dernier jour saisi —
     // vérifié POMPE PAR POMPE (pas seulement sur le total), sinon une pompe en baisse peut
@@ -744,7 +723,7 @@ export default function Submit() {
             <Field label="Gasoil en cuve (litres)" style={{ flex: '1 1 180px' }}><Input type="text" inputMode="decimal" numeric {...numProps('gas_stock')} /></Field>
           </div>
           <FormSection title="Relevés compteurs à l'ouverture" style={{ marginTop: 'var(--sp-4)' }} innerRef={matinMetersRef}>
-            <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', marginTop: 0 }}>Index de chaque pompe ce matin, avec sa photo (preuve). Sert à vérifier les ventes de la veille.</p>
+            <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', marginTop: 0 }}>Index de chaque pompe ce matin (obligatoire), avec sa photo si possible (recommandée, mais pas bloquante). Sert à vérifier les ventes de la veille.</p>
             {err && errTarget === 'meters-matin' && !meterWarn && <AlertBanner tone="alarm" title="Erreur" style={{ marginBottom: 'var(--sp-3)' }}>{err}</AlertBanner>}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 'var(--sp-3)' }}>
               {machineNums(nombreMachines).map(n => meterMachine(n, `e${n}_m`, `Essence ${n}`, `g${n}_m`, `Gasoil ${n}`))}
@@ -853,7 +832,7 @@ export default function Submit() {
 
         <Panel sectionRef={apresmidiMetersRef}>
           <StepHead n="3" title="Relevés 16 h — obligatoire" />
-          <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)' }}>Index de chaque pompe à 16 h, avec sa photo (preuve). Ce relevé est <b>obligatoire</b>.</p>
+          <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)' }}>Index de chaque pompe à 16 h — <b>obligatoire</b>. Photo recommandée si possible, mais pas bloquante.</p>
           {err && errTarget === 'meters-16h' && <AlertBanner tone="alarm" title="Erreur" style={{ marginBottom: 'var(--sp-4)' }}>{err}</AlertBanner>}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 'var(--sp-3)' }}>
             {machineNums(nombreMachines).map(n => meterMachine(n, `e${n}`, `Pompe E${n}`, `g${n}`, `Pompe G${n}`))}
@@ -986,7 +965,7 @@ export default function Submit() {
                   {(e.categorie || '').toUpperCase() === 'CARBURANT' ? (
                     <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', margin: 0 }}>Prélèvement carburant du propriétaire : <b>charge non-cash</b> (aucun paiement en espèces). Pas de reçu requis ; remonte chaque mois au Point financier sous « Carburant / déplacement (auto) » et n'est pas décompté du cash à verser.</p>
                   ) : (<>
-                    <Field label="Photo du justificatif (obligatoire)">
+                    <Field label="Photo du justificatif (recommandée)">
                       <Input type="file" accept="image/*" disabled={!!expPhotoBusy[i]}
                         onChange={ev => { const file = ev.target.files[0]; ev.target.value = ''; if (file) handleExpensePhoto(i, file) }} />
                     </Field>
@@ -1028,7 +1007,7 @@ export default function Submit() {
                       <Checkbox label="Ce sont bien deux versements distincts (forcer)" checked={!!d.forceDoublon} onChange={v => upd(setDeposits, i, 'forceDoublon', v)} style={{ marginTop: 'var(--sp-3)' }} />
                     </AlertBanner>
                   )}
-                  <Field label="Photo du bordereau *">
+                  <Field label="Photo du bordereau (recommandée)">
                     <Input type="file" accept="image/*" disabled={!!depPhotoBusy[i]}
                       onChange={ev => { const file = ev.target.files[0]; ev.target.value = ''; if (file) handleDepositPhoto(i, file) }} />
                   </Field>
