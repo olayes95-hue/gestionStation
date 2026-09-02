@@ -136,6 +136,12 @@ export default function History() {
       if (r['e' + i] != null) expectedMeters++
       if (r['g' + i] != null) expectedMeters++
     }
+    // Un jour sans AUCUN relevé compteur n'a pas eu sa vraie saisie du gérant — souvent juste un
+    // "daily_reports" créé en creux par autre chose (ex. une réception de commande qui ne stamp
+    // que le stock). Sans ce garde-fou, expectedMeters=0 rendait la comparaison suivante vacueuse
+    // (0 < 0 = faux) et un jour vide passait "Complet" (constaté en prod : 1er/2 sept. marqués
+    // complets alors que rien n'était réellement rempli).
+    if (expectedMeters === 0) return false
     if ((attCompteurByDate[date] || 0) < expectedMeters) return false
     if ((expByDate[date] || []).some(e => N(e.montant) > 0 && !e.non_cash && !e.photo_path)) return false
     if ((depByDate[date] || []).some(d => N(d.montant) > 0 && !d.photo_path)) return false
