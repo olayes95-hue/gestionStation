@@ -209,18 +209,24 @@ export default function Submit() {
   }, [f, lub, lubVendu, expenses, deposits, deliveries, stationId, date])
 
   // champ compteur avec photo-preuve par pompe — envoyée immédiatement à la sélection (voir handleMeterPhoto)
-  const meterField = (k, label) => (
+  // Vert seulement quand le RELEVÉ (le chiffre saisi) ET sa photo sont là — une photo seule sans
+  // le chiffre tapé n'est pas un relevé fait (constaté en prod : bouton vert alors que l'index
+  // n'était pas encore rempli, donnant l'impression à tort que ce compteur était terminé).
+  const meterField = (k, label) => {
+    const releveDone = f[k] !== '' && f[k] != null && meterHasPhoto(k, label)
+    return (
     <Field label={label} key={k}>
       <Input type="text" inputMode="decimal" numeric {...numProps(k)} />
       <Button type="button" size="sm" icon="camera" block disabled={!!meterPhotoBusy[k]}
-        style={{ marginTop: 'var(--sp-2)', ...(meterHasPhoto(k, label) ? { color: 'var(--state-ok)', borderColor: 'var(--state-ok)' } : {}) }}
+        style={{ marginTop: 'var(--sp-2)', ...(releveDone ? { color: 'var(--state-ok)', borderColor: 'var(--state-ok)' } : {}) }}
         onClick={() => document.getElementById(`meter-photo-${k}`)?.click()}>
-        {meterPhotoBusy[k] ? 'Envoi…' : meterHasPhoto(k, label) ? 'Photo ✓ (reprendre)' : 'Ajouter la photo'}
+        {meterPhotoBusy[k] ? 'Envoi…' : releveDone ? 'Photo ✓ (reprendre)' : meterHasPhoto(k, label) ? 'Photo ✓ — index manquant' : 'Ajouter la photo'}
       </Button>
       <input id={`meter-photo-${k}`} type="file" accept="image/*" capture="environment" style={{ display: 'none' }}
         onChange={e => { const file = e.target.files[0]; e.target.value = ''; if (file) handleMeterPhoto(k, label, file) }} />
     </Field>
-  )
+    )
+  }
 
   // regroupe une pompe essence + gasoil de la même machine (E1+G1 sur la machine 1, etc.)
   const meterMachine = (n, eKey, eLabel, gKey, gLabel) => (
@@ -381,6 +387,12 @@ export default function Submit() {
     const meters16h = [...machineNums(nombreMachines).map(n => `e${n}`), ...machineNums(nombreMachines).map(n => `g${n}`)]
     if (moment === 'apres-midi' && meters16h.some(k => f[k] === '' || f[k] === null || f[k] === undefined)) {
       fail(`Relevés 16 h obligatoires : remplis les ${meters16h.length} index des pompes avant d'envoyer.`, 'meters-16h', apresmidiMetersRef); return
+    }
+    // Même garde-fou pour le matin — sans lui, "matin" pouvait être envoyé (et marqué "validé" sur
+    // le bouton de choix du moment) avec les relevés d'ouverture complètement vides.
+    const metersMatin = [...machineNums(nombreMachines).map(n => `e${n}_m`), ...machineNums(nombreMachines).map(n => `g${n}_m`)]
+    if (moment === 'matin' && metersMatin.some(k => f[k] === '' || f[k] === null || f[k] === undefined)) {
+      fail(`Relevés du matin obligatoires : remplis les ${metersMatin.length} index des pompes avant d'envoyer.`, 'meters-matin', matinMetersRef); return
     }
     // justificatifs obligatoires : photo pour chaque dépense EN ESPÈCES
     // (la catégorie CARBURANT = prélèvement carburant du propriétaire, non-cash → pas de reçu).
