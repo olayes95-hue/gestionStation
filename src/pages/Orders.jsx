@@ -60,6 +60,10 @@ export default function Orders() {
   const [allReceptions, setAllReceptions] = useState([])   // toutes les réceptions carburant, toutes commandes confondues — voir "Réceptions carburant récentes"
   const [recProduit, setRecProduit] = useState('essence')
   const [mainTab, setMainTab] = useState('historique')   // onglet actif : historique des commandes / réceptions récentes
+  const [priceRequests, setPriceRequests] = useState([])   // product_price_requests en attente (cette station)
+  const [priceReqOpenFor, setPriceReqOpenFor] = useState(null)   // product_id dont le mini-formulaire de demande est ouvert
+  const [priceReqValue, setPriceReqValue] = useState({ prix: '', motif: '' })
+  const [priceReqBusy, setPriceReqBusy] = useState(false)
 
   // Historique des réceptions (order_receptions) de la commande ouverte — jusqu'ici invisible dans
   // l'app une fois la commande soldée : seul le cumul (v_order_reception) et le dernier cuve_avant/
@@ -73,7 +77,7 @@ export default function Orders() {
 
   async function load() {
     if (!stationId) return
-    const [o, rt, lv, ar] = await Promise.all([
+    const [o, rt, lv, ar, ppr] = await Promise.all([
       supabase.from('fuel_orders').select('*').eq('station_id', stationId).order('created_at', { ascending: false }),
       supabase.from('v_order_reception').select('*').eq('station_id', stationId),
       // Livraison réelle = somme des (cuve_après−cuve_avant) PAR réception (v40), insensible aux ventes
@@ -84,11 +88,41 @@ export default function Orders() {
       // une réception mal attribuée créait un doublon de plage de cuve, invisible commande par
       // commande). fuel_orders(...) : embedding PostgREST via la FK order_receptions.order_id.
       supabase.from('order_receptions').select('*, fuel_orders(produit,categorie,statut,date_proposition,quantite_commandee)').eq('station_id', stationId).order('report_date', { ascending: false }).order('id', { ascending: false }).limit(200),
+      supabase.from('product_price_requests').select('*, products(nom, categorie, unite)').eq('station_id', stationId).eq('statut', 'en_attente').order('demande_at', { ascending: false }),
     ])
     setOrders(o.data || [])
     const m = {}; for (const x of (rt.data || [])) m[x.order_id] = x; setRecvTotals(m)
     const lm = {}; for (const x of (lv.data || [])) lm[x.order_id] = N(x.livre_reel); setLivreReel(lm)
     setAllReceptions((ar.data || []).filter(r => r.fuel_orders?.categorie === 'carburant'))
+    setPriceRequests(ppr.data || [])
+  }
+
+  // Le montant proposé par le gérant se calcule depuis le prix d'achat catalogue — s'il le
+  // trouve faux, il demande une correction (validée par le directeur ou l'admin) plutôt que de
+  // truquer le montant de sa commande. Le trigger apply_price_request applique le nouveau prix
+  // au catalogue dès que la demande passe à "validee" (voir migration_v94.sql).
+  async function submitPriceRequest(productId, prixActuel) {
+    if (!priceReqValue.prix || N(priceReqValue.prix) <= 0) { setErr('Indique le prix d\'achat correct.'); return }
+    setPriceReqBusy(true); setErr('')
+    try {
+      const { error } = await supabase.from('product_price_requests').insert({
+        product_id: productId, station_id: stationId, prix_actuel: prixActuel,
+        prix_demande: numFR(priceReqValue.prix), motif: priceReqValue.motif || null, demande_par: session.user.id })
+      if (error) throw error
+      setPriceReqOpenFor(null); setPriceReqValue({ prix: '', motif: '' })
+      flash('Demande envoyée — en attente de validation.')
+      load()
+    } catch (e) { setErr(e.message || String(e)) } finally { setPriceReqBusy(false) }
+  }
+  async function traiterPriceRequest(req, statut) {
+    setPriceReqBusy(true); setErr('')
+    try {
+      const { error } = await supabase.from('product_price_requests').update({
+        statut, traite_par: session.user.id, traite_at: new Date().toISOString() }).eq('id', req.id)
+      if (error) throw error
+      flash(statut === 'validee' ? 'Prix mis à jour dans le catalogue.' : 'Demande refusée.')
+      load()
+    } catch (e) { setErr(e.message || String(e)) } finally { setPriceReqBusy(false) }
   }
   useEffect(() => { load() }, [stationId])
   useEffect(() => { supabase.from('settings').select('*').eq('id', 1).maybeSingle().then(({ data }) => data && setSettings(data)) }, [])
@@ -129,10 +163,15 @@ export default function Orders() {
   function changeCat(cat) {
     let rows = []
     if (cat === 'carburant') rows = carbRows()
-    else if (cat === 'gaz' || cat === 'lubrifiant') rows = prodOf(cat).map(p => ({ produit: p.nom, qte: '', montant: '' }))
+    else if (cat === 'gaz' || cat === 'lubrifiant') rows = prodOf(cat).map(p => ({ produit: p.nom, product_id: p.id, qte: '', montant: '' }))
     setNf({ ...blankNf(), categorie: cat, rows })
   }
   const setRow = (i, k, v) => setNf(p => ({ ...p, rows: p.rows.map((r, j) => j === i ? { ...r, [k]: v } : r) }))
+  // Prix d'achat catalogue courant pour gaz/lubrifiant — le montant de la commande en découle,
+  // il ne se tape plus à la main (voir setQte) : s'il est faux, on corrige le catalogue via une
+  // demande validée par le directeur/admin (product_price_requests), pas la commande elle-même.
+  const pxAchat = (cat, produit) => N((prodOf(cat).find(p => p.nom === produit) || {}).prix_achat)
+  const setQte = (i, cat, v) => setNf(p => ({ ...p, rows: p.rows.map((r, j) => j === i ? { ...r, qte: v, montant: N(v) > 0 ? String(N(v) * pxAchat(cat, r.produit)) : '' } : r) }))
 
   async function propose(e) {
     e.preventDefault(); setErr('')
@@ -375,6 +414,31 @@ export default function Orders() {
       {err && <AlertBanner tone="alarm" title="Erreur">{err}</AlertBanner>}
       {matinWarn && <AlertBanner tone="warn" title="Pense au relevé du matin">{matinWarn}</AlertBanner>}
 
+      {/* ===== DEMANDES DE CORRECTION DE PRIX D'ACHAT — directeur (validate_orders) ou admin ===== */}
+      {(isAdmin || can('validate_orders')) && priceRequests.length > 0 && (
+        <Panel title="Demandes de correction de prix d'achat" meta={`${priceRequests.length}`} flush>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-3)', padding: 'var(--gutter-panel)' }}>
+            {priceRequests.map(req => (
+              <div key={req.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 'var(--sp-3)', flexWrap: 'wrap', padding: 'var(--sp-4)', background: 'var(--surface-raised)', borderRadius: 'var(--radius-1)', border: '1px solid var(--border-hairline)' }}>
+                <div>
+                  <b style={{ font: 'var(--fw-semibold) 13px/1.2 var(--font-ui)', color: 'var(--text-primary)' }}>
+                    {req.products?.nom || 'Produit'} ({req.products?.categorie})
+                  </b>
+                  <div style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', marginTop: 'var(--sp-1)' }}>
+                    {req.prix_actuel ? fcfa(req.prix_actuel) : 'non renseigné'} → <b style={{ color: 'var(--state-alarm)' }}>{fcfa(req.prix_demande)}</b>
+                    {req.motif ? ` — ${req.motif}` : ''}
+                  </div>
+                </div>
+                <div style={{ display: 'flex', gap: 'var(--sp-2)' }}>
+                  <Button size="sm" tone="primary" disabled={priceReqBusy} onClick={() => traiterPriceRequest(req, 'validee')}>Valider</Button>
+                  <Button size="sm" tone="danger" disabled={priceReqBusy} onClick={() => traiterPriceRequest(req, 'refusee')}>Refuser</Button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </Panel>
+      )}
+
       {/* ===== À TRAITER + COMMANDES EN COURS PAR PÔLE — une seule ligne de métriques, cliquables =====
           Dynamique : une carte n'apparaît que si elle a quelque chose à montrer. */}
       {(nbAValider > 0 || nbALancer > 0 || nbAReceptionner > 0 || commandesEnCoursParPole.some(p => p.nb > 0)) && (
@@ -484,10 +548,45 @@ export default function Orders() {
               {nf.rows.length > 0 && (
                 <DataTable columns={[
                   { key: 'produit', header: 'Produit' },
-                  { key: 'qte', header: 'Quantité', numeric: true, align: 'right', render: r => <Input size="sm" type="text" inputMode="decimal" numeric value={r.qte} onChange={e => setRow(r.id, 'qte', e.target.value)} style={{ width: 90 }} /> },
-                  { key: 'montant', header: 'Montant (F)', numeric: true, align: 'right', render: r => <Input size="sm" type="text" inputMode="decimal" numeric value={r.montant} onChange={e => setRow(r.id, 'montant', e.target.value)} style={{ width: 110 }} /> },
+                  { key: 'pa', header: 'Prix d\'achat', numeric: true, align: 'right', render: r => {
+                    const pa = pxAchat(nf.categorie, r.produit)
+                    return <span style={{ color: pa ? 'var(--text-muted)' : 'var(--state-alarm)' }}>{pa ? fcfa(pa) : 'manquant'}</span>
+                  } },
+                  { key: 'qte', header: 'Quantité', numeric: true, align: 'right', render: r => <Input size="sm" type="text" inputMode="decimal" numeric value={r.qte} onChange={e => setQte(r.id, nf.categorie, e.target.value)} style={{ width: 90 }} /> },
+                  { key: 'montant', header: 'Montant (F)', numeric: true, align: 'right', render: r => <b>{r.montant ? fcfa(N(r.montant)) : '—'}</b> },
+                  { key: 'actions', header: '', render: r => (
+                    <Button size="sm" onClick={() => { setPriceReqOpenFor(priceReqOpenFor === r.product_id ? null : r.product_id); setPriceReqValue({ prix: '', motif: '' }) }}>
+                      Prix incorrect ?
+                    </Button>
+                  ) },
                 ]} rows={nf.rows.map((r, i) => ({ ...r, id: i }))} />
               )}
+              {priceReqOpenFor != null && (() => {
+                const row = nf.rows.find(r => r.product_id === priceReqOpenFor)
+                if (!row) return null
+                const pa = pxAchat(nf.categorie, row.produit)
+                return (
+                  <Panel title={`Demander la correction du prix d'achat — ${row.produit}`} flush>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-3)', padding: 'var(--gutter-panel)' }}>
+                      <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', margin: 0 }}>
+                        Prix catalogue actuel : <b>{pa ? fcfa(pa) : 'non renseigné'}</b>. Ta demande sera examinée par le directeur ou l'admin avant d'être appliquée.
+                      </p>
+                      <div style={{ display: 'flex', gap: 'var(--sp-4)', flexWrap: 'wrap' }}>
+                        <Field label="Prix d'achat correct (F)" style={{ flex: '1 1 160px' }}>
+                          <Input type="text" inputMode="decimal" numeric value={priceReqValue.prix} onChange={e => setPriceReqValue(p => ({ ...p, prix: e.target.value }))} />
+                        </Field>
+                        <Field label="Motif (optionnel)" style={{ flex: '2 1 220px' }}>
+                          <Input value={priceReqValue.motif} onChange={e => setPriceReqValue(p => ({ ...p, motif: e.target.value }))} placeholder="ex : fournisseur a augmenté ses tarifs" />
+                        </Field>
+                      </div>
+                      <Button type="button" tone="primary" disabled={priceReqBusy} style={{ alignSelf: 'flex-start' }}
+                        onClick={() => submitPriceRequest(priceReqOpenFor, pa)}>
+                        {priceReqBusy ? 'Envoi…' : 'Envoyer la demande'}
+                      </Button>
+                    </div>
+                  </Panel>
+                )
+              })()}
               {(() => { const t = nf.rows.reduce((s, r) => s + N(r.montant), 0); return t > 0 ? <div style={{ color: 'var(--state-ok)', font: '400 13px/1.3 var(--font-ui)' }}>Total à payer : <b>{fcfa(t)}</b></div> : null })()}
             </>}
 
