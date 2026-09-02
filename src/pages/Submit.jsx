@@ -84,6 +84,8 @@ export default function Submit() {
   const [newPhotos, setNewPhotos] = useState([])        // {file, categorie}
   const [recvTotals, setRecvTotals] = useState({})       // {orderId: {quantite_recue_total, reste, complet}}
   const [meterPhotoBusy, setMeterPhotoBusy] = useState({}) // {champCompteur: true} pendant l'envoi immédiat de la photo
+  const [expPhotoBusy, setExpPhotoBusy] = useState({})    // {index: true} pendant l'envoi immédiat du justificatif
+  const [depPhotoBusy, setDepPhotoBusy] = useState({})    // {index: true} pendant l'envoi immédiat du bordereau
   const [lubTypes, setLubTypes] = useState(LUB_TYPES)    // références lubrifiant (dynamiques)
   const [settings, setSettings] = useState({ essence_pv: 725, gasoil_pv: 750, marge_unitaire: 25 })
   const [prods, setProds] = useState([])                 // catalogue supérette/autre (vendeuse)
@@ -265,6 +267,38 @@ export default function Submit() {
     }
   }
 
+  // Même fix que les photos compteur : justificatif de dépense et bordereau de versement envoyés
+  // au stockage dès la sélection (plus au submit final) — sinon la photo, jamais sérialisable
+  // dans le brouillon local, disparaissait si l'onglet rechargeait après la prise de vue.
+  async function handleExpensePhoto(i, file) {
+    if (!file || !stationId) return
+    setExpPhotoBusy(p => ({ ...p, [i]: true }))
+    try {
+      const path = `${stationId}/depenses/${date}/${Date.now()}_${file.name.replace(/[^\w.\-]/g, '_')}`
+      const { error: up } = await supabase.storage.from(BORDEREAUX_BUCKET).upload(path, await compressImage(file))
+      if (up) throw up
+      setExpenses(p => p.map((x, j) => j === i ? { ...x, photo_path: path, _file: undefined } : x))
+    } catch (e) {
+      fail(`Échec de l'envoi de la photo du justificatif : ${e.message || e}. Vérifie ta connexion et réessaie.`, 'expenses')
+    } finally {
+      setExpPhotoBusy(p => { const c = { ...p }; delete c[i]; return c })
+    }
+  }
+  async function handleDepositPhoto(i, file) {
+    if (!file || !stationId) return
+    setDepPhotoBusy(p => ({ ...p, [i]: true }))
+    try {
+      const path = `${stationId}/${date}/${Date.now()}_${file.name.replace(/[^\w.\-]/g, '_')}`
+      const { error: up } = await supabase.storage.from(BORDEREAUX_BUCKET).upload(path, await compressImage(file))
+      if (up) throw up
+      setDeposits(p => p.map((x, j) => j === i ? { ...x, photo_path: path, _file: undefined } : x))
+    } catch (e) {
+      fail(`Échec de l'envoi de la photo du bordereau : ${e.message || e}. Vérifie ta connexion et réessaie.`, 'deposits')
+    } finally {
+      setDepPhotoBusy(p => { const c = { ...p }; delete c[i]; return c })
+    }
+  }
+
   const photoUrl = (path) => supabase.storage.from(BORDEREAUX_BUCKET).getPublicUrl(path).data.publicUrl
   function addFiles(e) {
     const files = Array.from(e.target.files || [])
@@ -350,10 +384,10 @@ export default function Submit() {
     }
     // justificatifs obligatoires : photo pour chaque dépense EN ESPÈCES
     // (la catégorie CARBURANT = prélèvement carburant du propriétaire, non-cash → pas de reçu).
-    if (expenses.some(e => N(e.montant) > 0 && (e.categorie || '').toUpperCase() !== 'CARBURANT' && !e.photo_path && !e._file)) {
+    if (expenses.some(e => N(e.montant) > 0 && (e.categorie || '').toUpperCase() !== 'CARBURANT' && !e.photo_path)) {
       fail('Photo du justificatif obligatoire pour chaque dépense en espèces.', 'expenses', expensesRef); return
     }
-    if (deposits.some(d => N(d.montant) > 0 && !d.photo_path && !d._file)) {
+    if (deposits.some(d => N(d.montant) > 0 && !d.photo_path)) {
       fail('Photo du bordereau obligatoire pour chaque versement.', 'deposits', depositsRef); return
     }
     if (deposits.some(d => N(d.montant) > 0 && (!d.periode_debut || !d.periode_fin))) {
@@ -462,16 +496,10 @@ export default function Submit() {
       const exRows = []
       for (const e of expenses) {
         if (N(e.montant) <= 0) continue
-        let photo_path = e.photo_path || null
-        if (e._file) {
-          const path = `${sid}/depenses/${date}/${Date.now()}_${e._file.name.replace(/[^\w.\-]/g, '_')}`
-          const { error: up } = await supabase.storage.from(BORDEREAUX_BUCKET).upload(path, await compressImage(e._file)); if (up) throw up
-          photo_path = path
-        }
         const isCarb = (e.categorie || '').toUpperCase() === 'CARBURANT'
         const row = { report_date: date, station_id: sid, categorie: e.categorie || "AUTRE", montant: numFR(e.montant),
           motif: e.motif || (isCarb ? 'Carburant / déplacement propriétaire' : null),
-          justificatif: true, photo_path, created_by: session.user.id,
+          justificatif: true, photo_path: e.photo_path || null, created_by: session.user.id,
           // Toujours explicite (jamais omis) : un insert groupé où certaines lignes ont
           // non_cash et d'autres non fait envoyer NULL (pas le DEFAULT false) sur les lignes
           // qui l'omettent — violait la contrainte NOT NULL dès qu'un lot mélangeait une
@@ -493,16 +521,9 @@ export default function Submit() {
       const depRows = []
       for (const d of deposits) {
         if (N(d.montant) <= 0) continue
-        let photo_path = d.photo_path || null
-        if (d._file) {
-          const path = `${sid}/${date}/${Date.now()}_${d._file.name.replace(/[^\w.\-]/g, '_')}`
-          const { error: up } = await supabase.storage.from(BORDEREAUX_BUCKET).upload(path, await compressImage(d._file))
-          if (up) throw up
-          photo_path = path
-        }
         depRows.push({ report_date: date, station_id: sid, pole: d.pole || "carburant", montant: numFR(d.montant),
           periode_debut: d.periode_debut || null, periode_fin: d.periode_fin || null,
-          deposit_date: d.periode_fin || null, photo_path, created_by: session.user.id })
+          deposit_date: d.periode_fin || null, photo_path: d.photo_path || null, created_by: session.user.id })
       }
       if (depRows.length) { const { error } = await supabase.from('deposits').insert(depRows); if (error) throw error }
       // photos-preuves envoyées
@@ -950,10 +971,11 @@ export default function Submit() {
                     <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', margin: 0 }}>Prélèvement carburant du propriétaire : <b>charge non-cash</b> (aucun paiement en espèces). Pas de reçu requis ; remonte chaque mois au Point financier sous « Carburant / déplacement (auto) » et n'est pas décompté du cash à verser.</p>
                   ) : (<>
                     <Field label="Photo du justificatif (obligatoire)">
-                      <Input type="file" accept="image/*" capture="environment" onChange={ev => upd(setExpenses, i, '_file', ev.target.files[0])} />
+                      <Input type="file" accept="image/*" capture="environment" disabled={!!expPhotoBusy[i]}
+                        onChange={ev => { const file = ev.target.files[0]; ev.target.value = ''; if (file) handleExpensePhoto(i, file) }} />
                     </Field>
-                    {e.photo_path && !e._file && <p style={{ font: '400 12px/1 var(--font-ui)', color: 'var(--text-muted)', margin: 0 }}>Justificatif enregistré ✓</p>}
-                    {e._file && <p style={{ font: '400 12px/1 var(--font-ui)', color: 'var(--text-muted)', margin: 0 }}>✓ {e._file.name}</p>}
+                    {expPhotoBusy[i] && <p style={{ font: '400 12px/1 var(--font-ui)', color: 'var(--text-muted)', margin: 0 }}>Envoi de la photo…</p>}
+                    {e.photo_path && !expPhotoBusy[i] && <p style={{ font: '400 12px/1 var(--font-ui)', color: 'var(--state-ok)', margin: 0 }}>Justificatif envoyé ✓</p>}
                   </>)}
                   <Button size="sm" tone="danger" onClick={() => rm(setExpenses, i)} style={{ alignSelf: 'flex-start' }}>Retirer</Button>
                 </div>
@@ -991,9 +1013,11 @@ export default function Submit() {
                     </AlertBanner>
                   )}
                   <Field label="Photo du bordereau *">
-                    <Input type="file" accept="image/*" capture="environment" onChange={ev => upd(setDeposits, i, '_file', ev.target.files[0])} />
+                    <Input type="file" accept="image/*" capture="environment" disabled={!!depPhotoBusy[i]}
+                      onChange={ev => { const file = ev.target.files[0]; ev.target.value = ''; if (file) handleDepositPhoto(i, file) }} />
                   </Field>
-                  {d.photo_path && !d._file && <p style={{ font: '400 12px/1 var(--font-ui)', color: 'var(--text-muted)', margin: 0 }}>Photo déjà enregistrée ✓</p>}
+                  {depPhotoBusy[i] && <p style={{ font: '400 12px/1 var(--font-ui)', color: 'var(--text-muted)', margin: 0 }}>Envoi de la photo…</p>}
+                  {d.photo_path && !depPhotoBusy[i] && <p style={{ font: '400 12px/1 var(--font-ui)', color: 'var(--state-ok)', margin: 0 }}>Photo envoyée ✓</p>}
                   <Button size="sm" tone="danger" onClick={() => rm(setDeposits, i)} style={{ alignSelf: 'flex-start' }}>Retirer</Button>
                 </div>
               ))}
@@ -1003,7 +1027,7 @@ export default function Submit() {
               // Évite une 2e ligne vide en double si le bouton est tapé deux fois rapidement
               // (téléphone lent, pas de retour visuel immédiat) — la ligne précédente doit déjà
               // avoir un montant ou une photo avant d'en ouvrir une nouvelle.
-              if (last && !N(last.montant) && !last._file && !last.photo_path) return p
+              if (last && !N(last.montant) && !last.photo_path) return p
               return [...p, { pole: 'carburant', periode_debut: date, periode_fin: date }]
             })} style={{ marginTop: 'var(--sp-4)' }}>+ Ajouter un versement</Button>
           </>}
