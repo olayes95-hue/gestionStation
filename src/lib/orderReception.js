@@ -1,5 +1,4 @@
 import { numFR, today } from './format'
-import { compressImage } from './image'
 
 // Logique de réception d'une commande — strictement identique entre « Saisie du jour »
 // (composant OrderReception, liste de toutes les commandes en attente) et « Commandes »
@@ -90,12 +89,9 @@ export async function receptionner({ supabase, bucket, stationId, session, order
   const marge = N(order.quantite_commandee) * (N(settings.taux_perte_acceptable) || 5) / 100
   const complet = total >= N(order.quantite_commandee) - marge
 
-  let photo_path = null
-  if (recv._file) {
-    photo_path = `${stationId}/reception/${day}/${order.id}_${(recv._file.name || 'photo').replace(/[^\w.\-]/g, '_')}`
-    const { error: up } = await supabase.storage.from(bucket).upload(photo_path, await compressImage(recv._file))
-    if (up) throw up
-  }
+  // La photo (si présente) a déjà été envoyée au stockage dès sa sélection — voir
+  // handleReceptionPhoto dans Orders.jsx / OrderReception.jsx — recv.photo_path est son chemin.
+  const photo_path = recv.photo_path || null
 
   // Chaque écriture vérifie son erreur et jette immédiatement : un échec RLS silencieux ici
   // (déjà arrivé — la mise à jour du statut fuel_orders était bloquée pour le gérant sans que

@@ -3,7 +3,7 @@ import { supabase, BORDEREAUX_BUCKET } from '../lib/supabase'
 import { useAuth } from '../lib/auth.jsx'
 import { useStation } from '../lib/station.jsx'
 import { fcfa, frDate, today } from '../lib/format'
-import { compressImage } from '../lib/image'
+import { uploadEvidence } from '../lib/image'
 import { exportRowsToCsv } from '../lib/csv'
 import { Panel, PanelEmpty } from '../ds/octane/components/core/Panel.jsx'
 import { Button } from '../ds/octane/components/core/Button.jsx'
@@ -33,7 +33,7 @@ const CAT_OPTIONS = [...MANUAL_CATS.map(c => ({ value: c, label: c.replace(/_/g,
 const STATUT_OPTIONS = [{ value: 'a_payer', label: 'À payer' }, { value: 'paye', label: 'Payé' }]
 const MONTHS = ['01','02','03','04','05','06','07','08','09','10','11','12']
 const ML = { '01':'Janv','02':'Févr','03':'Mars','04':'Avril','05':'Mai','06':'Juin','07':'Juil','08':'Août','09':'Sept','10':'Oct','11':'Nov','12':'Déc' }
-const blankCharge = () => ({ categorie: 'LOYER', montant: '', note: '', statut: 'a_payer', date_paiement: '', code_comptable: '', _file: null })
+const blankCharge = () => ({ categorie: 'LOYER', montant: '', note: '', statut: 'a_payer', date_paiement: '', code_comptable: '', photo_path: null })
 
 export default function Finance() {
   const { session, can } = useAuth()
@@ -62,12 +62,14 @@ export default function Finance() {
   const [editSoldeBanque, setEditSoldeBanque] = useState(false)
   const [soldeBanqueForm, setSoldeBanqueForm] = useState({ montant: '', date_solde: '', note: '' })
   const [mouvementsBanque, setMouvementsBanque] = useState([])
-  const [nm, setNm] = useState({ type: 'virement_bons', montant: '', date_mouvement: today(), note: '', _file: null })
+  const [nm, setNm] = useState({ type: 'virement_bons', montant: '', date_mouvement: today(), note: '', photo_path: null })
+  const [nmPhotoBusy, setNmPhotoBusy] = useState(false)
   const [openAnnuel, setOpenAnnuel] = useState(false)
   // Par défaut, mois en cours (pas le dernier mois avec des données, qui peut être ancien).
   const [annee, setAnnee] = useState(today().slice(0, 4))
   const [mois, setMois] = useState(today().slice(0, 7))
   const [nc, setNc] = useState(blankCharge())
+  const [ncPhotoBusy, setNcPhotoBusy] = useState(false)
   const [msg, setMsg] = useState(''); const [err, setErr] = useState('')
   const [tab, setTab] = useState('apercu')
 
@@ -253,22 +255,24 @@ export default function Finance() {
 
   const flash = (m) => { setMsg(m); setErr(''); setTimeout(() => setMsg(''), 2500) }
 
+  async function handleChargePhoto(file) {
+    if (!file || !stationId || !mois) return
+    setNcPhotoBusy(true)
+    try {
+      const path = await uploadEvidence(supabase, BORDEREAUX_BUCKET, `${stationId}/charges/${mois}`, file)
+      setNc(p => ({ ...p, photo_path: path }))
+    } catch (e) { setErr(`Échec de l'envoi de la photo : ${e.message || e}. Vérifie ta connexion et réessaie.`) }
+    finally { setNcPhotoBusy(false) }
+  }
   async function addCharge(e) {
     e.preventDefault(); setErr('')
     if (!mois) { setErr('Choisis un mois précis pour saisir une charge.'); return }
     if (locked.has(mois)) { setErr('Ce mois est verrouillé — déverrouille-le pour ajouter une charge.'); return }
     if (!nc.montant) return
-    let photo_path = null
-    if (nc._file) {
-      const path = `${stationId}/charges/${mois}/${Date.now()}_${nc._file.name.replace(/[^\w.\-]/g, '_')}`
-      const { error: up } = await supabase.storage.from(BORDEREAUX_BUCKET).upload(path, await compressImage(nc._file))
-      if (up) { setErr(up.message); return }
-      photo_path = path
-    }
     const { error } = await supabase.from('charges').insert({
       station_id: stationId, mois, categorie: nc.categorie, montant: Number(nc.montant), note: nc.note || null,
       statut: nc.statut, date_paiement: nc.statut === 'paye' ? (nc.date_paiement || today()) : null,
-      code_comptable: nc.code_comptable || null, photo_path, created_by: session.user.id })
+      code_comptable: nc.code_comptable || null, photo_path: nc.photo_path || null, created_by: session.user.id })
     if (error) setErr(error.message); else { setNc(blankCharge()); flash('Charge ajoutée'); load() }
   }
   async function delCharge(c) {
@@ -336,20 +340,22 @@ export default function Finance() {
     }, { onConflict: 'station_id' })
     if (error) setErr(error.message); else { setEditSoldeBanque(false); flash('Solde bancaire initial enregistré'); load() }
   }
+  async function handleMouvementPhoto(file) {
+    if (!file || !stationId) return
+    setNmPhotoBusy(true)
+    try {
+      const path = await uploadEvidence(supabase, BORDEREAUX_BUCKET, `${stationId}/banque/${nm.date_mouvement || today()}`, file)
+      setNm(p => ({ ...p, photo_path: path }))
+    } catch (e) { setErr(`Échec de l'envoi de la photo : ${e.message || e}. Vérifie ta connexion et réessaie.`) }
+    finally { setNmPhotoBusy(false) }
+  }
   async function addMouvementBanque(e) {
     e.preventDefault(); setErr('')
     if (!nm.montant || Number(nm.montant) <= 0) return
-    let photo_path = null
-    if (nm._file) {
-      const path = `${stationId}/banque/${nm.date_mouvement}/${Date.now()}_${nm._file.name.replace(/[^\w.\-]/g, '_')}`
-      const { error: up } = await supabase.storage.from(BORDEREAUX_BUCKET).upload(path, await compressImage(nm._file))
-      if (up) { setErr(up.message); return }
-      photo_path = path
-    }
     const { error } = await supabase.from('compte_bancaire_mouvements').insert({
       station_id: stationId, date_mouvement: nm.date_mouvement, type: nm.type, montant: Number(nm.montant),
-      note: nm.note || null, photo_path, created_by: session.user.id })
-    if (error) setErr(error.message); else { setNm({ type: 'virement_bons', montant: '', date_mouvement: today(), note: '', _file: null }); flash('Mouvement enregistré'); load() }
+      note: nm.note || null, photo_path: nm.photo_path || null, created_by: session.user.id })
+    if (error) setErr(error.message); else { setNm({ type: 'virement_bons', montant: '', date_mouvement: today(), note: '', photo_path: null }); flash('Mouvement enregistré'); load() }
   }
   async function delMouvementBanque(m) {
     await supabase.from('compte_bancaire_mouvements').delete().eq('id', m.id); load()
@@ -673,7 +679,9 @@ export default function Finance() {
               <Input value={nm.note} onChange={e => setNm({ ...nm, note: e.target.value })} />
             </Field>
             <Field label="Justificatif (optionnel)" style={{ flex: '1 1 200px' }}>
-              <EvidenceUpload label={nm._file ? nm._file.name : 'Déposer la photo'} multiple={false} onFiles={files => setNm({ ...nm, _file: files[0] })} />
+              <EvidenceUpload disabled={nmPhotoBusy}
+                label={nmPhotoBusy ? 'Envoi…' : nm.photo_path ? 'Photo ✓ (reprendre)' : 'Déposer la photo'}
+                multiple={false} onFiles={files => files[0] && handleMouvementPhoto(files[0])} />
             </Field>
             <Button type="submit" tone="primary" size="sm">Ajouter</Button>
           </form>}
@@ -776,7 +784,9 @@ export default function Finance() {
                   <Input type="date" value={nc.date_paiement || today()} max={today()} onChange={e => setNc({ ...nc, date_paiement: e.target.value })} />
                 </Field>}
                 <Field label="Justificatif (facture, bulletin...)" style={{ flex: '1 1 220px' }}>
-                  <EvidenceUpload label={nc._file ? nc._file.name : 'Déposer la photo'} multiple={false} onFiles={files => setNc({ ...nc, _file: files[0] })} />
+                  <EvidenceUpload disabled={ncPhotoBusy}
+                    label={ncPhotoBusy ? 'Envoi…' : nc.photo_path ? 'Photo ✓ (reprendre)' : 'Déposer la photo'}
+                    multiple={false} onFiles={files => files[0] && handleChargePhoto(files[0])} />
                 </Field>
               </div>}
               <Button type="submit" tone="primary" style={{ alignSelf: 'flex-start' }}>Ajouter</Button>

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { supabase, BORDEREAUX_BUCKET } from '../lib/supabase'
 import { useAuth } from '../lib/auth.jsx'
 import { today } from '../lib/format'
+import { uploadEvidence } from '../lib/image'
 import { N, receptionner as receptionnerCommande, cumulStatus, packagingSplit } from '../lib/orderReception'
 import { ORDER_STATUS_TONES } from '../lib/tones'
 import { Panel } from '../ds/octane/components/core/Panel.jsx'
@@ -43,6 +44,17 @@ export default function OrderReception({ stationId, date, settings = {}, onDone,
 
   const flash = (m) => { setMsg(m); setTimeout(() => setMsg(''), 2500) }
   const [submitting, setSubmitting] = useState({})   // { [order_id]: true } — anti double-clic (un doublon en base a été repéré via une fausse alerte anti-coulage)
+  const [photoBusy, setPhotoBusy] = useState({})      // { [order_id]: true } pendant l'envoi immédiat de la photo (bon de livraison)
+  async function handleReceptionPhoto(o, file) {
+    if (!file || !stationId) return
+    setPhotoBusy(p => ({ ...p, [o.id]: true }))
+    try {
+      const day = recv[o.id]?.date || date || today()
+      const path = await uploadEvidence(supabase, BORDEREAUX_BUCKET, `${stationId}/reception/${day}/${o.id}`, file)
+      setRecv(p => ({ ...p, [o.id]: { ...(p[o.id] || {}), photo_path: path } }))
+    } catch (e) { setErr(`Échec de l'envoi de la photo : ${e.message || e}. Vérifie ta connexion et réessaie.`) }
+    finally { setPhotoBusy(p => { const c = { ...p }; delete c[o.id]; return c }) }
+  }
 
   async function receptionner(o) {
     if (submitting[o.id]) return
@@ -136,7 +148,9 @@ export default function OrderReception({ stationId, date, settings = {}, onDone,
                         <Checkbox label="Forcer (c'est correct malgré tout)" checked={!!r.forceEcart} onChange={v => setRecv(p => ({ ...p, [o.id]: { ...r, forceEcart: v, warnEcart: v ? '' : r.warnEcart } }))} style={{ marginTop: 'var(--sp-3)' }} />
                       </AlertBanner>
                     )}
-                    <EvidenceUpload label={r._file ? r._file.name : 'Photo (bon de livraison) — facultatif'} multiple={false} onFiles={files => setRecv(p => ({ ...p, [o.id]: { ...r, _file: files[0] } }))} />
+                    <EvidenceUpload disabled={!!photoBusy[o.id]}
+                      label={photoBusy[o.id] ? 'Envoi…' : r.photo_path ? 'Photo ✓ (reprendre)' : 'Photo (bon de livraison) — facultatif'}
+                      multiple={false} onFiles={files => files[0] && handleReceptionPhoto(o, files[0])} />
                     <Button size="sm" tone="primary" disabled={!!submitting[o.id]} onClick={() => receptionner(o)} style={{ alignSelf: 'flex-start' }}>{submitting[o.id] ? 'Enregistrement…' : 'Valider la réception'}</Button>
                   </div>}
             </div>

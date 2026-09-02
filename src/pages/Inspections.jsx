@@ -3,7 +3,7 @@ import { supabase, BORDEREAUX_BUCKET } from '../lib/supabase'
 import { useAuth } from '../lib/auth.jsx'
 import { useStation } from '../lib/station.jsx'
 import { frDate, today } from '../lib/format'
-import { compressImage } from '../lib/image'
+import { uploadEvidence } from '../lib/image'
 import { Panel, PanelEmpty } from '../ds/octane/components/core/Panel.jsx'
 import { Button } from '../ds/octane/components/core/Button.jsx'
 import { Badge } from '../ds/octane/components/core/Badge.jsx'
@@ -42,7 +42,8 @@ export default function Inspections() {
   const [f, setF] = useState(blank())
   const [organismeAutre, setOrganismeAutre] = useState('')
   const [pompesSel, setPompesSel] = useState({})   // { 'E1': { prelevement_litres, retour_cuve_litres, index_avant, index_apres }, ... }
-  const [file, setFile] = useState(null)
+  const [fichePhotoPath, setFichePhotoPath] = useState(null)
+  const [photoBusy, setPhotoBusy] = useState(false)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState(''); const [msg, setMsg] = useState('')
   const [fYear, setFYear] = useState('all')
@@ -68,16 +69,22 @@ export default function Inspections() {
   }
   function updatePompe(key, champ, v) { setPompesSel(p => ({ ...p, [key]: { ...p[key], [champ]: v } })) }
 
+  // Photo envoyée immédiatement à la sélection (pas au submit final) : même fix que Submit.jsx —
+  // un File gardé en mémoire jusqu'au submit disparaît si l'onglet recharge entre-temps (téléphone).
+  async function handleFichePhoto(file) {
+    if (!file || !stationId) return
+    setPhotoBusy(true)
+    try {
+      const path = await uploadEvidence(supabase, BORDEREAUX_BUCKET, `${stationId}/inspections/${f.date_controle || today()}`, file)
+      setFichePhotoPath(path)
+    } catch (e) { setErr(`Échec de l'envoi de la photo : ${e.message || e}. Vérifie ta connexion et réessaie.`) }
+    finally { setPhotoBusy(false) }
+  }
+
   async function add(e) {
     e.preventDefault(); setErr(''); setBusy(true)
     try {
-      let fiche_photo_path = null
-      if (file) {
-        const path = `${stationId}/inspections/${f.date_controle}/${Date.now()}_${file.name.replace(/[^\w.\-]/g, '_')}`
-        const { error: up } = await supabase.storage.from(BORDEREAUX_BUCKET).upload(path, await compressImage(file))
-        if (up) throw up
-        fiche_photo_path = path
-      }
+      const fiche_photo_path = fichePhotoPath
       const organisme = f.organisme === 'Autre' ? (organismeAutre || 'Autre') : f.organisme
       const pompesDetail = Object.entries(pompesSel).map(([key, v]) => {
         const pr = pompesDisponibles.find(p => p.key === key)
@@ -107,7 +114,7 @@ export default function Inspections() {
         heure_arrivee: f.heure_arrivee || null, heure_depart: f.heure_depart || null,
         fiche_photo_path, created_by: session.user.id })
       if (error) throw error
-      setF(blank()); setOrganismeAutre(''); setPompesSel({}); setFile(null)
+      setF(blank()); setOrganismeAutre(''); setPompesSel({}); setFichePhotoPath(null)
       setMsg('Contrôle enregistré'); setTimeout(() => setMsg(''), 2500); load()
     } catch (e) { setErr(e.message) } finally { setBusy(false) }
   }
@@ -246,7 +253,9 @@ export default function Inspections() {
           </FormSection>
 
           <Field label="Photo de la fiche">
-            <EvidenceUpload label={file ? file.name : 'Déposer la photo'} multiple={false} onFiles={files => setFile(files[0])} />
+            <EvidenceUpload disabled={photoBusy}
+              label={photoBusy ? 'Envoi…' : fichePhotoPath ? 'Photo ✓ (reprendre)' : 'Déposer la photo'}
+              multiple={false} onFiles={files => files[0] && handleFichePhoto(files[0])} />
           </Field>
           <Button type="submit" tone="primary" disabled={busy} style={{ alignSelf: 'flex-start' }}>
             {busy ? 'Enregistrement…' : 'Enregistrer le contrôle'}
