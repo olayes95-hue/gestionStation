@@ -1,6 +1,11 @@
 import React from 'react';
 import {Icon} from '../core/Icon.jsx';
-export function EvidenceUpload({label='Déposer la photo',hint,required,capture=true,multiple=true,onFiles,disabled,style}){
+// capture=false par défaut : forcer capture="environment" lance directement l'appareil photo natif
+// en plein écran, un changement d'activité plus lourd que le sélecteur standard (qui propose aussi
+// galerie/fichiers) — sur téléphone bas de gamme/mémoire faible, c'est ce qui déclenche le plus
+// souvent un rechargement de l'onglet en arrière-plan pendant la prise de vue (photo perdue, tout
+// disparaît). Laisser le choix à l'utilisateur réduit la fréquence de ce changement d'activité lourd.
+export function EvidenceUpload({label='Déposer la photo',hint,required,capture=false,multiple=true,onFiles,disabled,style}){
   const [over,setOver]=React.useState(false);
   const input=React.useRef(null);
   const pick=files=>{if(files&&files.length&&onFiles)onFiles(Array.from(files));};

@@ -222,7 +222,11 @@ export default function Submit() {
         onClick={() => document.getElementById(`meter-photo-${k}`)?.click()}>
         {meterPhotoBusy[k] ? 'Envoi…' : releveDone ? 'Photo ✓ (reprendre)' : meterHasPhoto(k, label) ? 'Photo ✓ — index manquant' : 'Ajouter la photo'}
       </Button>
-      <input id={`meter-photo-${k}`} type="file" accept="image/*" capture="environment" style={{ display: 'none' }}
+      {/* Pas de capture="environment" : forcer l'appareil photo natif en plein écran est le
+          changement d'activité le plus lourd pour l'OS — sur téléphone à mémoire faible, c'est ce
+          qui fait le plus souvent recharger l'onglet pendant la prise de vue (photo perdue). Laisser
+          le sélecteur standard (appareil photo / galerie / fichiers) réduit ce risque. */}
+      <input id={`meter-photo-${k}`} type="file" accept="image/*" style={{ display: 'none' }}
         onChange={e => { const file = e.target.files[0]; e.target.value = ''; if (file) handleMeterPhoto(k, label, file) }} />
     </Field>
     )
@@ -983,7 +987,7 @@ export default function Submit() {
                     <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', margin: 0 }}>Prélèvement carburant du propriétaire : <b>charge non-cash</b> (aucun paiement en espèces). Pas de reçu requis ; remonte chaque mois au Point financier sous « Carburant / déplacement (auto) » et n'est pas décompté du cash à verser.</p>
                   ) : (<>
                     <Field label="Photo du justificatif (obligatoire)">
-                      <Input type="file" accept="image/*" capture="environment" disabled={!!expPhotoBusy[i]}
+                      <Input type="file" accept="image/*" disabled={!!expPhotoBusy[i]}
                         onChange={ev => { const file = ev.target.files[0]; ev.target.value = ''; if (file) handleExpensePhoto(i, file) }} />
                     </Field>
                     {expPhotoBusy[i] && <p style={{ font: '400 12px/1 var(--font-ui)', color: 'var(--text-muted)', margin: 0 }}>Envoi de la photo…</p>}
@@ -1025,7 +1029,7 @@ export default function Submit() {
                     </AlertBanner>
                   )}
                   <Field label="Photo du bordereau *">
-                    <Input type="file" accept="image/*" capture="environment" disabled={!!depPhotoBusy[i]}
+                    <Input type="file" accept="image/*" disabled={!!depPhotoBusy[i]}
                       onChange={ev => { const file = ev.target.files[0]; ev.target.value = ''; if (file) handleDepositPhoto(i, file) }} />
                   </Field>
                   {depPhotoBusy[i] && <p style={{ font: '400 12px/1 var(--font-ui)', color: 'var(--text-muted)', margin: 0 }}>Envoi de la photo…</p>}
