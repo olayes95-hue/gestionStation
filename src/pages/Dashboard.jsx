@@ -172,36 +172,6 @@ export default function Dashboard() {
   const pctBon = caTotal ? Math.round(100 * totBon / caTotal) : null
   const pctEsp = caTotal ? Math.round(100 * totCash / caTotal) : null
   const totDep = sum('total_depense'), totMarge = sum('commission_carburant'), totLivr = sum('total_livraisons')
-  const gapVerse = totCash - totDep - totVerse
-
-  // Charges totales déclarées = mêmes deux sources que le Point financier (Finance.jsx) :
-  // les dépenses quotidiennes du gérant (SBEE + carburant propriétaire, non-cash inclus — le
-  // prélèvement carburant est une vraie charge même s'il ne bouge pas de cash) + les charges
-  // fixes saisies à la main dans le Point financier (loyer, salaires, impôts...). totDep (juste
-  // au-dessus) reste utilisé tel quel pour « Cash non tracé », qui ne doit lui rien voir passer
-  // de non-cash — ce sont deux notions de charges différentes, pas une erreur de doublon.
-  const REVENU_CAT = 'AUTRES_PRODUITS'
-  const totChargesAuto = polePeriod.exp.filter(e => e.categorie === 'SBEE' || e.categorie === 'CARBURANT').reduce((s, e) => s + N(e.montant), 0)
-  const chargeInPeriod = (m) => year === 'all' ? true : month === 'all' ? (m || '').startsWith(year) : m === `${year}-${month}`
-  const totChargesManuel = charges.filter(c => c.categorie !== REVENU_CAT && chargeInPeriod(c.mois)).reduce((s, c) => s + N(c.montant), 0)
-  const totChargesDeclarees = totChargesAuto + totChargesManuel
-
-  const chart = fm.map(m => ({ mois: m.mois.slice(2), 'Ventes bon': Math.round(N(m.ventes_bon)), 'Espèces': Math.round(N(m.recettes_especes)), 'Versé': Math.round(N(m.total_verse)) }))
-
-  // Répartition du CA par pôle (camembert) — période sélectionnée, agrégé mensuel déjà chargé.
-  const caParPole = [
-    { name: 'Carburant', value: sum('ca_carburant') },
-    { name: 'Gaz', value: sum('ventes_gaz') },
-    { name: 'Lubrifiant', value: sum('ventes_lubrifiant') },
-    { name: 'Supérette', value: sum('ventes_superette') },
-  ].filter(r => r.value > 0)
-
-  // Évolution mensuelle par pôle (bâtons empilés) — même agrégat, vue mois par mois plutôt que sommée.
-  const chartPoles = fm.map(m => ({
-    mois: m.mois.slice(2),
-    Carburant: Math.round(N(m.ca_carburant)), Gaz: Math.round(N(m.ventes_gaz)),
-    Lubrifiant: Math.round(N(m.ventes_lubrifiant)), Supérette: Math.round(N(m.ventes_superette)),
-  }))
 
   // Manque à verser par pôle (bâtons) — même calcul que le Journal de bord du gérant, attribué
   // période par période via v_pole_recon_jour (pas de simple découpage calendaire) : un jour qui
@@ -232,6 +202,42 @@ export default function Dashboard() {
       { name: 'Supérette', value: manqueByPole.superette - depSuperette },
     ]
   })()
+  // "Cash non tracé" doit être la MÊME notion que "Manque à verser par pôle" juste en dessous —
+  // reprend son total au lieu de son propre calcul par simple agrégat mensuel (totCash − totDep −
+  // totVerse), qui comptait un versement à cheval sur deux mois en entier dans le mois de clôture
+  // pendant que le graphique ci-dessous suivait déjà la vraie période. Ça pouvait afficher deux
+  // chiffres différents pour "la même chose" sur le même écran (constaté en prod : 0 ici quand le
+  // vrai manque, correctement calculé dans le graphique, était de 105 055 F).
+  const gapVerse = manquePole.reduce((s, p) => s + p.value, 0)
+
+  // Charges totales déclarées = mêmes deux sources que le Point financier (Finance.jsx) :
+  // les dépenses quotidiennes du gérant (SBEE + carburant propriétaire, non-cash inclus — le
+  // prélèvement carburant est une vraie charge même s'il ne bouge pas de cash) + les charges
+  // fixes saisies à la main dans le Point financier (loyer, salaires, impôts...). totDep (juste
+  // au-dessus) reste utilisé tel quel pour « Cash non tracé », qui ne doit lui rien voir passer
+  // de non-cash — ce sont deux notions de charges différentes, pas une erreur de doublon.
+  const REVENU_CAT = 'AUTRES_PRODUITS'
+  const totChargesAuto = polePeriod.exp.filter(e => e.categorie === 'SBEE' || e.categorie === 'CARBURANT').reduce((s, e) => s + N(e.montant), 0)
+  const chargeInPeriod = (m) => year === 'all' ? true : month === 'all' ? (m || '').startsWith(year) : m === `${year}-${month}`
+  const totChargesManuel = charges.filter(c => c.categorie !== REVENU_CAT && chargeInPeriod(c.mois)).reduce((s, c) => s + N(c.montant), 0)
+  const totChargesDeclarees = totChargesAuto + totChargesManuel
+
+  const chart = fm.map(m => ({ mois: m.mois.slice(2), 'Ventes bon': Math.round(N(m.ventes_bon)), 'Espèces': Math.round(N(m.recettes_especes)), 'Versé': Math.round(N(m.total_verse)) }))
+
+  // Répartition du CA par pôle (camembert) — période sélectionnée, agrégé mensuel déjà chargé.
+  const caParPole = [
+    { name: 'Carburant', value: sum('ca_carburant') },
+    { name: 'Gaz', value: sum('ventes_gaz') },
+    { name: 'Lubrifiant', value: sum('ventes_lubrifiant') },
+    { name: 'Supérette', value: sum('ventes_superette') },
+  ].filter(r => r.value > 0)
+
+  // Évolution mensuelle par pôle (bâtons empilés) — même agrégat, vue mois par mois plutôt que sommée.
+  const chartPoles = fm.map(m => ({
+    mois: m.mois.slice(2),
+    Carburant: Math.round(N(m.ca_carburant)), Gaz: Math.round(N(m.ventes_gaz)),
+    Lubrifiant: Math.round(N(m.ventes_lubrifiant)), Supérette: Math.round(N(m.ventes_superette)),
+  }))
 
   // Répartition des dépenses par catégorie (camembert) — dépenses quotidiennes du gérant
   // (y compris le prélèvement carburant non-cash) + charges fixes du Point financier
