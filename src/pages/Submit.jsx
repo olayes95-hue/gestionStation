@@ -4,7 +4,7 @@ import { supabase, BORDEREAUX_BUCKET } from '../lib/supabase'
 import { useAuth } from '../lib/auth.jsx'
 import { useStation } from '../lib/station.jsx'
 import { fcfa, today, numFR, frDate, formatThousands } from '../lib/format'
-import { compressImage } from '../lib/image'
+import { compressImage, compressStoredPhoto } from '../lib/image'
 import OrderReception from '../components/OrderReception.jsx'
 import { Panel } from '../ds/octane/components/core/Panel.jsx'
 import { Button } from '../ds/octane/components/core/Button.jsx'
@@ -86,6 +86,9 @@ export default function Submit() {
   const [meterPhotoBusy, setMeterPhotoBusy] = useState({}) // {champCompteur: true} pendant l'envoi immédiat de la photo
   const [expPhotoBusy, setExpPhotoBusy] = useState({})    // {index: true} pendant l'envoi immédiat du justificatif
   const [depPhotoBusy, setDepPhotoBusy] = useState({})    // {index: true} pendant l'envoi immédiat du bordereau
+  // Chemins des photos envoyées BRUTES (non compressées) cette session — recompressées en place
+  // au submit final, un moment plus sûr que juste après la prise de vue (voir lib/image.js).
+  const rawPhotoPathsRef = useRef([])
   const [lubTypes, setLubTypes] = useState(LUB_TYPES)    // références lubrifiant (dynamiques)
   const [settings, setSettings] = useState({ essence_pv: 725, gasoil_pv: 750, marge_unitaire: 25 })
   const [prods, setProds] = useState([])                 // catalogue supérette/autre (vendeuse)
@@ -260,8 +263,9 @@ export default function Submit() {
       const anciennes = attachments.filter(a => a.categorie === 'compteur' && (a.note || '').startsWith(label))
       for (const a of anciennes) await supabase.from('attachments').delete().eq('id', a.id)
       const path = `${stationId}/compteurs/${date}/${k}_${Date.now()}_${file.name.replace(/[^\w.\-]/g, '_')}`
-      const { error: up } = await supabase.storage.from(BORDEREAUX_BUCKET).upload(path, await compressImage(file))
+      const { error: up } = await supabase.storage.from(BORDEREAUX_BUCKET).upload(path, file)
       if (up) throw up
+      rawPhotoPathsRef.current.push(path)
       const { data: ins, error: ai } = await supabase.from('attachments').insert({
         station_id: stationId, report_date: date, categorie: 'compteur', note: `${label} — index ${f[k] || '?'}`, photo_path: path, created_by: session.user.id,
       }).select().single()
@@ -282,8 +286,9 @@ export default function Submit() {
     setExpPhotoBusy(p => ({ ...p, [i]: true }))
     try {
       const path = `${stationId}/depenses/${date}/${Date.now()}_${file.name.replace(/[^\w.\-]/g, '_')}`
-      const { error: up } = await supabase.storage.from(BORDEREAUX_BUCKET).upload(path, await compressImage(file))
+      const { error: up } = await supabase.storage.from(BORDEREAUX_BUCKET).upload(path, file)
       if (up) throw up
+      rawPhotoPathsRef.current.push(path)
       setExpenses(p => p.map((x, j) => j === i ? { ...x, photo_path: path, _file: undefined } : x))
     } catch (e) {
       fail(`Échec de l'envoi de la photo du justificatif : ${e.message || e}. Vérifie ta connexion et réessaie.`, 'expenses')
@@ -296,8 +301,9 @@ export default function Submit() {
     setDepPhotoBusy(p => ({ ...p, [i]: true }))
     try {
       const path = `${stationId}/${date}/${Date.now()}_${file.name.replace(/[^\w.\-]/g, '_')}`
-      const { error: up } = await supabase.storage.from(BORDEREAUX_BUCKET).upload(path, await compressImage(file))
+      const { error: up } = await supabase.storage.from(BORDEREAUX_BUCKET).upload(path, file)
       if (up) throw up
+      rawPhotoPathsRef.current.push(path)
       setDeposits(p => p.map((x, j) => j === i ? { ...x, photo_path: path, _file: undefined } : x))
     } catch (e) {
       fail(`Échec de l'envoi de la photo du bordereau : ${e.message || e}. Vérifie ta connexion et réessaie.`, 'deposits')
@@ -548,6 +554,13 @@ export default function Submit() {
       if (cogs) await supabase.from('stock_movements').insert([{ station_id: sid, categorie: 'superette', type: 'sortie', valeur: cogs, source: 'vente', note: 'coût de revient', date_mouvement: date, created_by: session.user.id }])
 
       await supabase.from('submissions').insert({ report_date: date, station_id: sid, moment, created_by: session.user.id })
+
+      // Recompresse en arrière-plan les photos envoyées brutes cette session (voir handleMeterPhoto
+      // /handleExpensePhoto/handleDepositPhoto) — pas de await : ça ne doit pas retarder le retour
+      // "Enregistré" à l'écran, et un échec ici (réseau...) n'a aucune conséquence sur la saisie
+      // déjà enregistrée (compressStoredPhoto ne fait jamais échouer l'appelant).
+      const toCompress = rawPhotoPathsRef.current.splice(0, rawPhotoPathsRef.current.length)
+      for (const p of toCompress) compressStoredPhoto(supabase, BORDEREAUX_BUCKET, p)
 
       setMsg(`Enregistré ! (${momentLabel(moment)} — ${date})`)
       load(date)
