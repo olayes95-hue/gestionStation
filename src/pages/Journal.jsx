@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useStation } from '../lib/station.jsx'
-import { fcfa, frDate, today } from '../lib/format'
+import { fcfa, frDate, today, lastDayOfMonth } from '../lib/format'
 import { ALERT_TONES } from '../lib/tones'
 import { Panel, PanelEmpty } from '../ds/octane/components/core/Panel.jsx'
 import { Button } from '../ds/octane/components/core/Button.jsx'
@@ -57,7 +57,9 @@ export default function Journal() {
     setLoading(true)
     const day = today()
     const monthStart = day.slice(0, 7) + '-01'
-    const monthEnd = day.slice(0, 7) + '-31'
+    // Bug réel repéré : '-31' codé en dur est une date invalide en septembre (30 jours) — la
+    // requête report_date<=... échouait silencieusement (data jamais vérifié) et affichait 0.
+    const monthEnd = lastDayOfMonth(day.slice(0, 7))
     // Alertes : fenêtre glissante de 60 jours, PAS le mois calendaire — un manque à verser ou un
     // jour manquant du mois dernier reste dû/à faire même après le 1er du mois suivant ; le
     // gérant ne doit pas le perdre de vue simplement parce que le calendrier a tourné (constaté

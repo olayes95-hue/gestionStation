@@ -6,6 +6,7 @@ import {
   numFR,
   frDate,
   formatThousands,
+  lastDayOfMonth,
 } from '../src/lib/format.js'
 
 // toLocaleString('fr-FR') utilise un espace insécable (U+00A0/U+202F) comme
@@ -67,6 +68,27 @@ describe('today', () => {
   it('retourne une date ISO courte YYYY-MM-DD', () => {
     expect(today()).toMatch(/^\d{4}-\d{2}-\d{2}$/)
     expect(today()).toBe(new Date().toISOString().slice(0, 10))
+  })
+})
+
+describe('lastDayOfMonth', () => {
+  it('gère les mois à 30 jours (le bug réel : "-31" codé en dur était invalide)', () => {
+    expect(lastDayOfMonth('2026-09')).toBe('2026-09-30')
+    expect(lastDayOfMonth('2026-04')).toBe('2026-04-30')
+    expect(lastDayOfMonth('2026-06')).toBe('2026-06-30')
+    expect(lastDayOfMonth('2026-11')).toBe('2026-11-30')
+  })
+
+  it('gère les mois à 31 jours', () => {
+    expect(lastDayOfMonth('2026-01')).toBe('2026-01-31')
+    expect(lastDayOfMonth('2026-12')).toBe('2026-12-31')
+  })
+
+  it('gère février bissextile et non bissextile', () => {
+    expect(lastDayOfMonth('2024-02')).toBe('2024-02-29')   // bissextile
+    expect(lastDayOfMonth('2026-02')).toBe('2026-02-28')   // non bissextile
+    expect(lastDayOfMonth('2000-02')).toBe('2000-02-29')   // divisible par 400 -> bissextile
+    expect(lastDayOfMonth('1900-02')).toBe('1900-02-28')   // divisible par 100 mais pas 400 -> non bissextile
   })
 })
 

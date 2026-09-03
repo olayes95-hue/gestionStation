@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useStation } from '../lib/station.jsx'
-import { fcfa, frDate } from '../lib/format'
+import { fcfa, frDate, lastDayOfMonth } from '../lib/format'
 import { ALERT_TONES } from '../lib/tones'
 import { BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend } from 'recharts'
 import { Panel, PanelEmpty } from '../ds/octane/components/core/Panel.jsx'
@@ -28,7 +28,11 @@ const SIGNAL_PALETTE = ['var(--signal-cyan)', 'var(--signal-amber)', 'var(--sign
 function periodBounds(year, month) {
   if (year === 'all') return { from: '2000-01-01', to: '2100-12-31' }
   if (month === 'all') return { from: `${year}-01-01`, to: `${year}-12-31` }
-  return { from: `${year}-${month}-01`, to: `${year}-${month}-31` }
+  // '-31' codé en dur était une date invalide pour tout mois à moins de 31 jours (avril, juin,
+  // septembre, novembre, février) — la requête report_date<=... échouait silencieusement (data
+  // jamais vérifié) et affichait 0 partout où cette période est utilisée (manque à verser,
+  // graphiques par pôle...) dès qu'un mois de moins de 31 jours était sélectionné.
+  return { from: `${year}-${month}-01`, to: lastDayOfMonth(`${year}-${month}`) }
 }
 
 export default function Dashboard() {
