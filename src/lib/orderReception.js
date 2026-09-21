@@ -49,6 +49,37 @@ export function packagingSplit({ pr, qteCartons, qteUnites }) {
   return out
 }
 
+// Recalcule le stock cuve (ess_stock/gas_stock) d'un jour à partir du MAX des « cuve après »
+// de TOUTES les réceptions de ce produit ce jour-là, toutes commandes confondues — insensible à
+// l'ordre dans lequel les réceptions ont été saisies. Root cause d'un vrai bug repéré : écrire
+// littéralement la « cuve après » de CHAQUE réception au fil de l'eau fait que la dernière
+// réception ENREGISTRÉE (pas forcément la dernière survenue physiquement) écrase les autres —
+// deux livraisons le même jour saisies dans le désordre pouvaient faire disparaître la première
+// du stock officiel (cas réel : 5000 L reçus en deux livraisons, seuls 2000 L retenus au final).
+// Le MAX est robuste à cet ordre : quel que soit l'ordre de saisie, la valeur la plus haute
+// finit toujours par gagner — exactement la cuve après la dernière livraison réelle. Ne fait
+// JAMAIS baisser une valeur déjà enregistrée plus haute (ex. une déclaration manuelle « Stock
+// du matin » plus précise que n'importe quelle réception) : prend le maximum entre l'existant
+// et ce que les réceptions indiquent, jamais un écrasement pur.
+export async function recomputeDailyStock({ supabase, stationId, produit, day }) {
+  const champStock = produit === 'gasoil' ? 'gas_stock' : 'ess_stock'
+  // order_receptions n'a pas de colonne "produit" directe (elle vient de fuel_orders) — on
+  // récupère d'abord les commandes de ce produit, puis les réceptions de ce jour parmi elles.
+  const { data: orders } = await supabase.from('fuel_orders').select('id').eq('station_id', stationId).eq('produit', produit)
+  const orderIds = (orders || []).map(o => o.id)
+  if (!orderIds.length) return
+  const { data: recs } = await supabase.from('order_receptions').select('cuve_apres')
+    .eq('station_id', stationId).eq('report_date', day).in('order_id', orderIds).not('cuve_apres', 'is', null)
+  const maxCuveApres = (recs || []).reduce((m, r) => Math.max(m, N(r.cuve_apres)), -Infinity)
+  if (maxCuveApres === -Infinity) return // aucune réception ce jour pour ce produit : ne touche rien
+  const { data: dr } = await supabase.from('daily_reports').select(champStock).eq('station_id', stationId).eq('report_date', day).maybeSingle()
+  const actuel = dr ? N(dr[champStock]) : -Infinity
+  const nouveau = Math.max(actuel, maxCuveApres)
+  if (nouveau === actuel) return
+  const { error } = await supabase.from('daily_reports').upsert({ station_id: stationId, report_date: day, [champStock]: nouveau }, { onConflict: 'station_id,report_date' })
+  if (error) throw error
+}
+
 // Valide + écrit en base une réception (partielle ou soldante). Lève une Error pour les
 // erreurs de saisie bloquantes ; renvoie { warnEcart } pour un écart à confirmer (non bloquant,
 // l'appelant réaffiche le formulaire avec la case « forcer ») ; renvoie { complet, total } au succès.
@@ -71,11 +102,11 @@ export async function receptionner({ supabase, bucket, stationId, session, order
     const champStock = order.produit === 'gasoil' ? 'gas_stock' : 'ess_stock'
     const { data: dr } = await supabase.from('daily_reports').select(`${champMatin},${champStock}`).eq('station_id', stationId).eq('report_date', day).maybeSingle()
     matinManquant = !dr || dr[champMatin] == null
-    // Garde-fou : chaque réception ÉCRASE le stock cuve du jour avec son propre "cuve après"
-    // (cf. plus bas). Si une réception précédente CE MÊME JOUR a déjà relevé le stock plus
-    // haut que le "cuve avant" saisi ici, cette écriture l'effacerait silencieusement — bug
-    // réel repéré : une 2e réception du jour saisie avec un vieux "cuve avant" a annulé la
-    // mise à jour correcte faite par la 1ère réception du même jour.
+    // Signal de qualité de saisie (pas une protection du stock lui-même — voir recomputeDailyStock,
+    // qui prend le MAX de toutes les réceptions du jour et ne peut plus être écrasé par une seule
+    // mauvaise lecture) : si « cuve avant » saisi ici est très inférieur au stock déjà enregistré,
+    // c'est probablement un ancien chiffre réutilisé plutôt qu'une relève à l'instant présent —
+    // vaut la peine d'être signalé, même si ça n'abîmera plus le stock final désormais.
     const stockActuel = dr ? N(dr[champStock]) : null
     if (!recv.forceEcart && stockActuel > 0) {
       const ecartStock = stockActuel - N(recv.cuve_avant)
@@ -103,9 +134,10 @@ export async function receptionner({ supabase, bucket, stationId, session, order
     if (e1) throw e1
     const { error: e2 } = await supabase.from('fuel_orders').update({ statut: complet ? 'recue' : 'partielle', cuve_avant: order.cuve_avant != null ? order.cuve_avant : N(recv.cuve_avant), cuve_apres: N(recv.cuve_apres), report_date: day, prix_achat: prix, montant: total * prix, recu_by: session.user.id, recu_at: new Date().toISOString() }).eq('id', order.id)
     if (e2) throw e2
-    const sf = order.produit === 'gasoil' ? 'gas_stock' : 'ess_stock'
-    const { error: e3 } = await supabase.from('daily_reports').upsert({ station_id: stationId, report_date: day, [sf]: N(recv.cuve_apres), created_by: session.user.id }, { onConflict: 'station_id,report_date' })
-    if (e3) throw e3
+    // Recalcule le stock cuve du jour à partir du MAX de toutes les réceptions (voir
+    // recomputeDailyStock) — plus un simple écrasement par "cuve après" de CETTE réception,
+    // donc insensible à l'ordre dans lequel plusieurs réceptions du même jour sont saisies.
+    await recomputeDailyStock({ supabase, stationId, produit: order.produit, day })
   } else {
     const { error: e1 } = await supabase.from('order_receptions').insert({ order_id: order.id, station_id: stationId, report_date: day, quantite_recue: recu, photo_path, created_by: session.user.id })
     if (e1) throw e1

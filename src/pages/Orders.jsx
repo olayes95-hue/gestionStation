@@ -5,7 +5,7 @@ import { useAuth } from '../lib/auth.jsx'
 import { useStation } from '../lib/station.jsx'
 import { fcfa, frDate, numFR, today } from '../lib/format'
 import { ORDER_STATUS_TONES } from '../lib/tones'
-import { N, receptionner as receptionnerCommande, cumulStatus, packagingSplit } from '../lib/orderReception'
+import { N, receptionner as receptionnerCommande, cumulStatus, packagingSplit, recomputeDailyStock } from '../lib/orderReception'
 import { Panel, PanelEmpty } from '../ds/octane/components/core/Panel.jsx'
 import { Button } from '../ds/octane/components/core/Button.jsx'
 import { Badge } from '../ds/octane/components/core/Badge.jsx'
@@ -283,12 +283,27 @@ export default function Orders() {
     if (error) { setErr(error.message); return }
     setEditRecId(null)
     await resyncOrderFromReceptions(o)
+    // Recalcule le stock cuve pour l'ancien ET le nouveau jour (si la date a changé) — une
+    // correction admin ne doit pas laisser le stock d'un jour périmé par rapport aux réceptions
+    // réellement associées désormais à ce jour.
+    if ((o.categorie || 'carburant') === 'carburant') {
+      for (const day of new Set([r.report_date, f.date])) {
+        await recomputeDailyStock({ supabase, stationId, produit: o.produit, day })
+      }
+    }
     flash('Réception corrigée')
   }
   async function deleteRec(o, r) {
     const { error } = await supabase.from('order_receptions').delete().eq('id', r.id)
     if (error) { setErr(error.message); return }
     await resyncOrderFromReceptions(o)
+    // Après suppression, le MAX peut redescendre à une réception restante plus basse — mais
+    // recomputeDailyStock ne fait jamais baisser une valeur déjà stockée (par design, pour ne
+    // jamais écraser une déclaration manuelle plus précise). Une suppression qui doit VRAIMENT
+    // faire baisser le stock reste une correction manuelle directe côté admin, hors de ce flux.
+    if ((o.categorie || 'carburant') === 'carburant') {
+      await recomputeDailyStock({ supabase, stationId, produit: o.produit, day: r.report_date })
+    }
     flash('Réception supprimée')
   }
 
