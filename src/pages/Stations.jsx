@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/auth.jsx'
+import { useStation } from '../lib/station.jsx'
 import { Panel } from '../ds/octane/components/core/Panel.jsx'
 import { Button } from '../ds/octane/components/core/Button.jsx'
 import { Field } from '../ds/octane/components/forms/Field.jsx'
@@ -21,6 +22,7 @@ const groupBy = (rows, key) => rows.reduce((m, r) => { (m[r[key] || '—'] = m[r
 
 export default function Stations() {
   const { isAdmin, can, session } = useAuth()
+  const { refreshStations } = useStation()
   const [stations, setStations] = useState([])
   const [users, setUsers] = useState([])
   const [settings, setSettings] = useState(null)
@@ -71,12 +73,16 @@ export default function Stations() {
       capacite_essence: num(s.capacite_essence) ?? 20000, capacite_gasoil: num(s.capacite_gasoil) ?? 20000,
       nombre_machines: Math.min(10, Math.max(1, num(s.nombre_machines) ?? 4)),
     }).eq('id', s.id)
+    // Rafraîchit le contexte partagé (StationProvider) : sans ça, ce changement (ex. nombre de
+    // pompes) reste invisible partout ailleurs dans l'app (Saisie du jour, Journal de bord...)
+    // tant que la page n'est pas complètement rechargée.
+    if (!error) refreshStations()
     error ? fail(error) : flash('Station enregistrée')
   }
   async function addStation(e) {
     e.preventDefault(); if (!newName) return
     const { error } = await supabase.from('stations').insert({ nom: newName })
-    if (error) fail(error); else { setNewName(''); load(); flash('Station ajoutée') }
+    if (error) fail(error); else { setNewName(''); load(); refreshStations(); flash('Station ajoutée') }
   }
   async function saveUser(u, { approve } = {}) {
     const isMulti = !SINGLE_STATION_ROLES.includes(u.role)

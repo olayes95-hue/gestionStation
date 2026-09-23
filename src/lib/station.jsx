@@ -16,9 +16,13 @@ export function StationProvider({ children }) {
   const [myStationIds, setMyStationIds] = useState([])
   const [stationId, setStationId] = useState(null)
 
-  useEffect(() => {
-    supabase.from('stations').select('*').order('id').then(({ data }) => setAllStations(data || []))
-  }, [])
+  // Root cause d'un bug réel repéré : la liste des stations n'était chargée qu'une seule fois à
+  // l'ouverture de l'app — modifier une station (ex. nombre_machines) dans Stations & équipe
+  // n'était donc reflété nulle part ailleurs (Saisie du jour, Journal de bord...) tant que l'app
+  // n'était pas rechargée complètement. refreshStations, exposée via le contexte, permet à
+  // Stations.jsx de forcer un rafraîchissement immédiat après une sauvegarde.
+  const refreshStations = () => supabase.from('stations').select('*').order('id').then(({ data }) => setAllStations(data || []))
+  useEffect(() => { refreshStations() }, [])
 
   useEffect(() => {
     if (!profile || isAdmin || SINGLE_STATION_ROLES.includes(profile.role)) { setMyStationIds([]); return }
@@ -38,7 +42,7 @@ export function StationProvider({ children }) {
 
   const current = stations.find(s => s.id === stationId) || null
   return (
-    <Ctx.Provider value={{ stations, stationId, setStationId, current, isAdmin }}>
+    <Ctx.Provider value={{ stations, stationId, setStationId, current, isAdmin, refreshStations }}>
       {children}
     </Ctx.Provider>
   )
