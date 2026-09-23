@@ -3,8 +3,8 @@
    Surface ramp : 000 = papier le plus clair → 999 = encre la plus dense.
    Béton et papier technique, jamais de blanc pur en fond d'écran. */
 --carbon-000:#FFFFFF; /* rail, barres, modales : papier pur */
---carbon-050:#EEF0F1; /* canevas applicatif */
---carbon-100:#F7F8F9; /* panneau */
+--carbon-050:#FFFFFF; /* canevas applicatif — blanc, demandé explicitement (déroge à la doctrine ci-dessus) */
+--carbon-100:#FFFFFF; /* panneau — idem */
 --carbon-200:#EDEFF1; /* en-tête de panneau, barre surélevée */
 --carbon-300:#E3E6E9; /* champ de saisie, bouton neutre */
 --carbon-400:#D2D7DB; /* filet fin */
