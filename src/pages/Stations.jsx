@@ -32,6 +32,8 @@ export default function Stations() {
   const [profileStations, setProfileStations] = useState({})   // {profileId: [stationId,...]}
   const [selectedRole, setSelectedRole] = useState(null)
   const [newRole, setNewRole] = useState({ key: '', label: '' })
+  const [expenseCategories, setExpenseCategories] = useState([])
+  const [newExpCat, setNewExpCat] = useState({ label: '', defaut_pole: 'carburant', non_cash: false })
   const [msg, setMsg] = useState(''); const [err, setErr] = useState('')
   const [newName, setNewName] = useState('')
   // Onglets visibles selon les permissions du profil courant — Rôles/Paramètres restent
@@ -45,7 +47,7 @@ export default function Stations() {
   const [tab, setTab] = useState(() => TABS[0]?.value || 'stations')
 
   async function load() {
-    const [s, u, st, r, p, rp, ps] = await Promise.all([
+    const [s, u, st, r, p, rp, ps, ec] = await Promise.all([
       supabase.from('stations').select('*').order('id'),
       supabase.from('profiles').select('id, full_name, role, station_id, approved').order('full_name'),
       supabase.from('settings').select('*').eq('id', 1).maybeSingle(),
@@ -53,9 +55,11 @@ export default function Stations() {
       supabase.from('permissions').select('*').order('category').order('label'),
       supabase.from('role_permissions').select('*'),
       supabase.from('profile_stations').select('*'),
+      supabase.from('expense_categories').select('*').order('ordre'),
     ])
     setStations(s.data || []); setUsers(u.data || []); setSettings(st.data || null)
     setRoles(r.data || []); setPermissions(p.data || []); setRolePerms(rp.data || [])
+    setExpenseCategories(ec.data || [])
     const psm = {}; for (const x of (ps.data || [])) (psm[x.profile_id] = psm[x.profile_id] || []).push(x.station_id)
     setProfileStations(psm)
     setSelectedRole(prev => prev || (r.data || [])[0]?.key || null)
@@ -146,6 +150,29 @@ export default function Stations() {
     const { error } = await supabase.from('roles').delete().eq('key', r.key)
     if (error) fail(error); else { if (selectedRole === r.key) setSelectedRole(null); load(); flash('Rôle supprimé') }
   }
+  async function addExpenseCategory(e) {
+    e.preventDefault()
+    const label = (newExpCat.label || '').trim()
+    if (!label) { setErr('Renseigne un libellé.'); return }
+    // Clé stable générée depuis le libellé (même esprit que les rôles, mais sans champ séparé à
+    // remplir — un libellé de dépense n'a pas besoin de distinguer clé technique et affichage).
+    let key = label.toUpperCase().replace(/[^A-Z0-9]+/g, '_').replace(/^_+|_+$/g, '')
+    if (!key) { setErr('Libellé invalide.'); return }
+    if (expenseCategories.some(c => c.key === key)) key = `${key}_${Date.now()}`
+    const { error } = await supabase.from('expense_categories').insert({
+      key, label, defaut_pole: newExpCat.non_cash ? null : newExpCat.defaut_pole, non_cash: newExpCat.non_cash,
+      is_system: false, ordre: 100 + expenseCategories.length })
+    if (error) fail(error); else { setNewExpCat({ label: '', defaut_pole: 'carburant', non_cash: false }); load(); flash('Catégorie de dépense créée') }
+  }
+  async function toggleExpenseCategoryActive(c) {
+    const { error } = await supabase.from('expense_categories').update({ actif: !c.actif }).eq('id', c.id)
+    error ? fail(error) : load()
+  }
+  async function deleteExpenseCategory(c) {
+    const { error } = await supabase.from('expense_categories').delete().eq('id', c.id)
+    if (error) fail(error); else { load(); flash('Catégorie de dépense supprimée') }
+  }
+
   const hasPerm = (roleKey, permKey) => rolePerms.some(rp => rp.role_key === roleKey && rp.permission_key === permKey)
   async function togglePerm(roleKey, permKey, checked) {
     const { error } = checked
@@ -402,9 +429,44 @@ export default function Stations() {
           </form>
         </Panel>
       )}
+
+      {tab === 'parametres' && (
+        <Panel title="Catégories de dépenses" flush>
+          <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', margin: 'var(--sp-4) var(--gutter-panel) 0' }}>
+            Liste proposée dans « Dépenses en espèces » (Saisie du jour). Le « pôle par défaut » pré-remplit la caisse supposée avoir payé — le gérant peut toujours le changer, ou répartir entre plusieurs caisses.
+          </p>
+          <div style={{ padding: 'var(--gutter-panel)', display: 'flex', flexDirection: 'column', gap: 'var(--sp-4)' }}>
+            <DataTable
+              columns={[
+                { key: 'label', header: 'Libellé' },
+                { key: 'defaut_pole', header: 'Pôle par défaut', render: c => c.non_cash ? '—' : (POLE_LABELS[c.defaut_pole] || c.defaut_pole || '—') },
+                { key: 'non_cash', header: 'Non-cash', render: c => c.non_cash ? <Badge tone="info">Oui</Badge> : '—' },
+                { key: 'actif', header: 'Actif', render: c => <Checkbox checked={c.actif} onChange={() => toggleExpenseCategoryActive(c)} /> },
+                { key: 'actions', header: '', align: 'right', render: c => c.is_system
+                  ? <Badge tone="idle">Système</Badge>
+                  : <Button size="sm" tone="danger" onClick={() => deleteExpenseCategory(c)}>Supprimer</Button> },
+              ]}
+              rows={expenseCategories}
+            />
+            <form onSubmit={addExpenseCategory} style={{ display: 'flex', gap: 'var(--sp-3)', flexWrap: 'wrap', alignItems: 'end' }}>
+              <Field label="Nouveau libellé" style={{ flex: '2 1 200px' }}>
+                <Input value={newExpCat.label} onChange={e => setNewExpCat({ ...newExpCat, label: e.target.value })} placeholder="ex : Frais bancaires" />
+              </Field>
+              <Field label="Pôle par défaut" style={{ flex: '1 1 160px' }}>
+                <Select value={newExpCat.defaut_pole} disabled={newExpCat.non_cash} onChange={e => setNewExpCat({ ...newExpCat, defaut_pole: e.target.value })}
+                  options={[{ value: 'carburant', label: 'Carburant' }, { value: 'gaz_lub', label: 'Gaz + Lubrifiant' }, { value: 'superette', label: 'Supérette' }]} />
+              </Field>
+              <Checkbox label="Non-cash (comme le prélèvement carburant)" checked={newExpCat.non_cash} onChange={v => setNewExpCat({ ...newExpCat, non_cash: v })} />
+              <Button type="submit" tone="primary">+ Ajouter</Button>
+            </form>
+          </div>
+        </Panel>
+      )}
     </div>
   )
 }
+
+const POLE_LABELS = { carburant: 'Carburant', gaz_lub: 'Gaz + Lubrifiant', superette: 'Supérette' }
 
 function FormSection({ title, children }) {
   return (

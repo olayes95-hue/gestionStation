@@ -77,6 +77,8 @@ export default function Submit() {
   const [lubVenduSplit, setLubVenduSplit] = useState({})
   const [lubTheorique, setLubTheorique] = useState({})   // {nom: stock_theorique} — v_stock_theorique, pour l'écart en direct
   const [expenses, setExpenses] = useState([])
+  const [expenseCategories, setExpenseCategories] = useState([])   // catalogue admin (expense_categories)
+  const [poleSplitOpen, setPoleSplitOpen] = useState({})   // {index: true} — affiche la répartition multi-caisses pour cette dépense
   const [deposits, setDeposits] = useState([])
   const [deliveries, setDeliveries] = useState([])
   const [suppliers, setSuppliers] = useState([])
@@ -126,6 +128,7 @@ export default function Submit() {
   useEffect(() => { supabase.from('settings').select('*').eq('id', 1).maybeSingle().then(({ data }) => data && setSettings(data)) }, [])
   useEffect(() => { supabase.from('suppliers').select('id,nom,categorie').order('nom').then(({ data }) => setSuppliers(data || [])) }, [])
   useEffect(() => { supabase.from('products').select('nom, unite, conditionnement_nom, conditionnement_qte').eq('categorie', 'lubrifiant').eq('actif', true).order('ordre').then(({ data }) => { if (data && data.length) setLubTypes(data) }) }, [])
+  useEffect(() => { supabase.from('expense_categories').select('*').eq('actif', true).order('ordre').then(({ data }) => setExpenseCategories(data || [])) }, [])
   useEffect(() => { if (!stationId) return; supabase.from('v_stock_theorique').select('produit, stock_theorique').eq('station_id', stationId).eq('categorie', 'lubrifiant').then(({ data }) => { const m = {}; (data || []).forEach(r => m[r.produit] = N(r.stock_theorique)); setLubTheorique(m) }) }, [stationId])
   useEffect(() => { if (stationId) load(date) }, [date, stationId])
 
@@ -194,6 +197,7 @@ export default function Submit() {
     // Dépenses/versements/achats : la base fait autorité dès qu'il y a quelque chose ; sinon,
     // on retombe sur le brouillon local (ex. après un rechargement inattendu de la page).
     setExpenses(ex.data?.length ? ex.data : (draft?.expenses || []))
+    setPoleSplitOpen(ex.data?.length ? {} : (draft?.poleSplitOpen || {}))
     setDeposits(dep.data?.length ? dep.data : (draft?.deposits || []))
     setDeliveries(dl.data?.length ? dl.data : (draft?.deliveries || []))
     setAttachments(at.data || [])
@@ -208,8 +212,8 @@ export default function Submit() {
   // récupérable après un rechargement inattendu de l'onglet.
   useEffect(() => {
     if (!stationId || !date) return
-    saveDraft(stationId, date, { f, lub, lubVendu, expenses: stripFiles(expenses), deposits: stripFiles(deposits), deliveries: stripFiles(deliveries) })
-  }, [f, lub, lubVendu, expenses, deposits, deliveries, stationId, date])
+    saveDraft(stationId, date, { f, lub, lubVendu, expenses: stripFiles(expenses), poleSplitOpen, deposits: stripFiles(deposits), deliveries: stripFiles(deliveries) })
+  }, [f, lub, lubVendu, expenses, poleSplitOpen, deposits, deliveries, stationId, date])
 
   // champ compteur avec photo-preuve par pompe — envoyée immédiatement à la sélection (voir handleMeterPhoto)
   // Photo recommandée mais plus bloquante à l'envoi (voir save()) : le gérant doit pouvoir
@@ -411,6 +415,16 @@ export default function Submit() {
     if (deposits.some(d => N(d.montant) > 0 && d.periode_debut > d.periode_fin)) {
       fail('La date de début d\'un versement doit être avant sa date de fin.', 'deposits', depositsRef); return
     }
+    // Répartition multi-caisses d'une dépense : doit totaliser exactement le montant déclaré,
+    // sinon une partie de la dépense disparaîtrait du calcul (ni déduite d'une caisse ni d'une autre).
+    for (let i = 0; i < expenses.length; i++) {
+      const e = expenses[i]
+      if (N(e.montant) <= 0 || !poleSplitOpen[i] || isNonCashCat(e.categorie)) continue
+      const total = ['carburant', 'gaz_lub', 'superette'].reduce((s, p) => s + N((e.poleSplitDetail || {})[p]), 0)
+      if (Math.round(total) !== Math.round(N(e.montant))) {
+        fail(`La répartition entre caisses d'une dépense doit totaliser exactement son montant (${fcfa(N(e.montant))}, réparti : ${fcfa(total)}).`, 'expenses', expensesRef); return
+      }
+    }
     // Doublon DANS la même saisie : deux lignes identiques (même pôle/période/montant) ajoutées
     // par erreur — repéré en prod (double-tap sur "+ Ajouter un versement" sur un téléphone lent,
     // photo du même bordereau collée deux fois sans que le gérant remarque la 2e ligne créée).
@@ -495,9 +509,17 @@ export default function Submit() {
 
       await supabase.from('expenses').delete().eq('report_date', date).eq('station_id', sid)
       const exRows = []
-      for (const e of expenses) {
+      for (let i = 0; i < expenses.length; i++) {
+        const e = expenses[i]
         if (N(e.montant) <= 0) continue
-        const isCarb = (e.categorie || '').toUpperCase() === 'CARBURANT'
+        const isCarb = isNonCashCat(e.categorie)
+        // Répartition entre caisses : soit saisie explicitement (plusieurs caisses), soit une
+        // seule caisse implicite (le Select "Payée depuis la caisse") — jamais devinée après
+        // coup par catégorie (voir migration_v96 pour le repli appliqué à l'historique sans ce champ).
+        const poleSplit = isCarb ? null
+          : poleSplitOpen[i]
+            ? Object.fromEntries(['carburant', 'gaz_lub', 'superette'].map(p => [p, N((e.poleSplitDetail || {})[p])]).filter(([, v]) => v > 0))
+            : { [e.pole || defaultPoleFor(e.categorie)]: numFR(e.montant) }
         const row = { report_date: date, station_id: sid, categorie: e.categorie || "AUTRE", montant: numFR(e.montant),
           motif: e.motif || (isCarb ? 'Carburant / déplacement propriétaire' : null),
           justificatif: true, photo_path: e.photo_path || null, created_by: session.user.id,
@@ -505,7 +527,7 @@ export default function Submit() {
           // non_cash et d'autres non fait envoyer NULL (pas le DEFAULT false) sur les lignes
           // qui l'omettent — violait la contrainte NOT NULL dès qu'un lot mélangeait une
           // dépense carburant (non-cash) avec une autre catégorie.
-          non_cash: isCarb }
+          non_cash: isCarb, pole_split: poleSplit }
         exRows.push(row)
       }
       if (exRows.length) { const { error } = await supabase.from('expenses').insert(exRows); if (error) throw error }
@@ -686,6 +708,20 @@ export default function Submit() {
       </div>
     </div>
   )
+
+  // Quelle caisse a payé une dépense — jusqu'ici toujours supposé "carburant" (sauf SUPERETTE),
+  // alors qu'en réalité n'importe quelle caisse peut payer, parfois plusieurs à la fois (voir
+  // poleSplitOpen pour le cas combiné, saisi plus bas). Le pôle par défaut vient du catalogue
+  // admin (expense_categories.defaut_pole), avec un repli raisonnable si la catégorie n'y
+  // figure pas encore (ex. créée avant ce champ, ou liste pas encore chargée).
+  const POLE_OPTIONS_EXP = [
+    { value: 'carburant', label: 'Carburant' },
+    { value: 'gaz_lub', label: 'Gaz + Lubrifiant' },
+    { value: 'superette', label: 'Supérette' },
+  ]
+  const catInfo = (categorie) => expenseCategories.find(c => c.key === categorie)
+  const defaultPoleFor = (categorie) => catInfo(categorie)?.defaut_pole || (categorie === 'SUPERETTE' ? 'superette' : 'carburant')
+  const isNonCashCat = (categorie) => { const c = catInfo(categorie); return c ? c.non_cash : categorie === 'CARBURANT' }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-5)' }}>
@@ -965,19 +1001,48 @@ export default function Submit() {
             <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)' }}>Argent sorti de la caisse (électricité SBEE, achats…). Ajoute le justificatif si tu l'as.</p>
             {err && errTarget === 'expenses' && <AlertBanner tone="alarm" title="Erreur" style={{ marginBottom: 'var(--sp-4)' }}>{err}</AlertBanner>}
             <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-3)' }}>
-              {expenses.map((e, i) => (
+              {expenses.map((e, i) => {
+                const nonCash = isNonCashCat(e.categorie)
+                const splitOpen = !!poleSplitOpen[i]
+                const singlePole = e.pole || defaultPoleFor(e.categorie)
+                const splitDetail = e.poleSplitDetail || {}
+                const splitTotal = POLE_OPTIONS_EXP.reduce((s, p) => s + N(splitDetail[p.value]), 0)
+                return (
                 <div key={i} style={{ padding: 'var(--sp-4)', background: 'var(--surface-raised)', borderRadius: 'var(--radius-1)', border: '1px solid var(--border-hairline)', display: 'flex', flexDirection: 'column', gap: 'var(--sp-3)' }}>
                   <div style={{ display: 'flex', gap: 'var(--sp-4)', flexWrap: 'wrap' }}>
                     <Field label="Type" style={{ flex: '1 1 200px' }}>
-                      <Select value={e.categorie || 'SBEE'} onChange={ev => upd(setExpenses, i, 'categorie', ev.target.value)} style={{ width: '100%' }}
-                        options={[{ value: 'SBEE', label: 'SBEE' }, { value: 'SUPERETTE', label: 'SUPERETTE' }, { value: 'CARBURANT', label: 'Carburant / déplacement (propriétaire)' }, { value: 'AUTRE', label: 'AUTRE' }]} />
+                      <Select value={e.categorie || (expenseCategories[0]?.key || 'SBEE')} onChange={ev => upd(setExpenses, i, 'categorie', ev.target.value)} style={{ width: '100%' }}
+                        options={(expenseCategories.length ? expenseCategories : [{ key: 'SBEE', label: 'SBEE' }, { key: 'SUPERETTE', label: 'SUPERETTE' }, { key: 'CARBURANT', label: 'Carburant / déplacement (propriétaire)' }, { key: 'AUTRE', label: 'AUTRE' }]).map(c => ({ value: c.key, label: c.label }))} />
                     </Field>
                     <Field label="Montant" style={{ flex: '1 1 140px' }}><Input type="text" inputMode="decimal" numeric value={e.montant || ''} onChange={ev => upd(setExpenses, i, 'montant', ev.target.value)} /></Field>
                   </div>
                   <Field label="Motif"><Input value={e.motif || ''} onChange={ev => upd(setExpenses, i, 'motif', ev.target.value)} placeholder="ex : recharge électricité" /></Field>
-                  {(e.categorie || '').toUpperCase() === 'CARBURANT' ? (
+                  {nonCash ? (
                     <p style={{ font: '400 12px/1.4 var(--font-ui)', color: 'var(--text-muted)', margin: 0 }}>Prélèvement carburant du propriétaire : <b>charge non-cash</b> (aucun paiement en espèces). Pas de reçu requis ; remonte chaque mois au Point financier sous « Carburant / déplacement (auto) » et n'est pas décompté du cash à verser.</p>
                   ) : (<>
+                    {!splitOpen ? (
+                      <Field label="Payée depuis la caisse">
+                        <Select value={singlePole} onChange={ev => upd(setExpenses, i, 'pole', ev.target.value)} style={{ width: '100%' }} options={POLE_OPTIONS_EXP} />
+                      </Field>
+                    ) : (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-2)' }}>
+                        <span style={{ font: '400 11px/1.3 var(--font-ui)', color: 'var(--text-muted)' }}>Répartition entre caisses (doit totaliser le montant ci-dessus)</span>
+                        <div style={{ display: 'flex', gap: 'var(--sp-3)', flexWrap: 'wrap' }}>
+                          {POLE_OPTIONS_EXP.map(p => (
+                            <Field key={p.value} label={p.label} style={{ flex: '1 1 120px' }}>
+                              <Input size="sm" type="text" inputMode="decimal" numeric value={splitDetail[p.value] ?? ''}
+                                onChange={ev => upd(setExpenses, i, 'poleSplitDetail', { ...splitDetail, [p.value]: ev.target.value })} />
+                            </Field>
+                          ))}
+                        </div>
+                        <span style={{ font: '400 11px/1.3 var(--font-ui)', color: Math.round(splitTotal) === Math.round(N(e.montant)) ? 'var(--state-ok)' : 'var(--state-alarm)' }}>
+                          Réparti : {fcfa(splitTotal)} / {fcfa(N(e.montant))}
+                        </span>
+                      </div>
+                    )}
+                    <Button type="button" size="sm" onClick={() => setPoleSplitOpen(p => ({ ...p, [i]: !splitOpen }))} style={{ alignSelf: 'flex-start' }}>
+                      {splitOpen ? 'Une seule caisse' : '+ Payée depuis plusieurs caisses'}
+                    </Button>
                     <Field label="Photo du justificatif (recommandée)">
                       <Input type="file" accept="image/*" disabled={!!expPhotoBusy[i]}
                         onChange={ev => { const file = ev.target.files[0]; ev.target.value = ''; if (file) handleExpensePhoto(i, file) }} />
@@ -987,9 +1052,10 @@ export default function Submit() {
                   </>)}
                   <Button size="sm" tone="danger" onClick={() => rm(setExpenses, i)} style={{ alignSelf: 'flex-start' }}>Retirer</Button>
                 </div>
-              ))}
+                )
+              })}
             </div>
-            <Button onClick={() => setExpenses(p => [...p, { categorie: 'SBEE', montant: '' }])} style={{ marginTop: 'var(--sp-4)' }}>+ Ajouter une dépense</Button>
+            <Button onClick={() => setExpenses(p => [...p, { categorie: expenseCategories[0]?.key || 'SBEE', montant: '' }])} style={{ marginTop: 'var(--sp-4)' }}>+ Ajouter une dépense</Button>
           </>}
         </Panel>
 

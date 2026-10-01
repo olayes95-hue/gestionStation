@@ -113,7 +113,7 @@ export default function Dashboard() {
         // 3 lignes/jour (une par pôle) : sur "Toutes années", sans tri+limite explicites, la
         // limite par défaut de l'API (1000 lignes) tronque arbitrairement (cf. bug Historique).
         supabase.from('v_pole_recon_jour').select('*').eq('station_id', stationId).gte('report_date', from).lte('report_date', to).order('report_date', { ascending: false }).limit(5000),
-        supabase.from('expenses').select('categorie,montant,non_cash').eq('station_id', stationId).gte('report_date', from).lte('report_date', to),
+        supabase.from('expenses').select('categorie,montant,non_cash,pole_split').eq('station_id', stationId).gte('report_date', from).lte('report_date', to),
         supabase.from('superette_sales').select('nom,montant,quantite').eq('station_id', stationId).gte('report_date', from).lte('report_date', to),
         supabase.from('v_sorties_deduites').select('produit,sortie_deduite').eq('station_id', stationId).eq('categorie', 'lubrifiant').gte('report_date', from).lte('report_date', to),
       ])
@@ -191,19 +191,24 @@ export default function Dashboard() {
       if (N(g.nb_cloture) > 0 && g.recette_cloture != null) manqueByPole[g.pole_groupe] += N(g.recette_cloture) - N(g.verse)
       else if (!g.couvert) manqueByPole[g.pole_groupe] += N(g.espece)
     }
-    // SBEE/AUTRE sont payées en pratique depuis la caisse carburant (c'est elle qui encaisse le
-    // plus de cash au quotidien) — les déduire du bâton Carburant, sinon il affiche un manque qui
-    // ignore une charge réellement sortie de cette caisse.
-    let depSuperette = 0, depGeneral = 0
+    // Une dépense peut être payée depuis n'importe quelle caisse, parfois une combinaison de
+    // plusieurs (pole_split, migration_v96) — pas systématiquement "SBEE/AUTRE = carburant,
+    // SUPERETTE = supérette" comme le supposait l'ancienne heuristique par catégorie. pole_split
+    // absent (dépense antérieure à ce champ) : repli sur l'ancienne hypothèse, inchangé pour
+    // l'historique déjà saisi.
+    const depParPole = { carburant: 0, gaz_lub: 0, superette: 0 }
     for (const e of polePeriod.exp) {
       if (e.non_cash) continue
-      if (e.categorie === 'SUPERETTE') depSuperette += N(e.montant)
-      else if (e.categorie !== 'CARBURANT') depGeneral += N(e.montant)
+      if (e.pole_split && Object.keys(e.pole_split).length) {
+        for (const [pole, montant] of Object.entries(e.pole_split)) { if (pole in depParPole) depParPole[pole] += N(montant) }
+      } else {
+        depParPole[e.categorie === 'SUPERETTE' ? 'superette' : 'carburant'] += N(e.montant)
+      }
     }
     return [
-      { name: 'Carburant', value: manqueByPole.carburant - depGeneral },
-      { name: 'Gaz + Lubrifiant', value: manqueByPole.gaz_lub },
-      { name: 'Supérette', value: manqueByPole.superette - depSuperette },
+      { name: 'Carburant', value: manqueByPole.carburant - depParPole.carburant },
+      { name: 'Gaz + Lubrifiant', value: manqueByPole.gaz_lub - depParPole.gaz_lub },
+      { name: 'Supérette', value: manqueByPole.superette - depParPole.superette },
     ]
   })()
   // "Cash non tracé" doit être la MÊME notion que "Manque à verser par pôle" juste en dessous —

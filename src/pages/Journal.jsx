@@ -45,6 +45,7 @@ export default function Journal() {
   const [forecast, setForecast] = useState(null)
   const [manque, setManque] = useState({ carburant: 0, gaz_lub: 0, superette: 0 })
   const [depGeneral, setDepGeneral] = useState(0)
+  const [depParPole, setDepParPole] = useState({ carburant: 0, gaz_lub: 0, superette: 0 })
   const [pertes, setPertes] = useState(null)
   const [alerts, setAlerts] = useState([])
   const [pendingCount, setPendingCount] = useState(0)
@@ -69,7 +70,7 @@ export default function Journal() {
       supabase.from('submissions').select('moment').eq('station_id', stationId).eq('report_date', day),
       supabase.from('v_stock_forecast').select('*').eq('station_id', stationId).maybeSingle(),
       supabase.from('v_pole_recon_jour').select('*').eq('station_id', stationId).gte('report_date', monthStart).lte('report_date', monthEnd),
-      supabase.from('expenses').select('categorie,montant,non_cash').eq('station_id', stationId).gte('report_date', monthStart).lte('report_date', monthEnd),
+      supabase.from('expenses').select('categorie,montant,non_cash,pole_split').eq('station_id', stationId).gte('report_date', monthStart).lte('report_date', monthEnd),
       supabase.from('v_pertes_mensuelles').select('*').eq('station_id', stationId).eq('mois', day.slice(0, 7)).maybeSingle(),
       supabase.from('v_alerts').select('*').eq('station_id', stationId).gte('report_date', cutoff60).lte('report_date', day),
       supabase.from('alert_dismissals').select('report_date,type').eq('station_id', stationId),
@@ -99,22 +100,30 @@ export default function Journal() {
       else if (!g.couvert) manqueByPole[g.pole_groupe] += N(g.espece)
     }
 
-    // SBEE/AUTRE sont payées en pratique depuis la caisse carburant (c'est elle qui encaisse le
-    // plus de cash au quotidien) — les déduire du carburant, pas seulement du total, sinon le
-    // bâton "Carburant" affiche un manque qui ignore une charge réellement sortie de cette caisse.
-    let depSuperette = 0, depGen = 0
+    // Une dépense peut être payée depuis N'IMPORTE QUELLE caisse, parfois une combinaison de
+    // plusieurs (pole_split, migration_v96) — pas systématiquement "SBEE/AUTRE = carburant,
+    // SUPERETTE = supérette" comme le supposait l'ancienne heuristique par catégorie, fausse dès
+    // qu'une charge est réellement payée depuis une autre caisse (ça faisait apparaître un
+    // manque trop élevé sur un pôle qui n'avait rien payé, et trop faible sur celui qui avait
+    // vraiment sorti l'argent). pole_split absent (dépense antérieure à ce champ) : repli sur
+    // l'ancienne hypothèse, pour ne rien changer à l'historique déjà saisi.
+    const depParPole = { carburant: 0, gaz_lub: 0, superette: 0 }
     for (const e of (exp.data || [])) {
       if (e.non_cash) continue // prélèvement carburant propriétaire : non-cash, jamais décompté
-      if (e.categorie === 'SUPERETTE') depSuperette += N(e.montant)
-      else if (e.categorie !== 'CARBURANT') depGen += N(e.montant) // SBEE, AUTRE
+      if (e.pole_split && Object.keys(e.pole_split).length) {
+        for (const [pole, montant] of Object.entries(e.pole_split)) { if (pole in depParPole) depParPole[pole] += N(montant) }
+      } else {
+        depParPole[e.categorie === 'SUPERETTE' ? 'superette' : 'carburant'] += N(e.montant)
+      }
     }
 
     setManque({
-      carburant: manqueByPole.carburant - depGen,
-      gaz_lub: manqueByPole.gaz_lub,
-      superette: manqueByPole.superette - depSuperette,
+      carburant: manqueByPole.carburant - depParPole.carburant,
+      gaz_lub: manqueByPole.gaz_lub - depParPole.gaz_lub,
+      superette: manqueByPole.superette - depParPole.superette,
     })
-    setDepGeneral(depGen)
+    setDepGeneral(depParPole.carburant)
+    setDepParPole(depParPole)
 
     setPertes(pert.data || null)
     // v_alerts n'a aucune notion de "traité" (vue calculée) — sans ce filtre, une alerte
@@ -199,9 +208,11 @@ export default function Journal() {
       <Panel title="Manque à verser par pôle" meta="ce mois">
         <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-3)' }}>
           <PoleLine label="Carburant" value={manque.carburant} />
-          {depGeneral > 0 && <p style={{ font: '400 11px/1.3 var(--font-ui)', color: 'var(--text-muted)', margin: '0 0 0 var(--sp-4)' }}>dont {fcfa(depGeneral)} de charges générales (SBEE, autre) déjà déduites</p>}
+          {depParPole.carburant > 0 && <p style={{ font: '400 11px/1.3 var(--font-ui)', color: 'var(--text-muted)', margin: '0 0 0 var(--sp-4)' }}>dont {fcfa(depParPole.carburant)} de dépenses déjà payées depuis cette caisse</p>}
           <PoleLine label="Gaz + Lubrifiant" value={manque.gaz_lub} />
+          {depParPole.gaz_lub > 0 && <p style={{ font: '400 11px/1.3 var(--font-ui)', color: 'var(--text-muted)', margin: '0 0 0 var(--sp-4)' }}>dont {fcfa(depParPole.gaz_lub)} de dépenses déjà payées depuis cette caisse</p>}
           <PoleLine label="Supérette" value={manque.superette} />
+          {depParPole.superette > 0 && <p style={{ font: '400 11px/1.3 var(--font-ui)', color: 'var(--text-muted)', margin: '0 0 0 var(--sp-4)' }}>dont {fcfa(depParPole.superette)} de dépenses déjà payées depuis cette caisse</p>}
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: 'var(--sp-3) var(--sp-4)', borderTop: '1px solid var(--border-default)', marginTop: 'var(--sp-2)' }}>
             <span style={{ font: 'var(--fw-semibold) 13px/1.3 var(--font-ui)', color: 'var(--text-primary)' }}>= Cash non tracé (mois)</span>
             <span style={{ font: '600 13px/1 var(--font-data)', color: manqueTotal > 0 ? 'var(--state-alarm)' : 'var(--state-ok)' }}>{fcfa(manqueTotal)}</span>
